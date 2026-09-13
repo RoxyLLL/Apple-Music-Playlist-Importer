@@ -15,6 +15,10 @@ print(f"Project root: {ROOT_DIR}")
 print(f"Static source: {STATIC_SRC}")
 assert STATIC_SRC.exists(), f"Static dir not found: {STATIC_SRC}"
 
+ICON_PATH = ROOT_DIR / "app_icon.ico"
+if ICON_PATH.exists():
+    print(f"Icon file found: {ICON_PATH}")
+
 # PyInstaller command arguments
 pyinstaller_args = [
     sys.executable,
@@ -23,6 +27,7 @@ pyinstaller_args = [
     "--onefile",
     "--clean",
     "--noconsole",
+    f"--icon={ICON_PATH}",
     # Add static files
     f"--add-data={STATIC_SRC};applemusic/web/static",
     # Hidden imports for FastAPI / Uvicorn / WebSockets

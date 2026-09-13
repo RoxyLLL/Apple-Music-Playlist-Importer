@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Apple Music Playlist Importer</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <link rel="apple-touch-icon" href="/static/app_icon.png">
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Vue 3 CDN -->
@@ -50,9 +52,7 @@
       
       <!-- Brand & Title -->
       <div class="flex items-center space-x-3">
-        <div class="w-9 h-9 rounded-xl bg-applered flex items-center justify-center text-white shadow-sm shadow-applered/30">
-          <i class="fa-brands fa-apple text-xl mb-0.5"></i>
-        </div>
+        <img src="/static/app_icon.png" class="w-9 h-9 rounded-xl shadow-sm shadow-applered/30 object-cover" alt="Logo">
         <div>
           <div class="flex items-center space-x-2">
             <span class="font-extrabold text-base text-appledark tracking-tight">Apple Music</span>
