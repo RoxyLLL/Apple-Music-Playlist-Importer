@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎵 Apple Music Playlist Importer & Manager (AppleMusicSync)
+# 🎵 Apple Music Playlist Importer
 
 **跨平台智能歌单迁移工具 · 免付 $99 开发者年费 · 智能模糊重排引擎 · B 站无损补全 · 现代桌面 Web 仪表盘**
 
@@ -19,7 +19,7 @@
 
 ## 📖 项目简介
 
-**Apple Music Playlist Importer (AppleMusicSync)** 是一款面向音乐爱好者的全功能歌单迁移与音乐库管理利器。能够无缝将**网易云音乐**、**QQ 音乐**、**Spotify** 或 **本地文本/CSV/JSON** 歌单迁移到 **Apple Music** 个人资料库中。
+**Apple Music Playlist Importer** 是一款面向音乐爱好者的全功能歌单迁移与音乐库管理利器。能够无缝将**网易云音乐**、**QQ 音乐**、**Spotify** 或 **本地文本/CSV/JSON** 歌单迁移到 **Apple Music** 个人资料库中。
 
 不仅如此，针对 Apple Music 官方曲库**部分小众音乐、网络神曲或无版权歌曲无法命中**的痛点，本项目首创了 **B 站无损音源检索与自动补全系统**：基于多维匹配度隔离算法，智能下载高码率音频并深度封装封面、歌词与 ID3 元数据，助您实现 100% 满血歌单迁移！
 
@@ -81,8 +81,8 @@
 
 ### 1. 克隆代码仓库
 ```bash
-git clone https://github.com/RoxyLLL/applemusic.git
-cd applemusic
+git clone https://github.com/RoxyLLL/Apple-Music-Playlist-Importer.git
+cd Apple-Music-Playlist-Importer
 ```
 
 ### 2. 创建并激活虚拟环境 (推荐)

@@ -261,7 +261,7 @@ class AppleMusicClient:
     def create_playlist(
         self,
         name: str,
-        description: str = "Imported by AppleMusicSync",
+        description: str = "Imported by Apple Music Playlist Importer",
     ) -> Optional[str]:
         """
         Create a new playlist in user's Apple Music Library.

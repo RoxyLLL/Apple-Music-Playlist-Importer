@@ -85,7 +85,7 @@ class SyncRequest(BaseModel):
     playlist_name: str
     track_ids: Optional[List[str]] = []
     tracks: Optional[List[SyncTrackItem]] = []
-    description: Optional[str] = "Imported by AppleMusicSync"
+    description: Optional[str] = "Imported by Apple Music Playlist Importer"
 
 
 @app.get("/", response_class=HTMLResponse)
