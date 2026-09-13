@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Compiled Executables (Releases should be published via GitHub Releases)
+*.exe
+*.bin
+
+# Local Audio & Media Downloads
+downloads/
+*.mp3
+*.m4a
+*.flac
+*.wav
+*.aac
+*.mp4
+*.mkv
+
+# User configs, secrets & logs
+.env
+*.token
+*.key
+*.log
+unmatched.txt
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDE & Editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Agent & temporary scratch
+.gemini/
+scratch/
