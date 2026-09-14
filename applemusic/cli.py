@@ -196,54 +196,64 @@ def sync_playlist(
         )
 
     # 3. Statistics & Review
-    exact_count = sum(1 for r in match_results if r.status == ConfidenceLevel.EXACT)
-    high_count = sum(1 for r in match_results if r.status == ConfidenceLevel.HIGH)
-    medium_count = sum(1 for r in match_results if r.status == ConfidenceLevel.MEDIUM)
-    not_found_count = sum(1 for r in match_results if r.status in (ConfidenceLevel.NOT_FOUND, ConfidenceLevel.LOW))
+    auto_accept_count = sum(1 for r in match_results if r.decision == "auto_accept")
+    review_count = sum(1 for r in match_results if r.decision in ("review", "user_confirmed"))
+    not_found_count = sum(1 for r in match_results if r.decision not in ("auto_accept", "review", "user_confirmed") or not r.selected_candidate)
 
-    stat_table = Table(title="匹配统计报告", show_header=True, header_style="bold magenta")
-    stat_table.add_column("匹配等级", style="dim")
-    stat_table.add_column("置信度", justify="center")
+    stat_table = Table(title="匹配决策报告", show_header=True, header_style="bold magenta")
+    stat_table.add_column("准入决策", style="dim")
+    stat_table.add_column("处理方式", justify="center")
     stat_table.add_column("数量", justify="right")
     stat_table.add_column("说明")
 
-    stat_table.add_row("[green]完全精准[/green]", ">= 88%", f"[green]{exact_count}[/green]", "歌名与歌手完美吻合")
-    stat_table.add_row("[cyan]高可信度[/cyan]", "72% - 88%", f"[cyan]{high_count}[/cyan]", "歌名或歌手经规范化后吻合")
-    stat_table.add_row("[yellow]中等匹配[/yellow]", "50% - 72%", f"[yellow]{medium_count}[/yellow]", "可能存在别名或版本差异")
-    stat_table.add_row("[red]未找到/低匹配[/red]", "< 50%", f"[red]{not_found_count}[/red]", "曲库中未收录或无合适匹配项")
+    stat_table.add_row("[green]自动采纳 (auto_accept)[/green]", "直接导入", f"[green]{auto_accept_count}[/green]", "各项指标与版本校验完全吻合")
+    stat_table.add_row("[yellow]需复核 (review)[/yellow]", "询问确认", f"[yellow]{review_count}[/yellow]", "分差较小、低匹配度或存在版本歧义")
+    stat_table.add_row("[red]未找到 (no_match)[/red]", "跳过并记录", f"[red]{not_found_count}[/red]", "曲库中未检索到合适候选")
 
     console.print()
     console.print(stat_table)
 
-    # 4. Handle Medium confidence tracks if not auto_confirm
+    # 4. Handle tracks strictly based on decision
     matched_tracks_to_add: List[str] = []
     unmatched_list: List[str] = []
 
     for r in match_results:
-        if r.status in (ConfidenceLevel.EXACT, ConfidenceLevel.HIGH):
-            if r.selected_candidate:
-                matched_tracks_to_add.append(r.selected_candidate.track.id)
-        elif r.status == ConfidenceLevel.MEDIUM:
-            if auto_confirm:
-                if r.selected_candidate:
-                    matched_tracks_to_add.append(r.selected_candidate.track.id)
+        c = r.selected_candidate
+        src = r.source_track
+        dec = getattr(r, "decision", None) or ("auto_accept" if r.status in (ConfidenceLevel.EXACT, ConfidenceLevel.HIGH) else "review")
+
+        if dec == "auto_accept":
+            if c:
+                matched_tracks_to_add.append(c.track.id)
+            else:
+                unmatched_list.append(f"{src.title} - {src.artist_str}")
+        elif dec in ("review", "user_confirmed"):
+            if dec == "user_confirmed":
+                if c:
+                    matched_tracks_to_add.append(c.track.id)
+            elif auto_confirm:
+                if c:
+                    matched_tracks_to_add.append(c.track.id)
+                else:
+                    unmatched_list.append(f"{src.title} - {src.artist_str}")
             else:
                 # Ask user
-                c = r.selected_candidate
-                src = r.source_track
-                console.print(f"\n[yellow]需确认曲目：[/yellow] 原歌曲: [bold]{src.title}[/bold] - {src.artist_str}")
+                console.print(f"\n[yellow]需人工复核曲目：[/yellow] 原歌曲: [bold]{src.title}[/bold] - {src.artist_str}")
                 if c:
+                    reasons_str = f" [dim]({'; '.join(r.decision_reasons)})[/dim]" if r.decision_reasons else ""
                     console.print(
                         f"  匹配为: [bold cyan]{c.track.title}[/bold cyan] - {c.track.artist_str} "
-                        f"(相似度: {int(c.score * 100)}%)"
+                        f"(相似度: {int(c.score * 100)}%, 等级: {r.status.value}){reasons_str}"
                     )
                     choice = Confirm.ask("  是否采纳该匹配结果？", default=True)
                     if choice:
                         matched_tracks_to_add.append(c.track.id)
                     else:
                         unmatched_list.append(f"{src.title} - {src.artist_str}")
+                else:
+                    unmatched_list.append(f"{src.title} - {src.artist_str}")
         else:
-            unmatched_list.append(f"{r.source_track.title} - {r.source_track.artist_str}")
+            unmatched_list.append(f"{src.title} - {src.artist_str}")
 
     # Save unmatched list to file
     if unmatched_list and output_unmatched:

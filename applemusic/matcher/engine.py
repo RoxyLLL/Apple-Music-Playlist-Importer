@@ -5,8 +5,7 @@ multi-tiered query budgets, and confidence-calibrated stopping conditions.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Dict, List, Optional, Tuple
-from applemusic.client import AppleMusicClient
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 from applemusic.config import Config, get_config
 from applemusic.matcher.cleaner import TextCleaner
 from applemusic.matcher.scorer import TrackScorer
@@ -20,13 +19,19 @@ from applemusic.models import (
     Track,
 )
 
+if TYPE_CHECKING:
+    from applemusic.client import AppleMusicClient
+
 
 class MatchingEngine:
     """Coordinates search queries, candidate collection, and fuzzy scoring."""
 
-    def __init__(self, client: Optional[AppleMusicClient] = None, config: Optional[Config] = None):
+    def __init__(self, client: Optional["AppleMusicClient"] = None, config: Optional[Config] = None):
         self.config = config or get_config()
-        self.client = client or AppleMusicClient(self.config)
+        if client is None:
+            from applemusic.client import AppleMusicClient
+            client = AppleMusicClient(self.config)
+        self.client = client
 
     @staticmethod
     def get_stable_track_key(track: Track) -> Tuple:
@@ -34,8 +39,9 @@ class MatchingEngine:
         Generate a unique stable signature for a track to prevent duplicate network searches.
         Prefers platform + original_id; falls back to normalized core title, primary artist, and duration bucket.
         """
-        if track.original_id and track.source != "unknown":
-            return (track.source, str(track.original_id))
+        orig_id = str(track.original_id).strip() if track.original_id is not None else ""
+        if orig_id and orig_id.lower() not in ("none", "null", "unknown", "undefined") and track.source != "unknown":
+            return (track.source, orig_id)
 
         core_t = TextCleaner.clean_title(track.title).lower()
         pri_a, _ = TextCleaner.parse_artists(track.artists)
@@ -307,10 +313,18 @@ class MatchingEngine:
                     if dec == DecisionStatus.AUTO_ACCEPT.value:
                         break
 
-            # If acceptable candidate found in this storefront, stop early
+            # If auto_accept candidate found in this storefront, stop early across storefronts
             if collected_candidates:
                 temp_scored = [TrackScorer.score(source, cand) for cand in collected_candidates.values()]
-                if any(c.score >= 0.50 for c in temp_scored):
+                temp_scored.sort(key=lambda x: x.score, reverse=True)
+                best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
+                    source,
+                    temp_scored,
+                    auto_accept_threshold=self.config.auto_accept_threshold,
+                    min_review_score=0.45 if relaxed else self.config.min_review_score,
+                    min_score_gap=self.config.min_score_gap,
+                )
+                if dec == DecisionStatus.AUTO_ACCEPT.value:
                     break
 
         if not collected_candidates:

@@ -60,17 +60,22 @@ class SpotifyExtractor(BaseExtractor):
                             source="spotify",
                         ))
 
-                    if tracks:
+                    embed_total = entity.get("trackCount") or entity.get("total") or (entity.get("tracks") or {}).get("total")
+                    if embed_total and embed_total > len(tracks):
+                        # Embed only has a preview/first page; use API to fetch full playlist
+                        pass
+                    elif tracks and len(tracks) < 100:
                         return Playlist(
                             name=name,
                             description=desc,
                             source=self.source_name,
                             tracks=tracks,
+                            total_expected=embed_total or len(tracks),
                         )
         except Exception:
             pass
 
-        # Fallback to public web access token API
+        # Fallback to public web access token API (handles full pagination)
         return self._extract_via_api(playlist_id)
 
     def _extract_via_api(self, playlist_id: str) -> Playlist:
@@ -95,13 +100,17 @@ class SpotifyExtractor(BaseExtractor):
         pl_data = resp.json()
         name = pl_data.get("name", f"Spotify 歌单 {playlist_id}")
         desc = pl_data.get("description")
+        total_expected = pl_data.get("tracks", {}).get("total")
+        warnings: list[str] = []
 
         tracks: list[Track] = []
         next_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=100"
 
-        while next_url and len(tracks) < 2000:
+        MAX_SAFE_TRACKS = 10000
+        while next_url and len(tracks) < MAX_SAFE_TRACKS:
             r = requests.get(next_url, headers=api_headers, timeout=15)
             if r.status_code != 200:
+                warnings.append(f"获取部分曲目失败 (HTTP {r.status_code})，已返回已获取的 {len(tracks)} 首歌曲。")
                 break
             items_data = r.json()
             for item in items_data.get("items", []):
@@ -120,11 +129,16 @@ class SpotifyExtractor(BaseExtractor):
                 ))
             next_url = items_data.get("next")
 
+        if next_url and len(tracks) >= MAX_SAFE_TRACKS:
+            warnings.append(f"Spotify 歌单曲目过多，已达到最大提取限制 ({MAX_SAFE_TRACKS} 首)，后续歌曲已截断。")
+
         return Playlist(
             name=name,
             description=desc,
             source=self.source_name,
             tracks=tracks,
+            total_expected=total_expected,
+            warnings=warnings,
         )
 
     def _resolve_playlist_id(self, source_input: str) -> Optional[str]:

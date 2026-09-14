@@ -10,6 +10,7 @@ import requests
 
 from applemusic.auth import AppleMusicAuth
 from applemusic.config import Config, get_config
+from applemusic.matcher.cleaner import TextCleaner
 from applemusic.models import AppleMusicTrack
 
 
@@ -166,11 +167,12 @@ class AppleMusicClient:
                 is_initiator = True
 
         if wait_event:
-            wait_event.wait(timeout=8.0)
+            wait_event.wait(timeout=32.0)
             if hasattr(self, "_catalog_cache") and cache_key in self._catalog_cache:
                 cache_time, cached_results = self._catalog_cache[cache_key]
                 if time.time() - cache_time < 900:
                     return cached_results
+            return []
 
         try:
             url = f"{self.API_URL}/catalog/{sf}/search"
@@ -358,9 +360,14 @@ class AppleMusicClient:
 
         queries = [clean_t]
         if artist:
-            queries.append(f"{clean_t} {artist.split()[0]}")
+            first_artist = artist.split()[0] if artist.split() else ""
+            if first_artist:
+                queries.append(f"{clean_t} {first_artist}")
         if title.strip() not in queries:
             queries.append(title.strip())
+
+        norm_target_title = TextCleaner.normalize(clean_t).lower()
+        norm_target_artist = TextCleaner.normalize(artist).lower() if artist else ""
 
         for term in queries:
             try:
@@ -373,11 +380,37 @@ class AppleMusicClient:
                 if resp.status_code == 200:
                     data = resp.json().get("results", {}).get("library-songs", {}).get("data", [])
                     if data:
+                        best_cand_id = None
+                        best_score = 0.0
+
                         for it in data:
-                            it_name = it.get("attributes", {}).get("name", "").lower()
-                            if clean_t.lower() in it_name or it_name in clean_t.lower():
-                                return it.get("id")
-                        return data[0].get("id")
+                            attrs = it.get("attributes", {})
+                            it_name = attrs.get("name", "")
+                            it_artist = attrs.get("artistName", "")
+
+                            norm_it_name = TextCleaner.normalize(it_name).lower()
+                            norm_it_artist = TextCleaner.normalize(it_artist).lower()
+
+                            # Calculate title similarity
+                            title_sim = TextCleaner.similarity(norm_target_title, norm_it_name)
+                            if norm_target_title in norm_it_name or norm_it_name in norm_target_title:
+                                title_sim = max(title_sim, 0.85)
+
+                            # Calculate artist similarity if artist was provided
+                            if norm_target_artist and norm_it_artist:
+                                artist_sim = TextCleaner.similarity(norm_target_artist, norm_it_artist)
+                                if norm_target_artist in norm_it_artist or norm_it_artist in norm_target_artist:
+                                    artist_sim = max(artist_sim, 0.85)
+                                combined_score = title_sim * 0.65 + artist_sim * 0.35
+                            else:
+                                combined_score = title_sim
+
+                            if combined_score > best_score and combined_score >= 0.75:
+                                best_score = combined_score
+                                best_cand_id = it.get("id")
+
+                        if best_cand_id:
+                            return best_cand_id
             except Exception:
                 pass
         return None

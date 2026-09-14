@@ -5,9 +5,10 @@ FastAPI Web Application backend for Apple Music Playlist Importer.
 import asyncio
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,7 +50,13 @@ app = FastAPI(title="Apple Music Playlist Importer", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1",
+        "http://localhost",
+        "*"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -108,13 +115,23 @@ async def serve_index():
     return FileResponse(index_file)
 
 
+# In-memory auth validation cache (30s TTL to prevent event-loop choking)
+_auth_validation_cache: Dict[str, Tuple[float, bool, str]] = {}
+
 @app.get("/api/config")
 async def get_config_status():
     config = get_config()
     auth = AppleMusicAuth(config)
     is_valid, sf_info = False, "未配置"
     if config.media_user_token:
-        is_valid, sf_info = auth.validate_user_token()
+        cache_key = config.media_user_token[:24]
+        now = time.time()
+        cached = _auth_validation_cache.get(cache_key)
+        if cached and (now - cached[0] < 30.0):
+            is_valid, sf_info = cached[1], cached[2]
+        else:
+            is_valid, sf_info = await asyncio.to_thread(auth.validate_user_token)
+            _auth_validation_cache[cache_key] = (now, is_valid, sf_info)
 
     masked_token = (
         config.media_user_token[:10] + "..." + config.media_user_token[-8:]
@@ -396,10 +413,6 @@ async def sync_to_apple_music(req: SyncRequest):
 
     def _do_sync():
         client = AppleMusicClient(config)
-        playlist_id = client.create_playlist(name=req.playlist_name, description=req.description or "")
-        if not playlist_id:
-            raise RuntimeError("在 Apple Music 中创建歌单失败，请检查 Token 是否有效")
-
         final_track_ids = list(req.track_ids or [])
         bilibili_added_count = 0
         bilibili_pending_count = 0
@@ -425,6 +438,27 @@ async def sync_to_apple_music(req: SyncRequest):
             if tid and tid not in seen_tids:
                 seen_tids.add(tid)
                 deduped_ids.append(tid)
+
+        if not deduped_ids:
+            msg = (
+                f"没有可写入 Apple Music 的有效歌曲。已下载的 {bilibili_pending_count} 首 B 站本地歌曲尚未完成 iTunes/Apple Music 资料库导入匹配，请稍后重试。"
+                if bilibili_pending_count
+                else "待同步歌曲列表为空，未创建空歌单。"
+            )
+            return {
+                "success": False,
+                "playlist_id": None,
+                "added_count": 0,
+                "bilibili_added_count": 0,
+                "bilibili_pending_count": bilibili_pending_count,
+                "failed_count": 0,
+                "failed_ids": [],
+                "message": msg,
+            }
+
+        playlist_id = client.create_playlist(name=req.playlist_name, description=req.description or "")
+        if not playlist_id:
+            raise RuntimeError("在 Apple Music 中创建歌单失败，请检查 Token 是否有效")
 
         added_count, failed_ids = client.add_tracks_to_playlist(playlist_id, deduped_ids)
 
@@ -510,7 +544,23 @@ async def api_bilibili_batch_download(req: BilibiliBatchDownloadRequest):
                     "error": "B 站未检索到相关视频",
                 })
                 continue
-            best_bvid = cands[0]["bvid"]
+            top = cands[0]
+            # BUG-09: Tier gate: only auto-download Tier 1 or clean Tier 2. Tier 3/4 require user manual confirmation.
+            if top.get("tier", 4) > 2:
+                results.append({
+                    "success": False,
+                    "title": t.title,
+                    "artist": t.artist_str,
+                    "minimum_quality_met": False,
+                    "tier": top.get("tier"),
+                    "match_reason": top.get("match_reason"),
+                    "error": "最高候选为翻唱或杂音视频（未达自动下载标准），请点击候选弹窗手动选择",
+                    "requires_manual_confirmation": True,
+                    "candidates": cands,
+                })
+                continue
+
+            best_bvid = top["bvid"]
             res = download_bilibili_audio(
                 bvid=best_bvid,
                 target_title=t.title,
@@ -544,8 +594,23 @@ async def api_bilibili_download_single_auto(req: BilibiliSingleAutoRequest):
                 "artist": req.artist,
                 "error": "B 站未检索到相关视频",
             }
-        best_bvid = cands[0]["bvid"]
-        cover_url = cands[0].get("pic", "")
+        top = cands[0]
+        # BUG-09: Tier gate: only auto-download Tier 1 or clean Tier 2. Tier 3/4 require user manual confirmation.
+        if top.get("tier", 4) > 2:
+            return {
+                "success": False,
+                "title": req.title,
+                "artist": req.artist,
+                "minimum_quality_met": False,
+                "tier": top.get("tier"),
+                "match_reason": top.get("match_reason"),
+                "error": "最高候选为翻唱或非官方杂音视频，未达自动导入标准，请手动打开候选窗口确认",
+                "requires_manual_confirmation": True,
+                "candidates": cands,
+            }
+
+        best_bvid = top["bvid"]
+        cover_url = top.get("pic", "")
         res = download_bilibili_audio(
             bvid=best_bvid,
             target_title=req.title,

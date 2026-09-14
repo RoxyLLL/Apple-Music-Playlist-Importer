@@ -8,6 +8,8 @@ without requiring manual DevTools (F12) inspection or copy-pasting.
 import asyncio
 import json
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -18,6 +20,13 @@ import websockets
 
 from applemusic.auth import AppleMusicAuth
 from applemusic.config import Config, get_config
+
+
+def find_free_port() -> int:
+    """Find an available TCP port on localhost."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def find_browser_executable() -> Optional[str]:
@@ -41,11 +50,11 @@ def find_browser_executable() -> Optional[str]:
 class BrowserTokenCapturer:
     """Manages launching browser in CDP mode and extracting media-user-token."""
 
-    def __init__(self, port: int = 9238, config: Optional[Config] = None):
-        self.port = port
+    def __init__(self, port: Optional[int] = None, config: Optional[Config] = None):
+        self.port = port or find_free_port()
         self.config = config or get_config()
         self.browser_exe = find_browser_executable()
-        self.profile_dir = os.path.join(tempfile.gettempdir(), "applemusic_sync_login")
+        self.profile_dir = tempfile.mkdtemp(prefix="applemusic_login_")
 
     def capture(
         self,
@@ -89,6 +98,10 @@ class BrowserTokenCapturer:
             try:
                 proc.terminate()
                 proc.wait(timeout=2)
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(self.profile_dir, ignore_errors=True)
             except Exception:
                 pass
 

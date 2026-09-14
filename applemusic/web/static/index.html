@@ -1154,6 +1154,7 @@
                 const chunkIndex = nextChunkIdx++;
                 const { offset, tracks } = chunks[chunkIndex];
 
+                let batchSuccess = false;
                 try {
                   const matchRes = await fetch('/api/match', {
                     method: 'POST',
@@ -1163,19 +1164,38 @@
                       storefront: config.value.storefront
                     })
                   });
-                  const matchData = await matchRes.json();
-                  if (matchData.success && matchData.results) {
-                    matchData.results.forEach((r, idx) => {
-                      allResults[offset + idx] = {
-                        ...r,
-                        selected: r.selected_candidate && (r.status === 'exact' || r.status === 'high' || r.status === 'medium'),
-                        bilibili_downloaded: false,
-                        bilibili_downloading: false,
-                      };
-                    });
+                  if (matchRes.ok) {
+                    const matchData = await matchRes.json();
+                    if (matchData.success && matchData.results) {
+                      batchSuccess = true;
+                      matchData.results.forEach((r, idx) => {
+                        allResults[offset + idx] = {
+                          ...r,
+                          selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
+                          bilibili_downloaded: false,
+                          bilibili_downloading: false,
+                        };
+                      });
+                    }
                   }
                 } catch (batchErr) {
                   console.warn('Batch match error:', batchErr);
+                }
+
+                if (!batchSuccess) {
+                  tracks.forEach((t, idx) => {
+                    allResults[offset + idx] = {
+                      source_track: t,
+                      candidates: [],
+                      selected_candidate: null,
+                      status: 'not_found',
+                      decision: 'error',
+                      decision_reasons: ['检索请求失败或服务异常'],
+                      selected: false,
+                      bilibili_downloaded: false,
+                      bilibili_downloading: false,
+                    };
+                  });
                 }
 
                 completed += tracks.length;
@@ -1244,6 +1264,7 @@
                   matchProgressPercent.value = curPct;
                   currentStatusText.value = `正在极速并发检索 Apple Music 曲库 (${completed}/${totalTracks} 首 · ${curPct}%)...`;
 
+                  let chunkSuccess = false;
                   try {
                     const matchRes = await fetch('/api/match', {
                       method: 'POST',
@@ -1253,18 +1274,36 @@
                         storefront: config.value.storefront
                       })
                     });
-                    const matchData = await matchRes.json();
-                    if (matchData.success) {
-                      const formatted = matchData.results.map(r => ({
-                        ...r,
-                        selected: r.selected_candidate && (r.status === 'exact' || r.status === 'high' || r.status === 'medium'),
-                        bilibili_downloaded: false,
-                        bilibili_downloading: false,
-                      }));
-                      matchResults.value.push(...formatted);
+                    if (matchRes.ok) {
+                      const matchData = await matchRes.json();
+                      if (matchData.success && matchData.results) {
+                        chunkSuccess = true;
+                        const formatted = matchData.results.map(r => ({
+                          ...r,
+                          selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
+                          bilibili_downloaded: false,
+                          bilibili_downloading: false,
+                        }));
+                        matchResults.value.push(...formatted);
+                      }
                     }
                   } catch (batchErr) {
                     console.warn('Batch match error:', batchErr);
+                  }
+
+                  if (!chunkSuccess) {
+                    const fallback = chunk.map(t => ({
+                      source_track: t,
+                      candidates: [],
+                      selected_candidate: null,
+                      status: 'not_found',
+                      decision: 'error',
+                      decision_reasons: ['检索请求失败或服务异常'],
+                      selected: false,
+                      bilibili_downloaded: false,
+                      bilibili_downloading: false,
+                    }));
+                    matchResults.value.push(...fallback);
                   }
 
                   completed += chunk.length;
@@ -1388,7 +1427,7 @@
 
         const selectExactAndHigh = () => {
           matchResults.value.forEach(r => {
-            r.selected = (r.selected_candidate && (r.status === 'exact' || r.status === 'high' || r.status === 'user_confirmed')) || r.bilibili_downloaded;
+            r.selected = (r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed' || r.status === 'user_confirmed')) || r.bilibili_downloaded;
           });
         };
 
@@ -1479,6 +1518,12 @@
           }
         };
 
+        const csvEscape = (val) => {
+          if (val === null || val === undefined) return '""';
+          const str = String(val).replace(/"/g, '""');
+          return `"${str}"`;
+        };
+
         const exportCSV = () => {
           if (matchResults.value.length === 0) return;
           let csv = '原歌名,原歌手,版本标签,AppleMusic歌名,AppleMusic歌手,AppleMusic专辑,匹配度,决策状态,第一二名分差,置信度,AppleMusicID\n';
@@ -1488,7 +1533,13 @@
             const vtags = (r.source_track.version_tags || []).join(';');
             const gap = r.score_gap !== null && r.score_gap !== undefined ? r.score_gap : '';
             const dec = r.decision || '';
-            csv += `"${r.source_track.title}","${r.source_track.artists.join('/')}","${vtags}","${cand ? cand.title : ''}","${cand ? cand.artists.join('/') : ''}","${cand ? cand.album : ''}","${score}","${dec}","${gap}","${r.status}","${cand ? cand.id : ''}"\n`;
+            const sTitle = r.source_track ? r.source_track.title : '';
+            const sArtists = (r.source_track && r.source_track.artists) ? r.source_track.artists.join('/') : '';
+            const cTitle = cand ? cand.title : '';
+            const cArtists = (cand && cand.artists) ? cand.artists.join('/') : '';
+            const cAlbum = cand ? cand.album : '';
+            const cId = cand ? cand.id : '';
+            csv += `${csvEscape(sTitle)},${csvEscape(sArtists)},${csvEscape(vtags)},${csvEscape(cTitle)},${csvEscape(cArtists)},${csvEscape(cAlbum)},${csvEscape(score)},${csvEscape(dec)},${csvEscape(gap)},${csvEscape(r.status)},${csvEscape(cId)}\n`;
           });
           const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
           const link = document.createElement("a");

@@ -447,18 +447,20 @@ def download_bilibili_audio(
         backup_dir = get_backup_download_dir()
         safe_title = sanitize_filename(target_title or "未知曲目")
         safe_artist = sanitize_filename(target_artist or "未知歌手")
-        filename = f"{safe_artist} - {safe_title}.m4a"
+        safe_bvid = sanitize_filename(bvid or "unknown")
+        filename = f"{safe_artist} - {safe_title} [{safe_bvid}].m4a"
         local_path = os.path.join(backup_dir, filename)
 
-        # 0. Local cache fast reuse: If valid M4A already exists, reuse it immediately (0.01s)
+        # 0. Local cache fast reuse: If valid M4A for this specific bvid already exists, reuse it immediately (0.01s)
         if os.path.exists(local_path) and os.path.getsize(local_path) > 102400:
-            logger.info("本地已存在已下载曲目，直接秒级复用: %s", local_path)
+            logger.info("本地已存在该 B 站视频音频 (%s)，直接秒级复用: %s", bvid, local_path)
             auto_imported = False
             auto_dest_path = None
             auto_dir = get_apple_music_auto_add_dir()
             if auto_import_to_apple_music and auto_dir and os.path.isdir(auto_dir):
                 try:
-                    auto_dest_path = os.path.join(auto_dir, filename)
+                    dest_filename = f"{safe_artist} - {safe_title}.m4a"
+                    auto_dest_path = os.path.join(auto_dir, dest_filename)
                     shutil.copy2(local_path, auto_dest_path)
                     auto_imported = True
                     logger.info("复用音频已放入 Apple Music 自动导入目录: %s", auto_dest_path)
@@ -466,6 +468,7 @@ def download_bilibili_audio(
                     logger.warning("复用复制到 Apple Music 自动导入目录失败: %s", copy_err)
             return {
                 "success": True,
+                "bvid": bvid,
                 "filename": filename,
                 "local_path": local_path,
                 "auto_imported": auto_imported,
@@ -612,7 +615,8 @@ def download_bilibili_audio(
         auto_dir = get_apple_music_auto_add_dir()
         if auto_import_to_apple_music and auto_dir and os.path.isdir(auto_dir):
             try:
-                auto_dest_path = os.path.join(auto_dir, filename)
+                dest_filename = f"{safe_artist} - {safe_title}.m4a"
+                auto_dest_path = os.path.join(auto_dir, dest_filename)
                 shutil.copy2(local_path, auto_dest_path)
                 auto_imported = True
                 logger.info("已将音频成功放入 Apple Music 自动导入目录: %s", auto_dest_path)
@@ -621,6 +625,7 @@ def download_bilibili_audio(
 
         return {
             "success": True,
+            "bvid": bvid,
             "filename": filename,
             "local_path": local_path,
             "auto_imported": auto_imported,

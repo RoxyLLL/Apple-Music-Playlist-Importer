@@ -79,12 +79,13 @@ class QQMusicExtractor(BaseExtractor):
             interval = s.get("interval", 0)  # seconds
             duration_ms = interval * 1000 if interval else None
 
+            orig_id = s.get("songmid") or s.get("songid")
             track = Track(
                 title=song_name.strip(),
                 artists=singers,
                 album=album_name.strip() if album_name else None,
                 duration_ms=duration_ms,
-                original_id=str(s.get("songmid") or s.get("songid")),
+                original_id=str(orig_id).strip() if orig_id else None,
                 source="qqmusic",
             )
             tracks.append(track)

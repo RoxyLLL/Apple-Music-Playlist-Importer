@@ -107,6 +107,8 @@ class Playlist(BaseModel):
     cover_url: Optional[str] = None
     source: str = "unknown"
     tracks: List[Track] = Field(default_factory=list)
+    total_expected: Optional[int] = None
+    warnings: List[str] = Field(default_factory=list)
 
     @property
     def track_count(self) -> int:
