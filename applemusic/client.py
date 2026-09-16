@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from applemusic.auth import AppleMusicAuth
+from applemusic.cache import PersistentCache
 from applemusic.config import Config, get_config
 from applemusic.matcher.cleaner import TextCleaner
 from applemusic.models import AppleMusicTrack, BatchDiagnosticSummary, CatalogSearchOutcome
@@ -44,7 +45,7 @@ class AdaptiveRateLimiter:
     shared by all outbound Apple Music Catalog and ISRC queries.
     """
 
-    def __init__(self, target_qps: float = 1.8, max_concurrency: int = 2, circuit_breaker_threshold: int = 5):
+    def __init__(self, target_qps: float = 1.8, max_concurrency: int = 1, circuit_breaker_threshold: int = 5):
         self._lock = threading.Lock()
         self.target_qps = max(0.5, target_qps)
         self.max_concurrency = max_concurrency
@@ -73,8 +74,8 @@ class AdaptiveRateLimiter:
     def circuit_breaker_tripped(self, val: bool):
         self.circuit_broken = val
 
-    def acquire(self, timeout: float = 25.0) -> bool:
-        """Acquire a concurrency slot and rate-limit token, respecting global pause."""
+    def acquire(self, timeout: float = 45.0) -> bool:
+        """Acquire a concurrency slot and rate-limit token, respecting global pause and circuit breaker cooldown."""
         start = time.time()
         remaining = timeout - (time.time() - start)
         if remaining <= 0 or not self._semaphore.acquire(timeout=remaining):
@@ -84,17 +85,16 @@ class AdaptiveRateLimiter:
             while True:
                 with self._lock:
                     now = time.time()
-                    # Check circuit breaker
+                    # Check circuit breaker cooldown
                     if self.circuit_broken:
                         if now < self.circuit_break_until:
-                            self._semaphore.release()
-                            return False
+                            sleep_time = self.circuit_break_until - now
                         else:
                             self.circuit_broken = False
                             self.consecutive_429 = 0
-
+                            sleep_time = 0.0
                     # Check global pause from 429
-                    if now < self.global_pause_until:
+                    elif now < self.global_pause_until:
                         sleep_time = self.global_pause_until - now
                     else:
                         sleep_time = 0.0
@@ -193,6 +193,7 @@ class ClientDiagnostics:
             self.timeout_count = 0
             self.network_error_count = 0
             self.backoff_count = 0
+            self.cache_hits = 0
             self.latencies: List[float] = []
 
     def record(self, kind: str, latency_ms: float = 0.0, backoff: bool = False):
@@ -209,6 +210,8 @@ class ClientDiagnostics:
                 self.ok_hits_count += 1
             elif kind == "no_hits":
                 self.no_hits_count += 1
+            elif kind == "cache_hit":
+                self.cache_hits += 1
             elif kind == "rate_limited":
                 self.rate_limit_count += 1
             elif kind == "auth_failed":
@@ -239,6 +242,7 @@ class ClientDiagnostics:
                 timeouts=self.timeout_count,
                 network_errors=self.network_error_count,
                 upstream_errors=self.upstream_error_count,
+                cache_hits=self.cache_hits,
                 avg_latency_ms=round(avg_lat, 2),
                 p95_latency_ms=round(p95_lat, 2),
                 backoff_count=self.backoff_count,
@@ -255,10 +259,13 @@ class AppleMusicClient:
         self.auth = AppleMusicAuth(self.config)
         self.session = requests.Session()
 
-        # Shared adaptive rate limiter & circuit breaker (conservative 1.8 req/s, 2 concurrent)
-        self.limiter = AdaptiveRateLimiter(target_qps=1.8, max_concurrency=2, circuit_breaker_threshold=5)
+        # Shared adaptive rate limiter & circuit breaker (conservative 1.8 req/s, strict single queue)
+        self.limiter = AdaptiveRateLimiter(target_qps=1.8, max_concurrency=1, circuit_breaker_threshold=5)
         # Shared diagnostics accumulator
         self.diagnostics = ClientDiagnostics()
+
+        # Persistent SQLite cache instance
+        self.persistent_cache = PersistentCache.get_instance()
 
         # Singleflight in-flight query deduplication table
         self._in_flight_lock = threading.Lock()
@@ -269,7 +276,7 @@ class AppleMusicClient:
         self._catalog_cache: Dict[Tuple, Tuple[float, CatalogSearchOutcome]] = {}
 
         # HTTP connection pooling
-        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=1)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
 
@@ -282,6 +289,10 @@ class AppleMusicClient:
             "Origin": "https://music.apple.com",
             "Referer": "https://music.apple.com/",
             "Accept": "application/json",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
             "Content-Type": "application/json",
         })
 
@@ -314,6 +325,12 @@ class AppleMusicClient:
         sf = storefront or self.config.storefront or "cn"
         cache_key = ("isrc", sf, clean_isrc)
 
+        # 0. Check persistent SQLite cache (instant 0ms resolution)
+        cached_p = self.persistent_cache.get_catalog(sf, "isrc", clean_isrc)
+        if cached_p:
+            self.diagnostics.record("cache_hit")
+            return cached_p
+
         # 1. Check in-memory cache (only valid hits/no_hits are cached)
         if cache_key in self._catalog_cache:
             cache_time, cached_outcome = self._catalog_cache[cache_key]
@@ -332,7 +349,7 @@ class AppleMusicClient:
                 is_initiator = True
 
         if wait_event:
-            wait_event.wait(timeout=28.0)
+            wait_event.wait(timeout=35.0)
             with self._in_flight_lock:
                 if cache_key in self._in_flight_results:
                     return self._in_flight_results[cache_key]
@@ -346,8 +363,8 @@ class AppleMusicClient:
 
         try:
             for attempt in range(retries):
-                # Acquire rate limiter slot
-                acquired = self.limiter.acquire(timeout=30.0)
+                # Acquire rate limiter slot (waits out 429 pause / circuit breaker smoothly)
+                acquired = self.limiter.acquire(timeout=45.0)
                 if not acquired:
                     is_cool, cd = self.limiter.is_cooling_down()
                     last_outcome = CatalogSearchOutcome(
@@ -398,6 +415,7 @@ class AppleMusicClient:
                             safe_message=None if results else "Apple Music 未收录此 ISRC 对应曲目",
                         )
                         self._catalog_cache[cache_key] = (time.time(), outcome)
+                        self.persistent_cache.set_catalog(sf, "isrc", clean_isrc, outcome)
                         self.diagnostics.record(kind, latency_ms=latency_ms)
                         last_outcome = outcome
                         return outcome
@@ -413,8 +431,8 @@ class AppleMusicClient:
                             request_id=_extract_request_id(resp.headers),
                             safe_message=f"Apple Music 频控受限 (HTTP 429)，退避 {round(pause, 1)} 秒",
                         )
-                        if attempt < retries - 1 and not self.limiter.circuit_broken:
-                            time.sleep(min(pause, 4.0))
+                        if attempt < retries - 1:
+                            time.sleep(pause + 0.3)
                             continue
                         break
 
@@ -510,6 +528,12 @@ class AppleMusicClient:
 
         cache_key = (sf, clean_q, limit)
 
+        # 0. Check persistent SQLite cache (instant 0ms resolution)
+        cached_p = self.persistent_cache.get_catalog(sf, "term", clean_q, limit_val=limit)
+        if cached_p:
+            self.diagnostics.record("cache_hit")
+            return cached_p
+
         # 1. Check in-memory cache (only valid hits/no_hits are cached)
         if cache_key in self._catalog_cache:
             cache_time, cached_outcome = self._catalog_cache[cache_key]
@@ -528,7 +552,7 @@ class AppleMusicClient:
                 is_initiator = True
 
         if wait_event:
-            wait_event.wait(timeout=30.0)
+            wait_event.wait(timeout=35.0)
             with self._in_flight_lock:
                 if cache_key in self._in_flight_results:
                     return self._in_flight_results[cache_key]
@@ -546,8 +570,8 @@ class AppleMusicClient:
 
         try:
             for attempt in range(retries):
-                # Acquire rate limiter slot
-                acquired = self.limiter.acquire(timeout=30.0)
+                # Acquire rate limiter slot (waits out 429 pause / circuit breaker smoothly)
+                acquired = self.limiter.acquire(timeout=45.0)
                 if not acquired:
                     is_cool, cd = self.limiter.is_cooling_down()
                     last_outcome = CatalogSearchOutcome(
@@ -599,6 +623,7 @@ class AppleMusicClient:
                         )
                         # Cache only verified ok/no_hits
                         self._catalog_cache[cache_key] = (time.time(), outcome)
+                        self.persistent_cache.set_catalog(sf, "term", clean_q, outcome, limit_val=limit)
                         if len(self._catalog_cache) > 4000:
                             self._catalog_cache.clear()
 
@@ -617,8 +642,8 @@ class AppleMusicClient:
                             request_id=_extract_request_id(resp.headers),
                             safe_message=f"Apple Music 频控限制 (HTTP 429)，预计 {round(pause, 1)} 秒后可恢复",
                         )
-                        if attempt < retries - 1 and not self.limiter.circuit_broken:
-                            time.sleep(min(pause, 4.0))
+                        if attempt < retries - 1:
+                            time.sleep(pause + 0.3)
                             continue
                         break
 

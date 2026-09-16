@@ -139,6 +139,7 @@ class BatchDiagnosticSummary(BaseModel):
     timeouts: int = 0
     network_errors: int = 0
     upstream_errors: int = 0
+    cache_hits: int = 0
     avg_latency_ms: float = 0.0
     p95_latency_ms: float = 0.0
     backoff_count: int = 0

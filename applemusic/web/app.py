@@ -409,11 +409,13 @@ async def match_tracks(req: MatchRequest):
         engine.match_playlist, dummy_playlist, sf, 2
     )
     diagnostics = client.get_diagnostics(sf)
+    cache_stats = client.persistent_cache.get_stats()
 
     return {
         "success": True,
         "results": [r.model_dump() for r in results],
         "diagnostics": diagnostics.model_dump(),
+        "cache_stats": cache_stats,
     }
 
 
@@ -438,11 +440,34 @@ async def rematch_tracks(req: RematchRequest):
         2,
     )
     diagnostics = client.get_diagnostics(sf)
+    cache_stats = client.persistent_cache.get_stats()
 
     return {
         "success": True,
         "results": [r.model_dump() for r in results],
         "diagnostics": diagnostics.model_dump(),
+        "cache_stats": cache_stats,
+    }
+
+
+@app.get("/api/cache/stats")
+async def get_cache_stats():
+    client, _ = get_shared_engine()
+    return {
+        "success": True,
+        "stats": client.persistent_cache.get_stats(),
+    }
+
+
+@app.post("/api/cache/clear")
+async def clear_cache():
+    client, _ = get_shared_engine()
+    cat_del, mat_del = client.persistent_cache.clear_expired()
+    return {
+        "success": True,
+        "cleared_catalog": cat_del,
+        "cleared_match": mat_del,
+        "stats": client.persistent_cache.get_stats(),
     }
 
 

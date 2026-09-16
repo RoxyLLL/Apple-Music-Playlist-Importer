@@ -9,11 +9,14 @@ Verifies:
 6. Diagnostics tracking.
 """
 
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import requests
 
+from applemusic.cache import PersistentCache
 from applemusic.config import Config
 from applemusic.client import AppleMusicClient, AdaptiveRateLimiter, parse_retry_after
 from applemusic.models import Track, Playlist, SongMatchResult, CatalogSearchOutcome, AppleMusicTrack
@@ -92,12 +95,21 @@ class TestAdaptiveRateLimiter(unittest.TestCase):
 
 class TestClientCatalogResilience(unittest.TestCase):
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
         self.config = Config(
             developer_token="dummy_dev_token",
             storefront="cn",
         )
         self.client = AppleMusicClient(self.config)
         self.client.limiter = AdaptiveRateLimiter(target_qps=1000.0, max_concurrency=10)
+        self.client.persistent_cache = PersistentCache(Path(self.temp_dir.name) / "test.db")
+
+    def tearDown(self):
+        self.client.persistent_cache.close()
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
 
     @patch.object(requests.Session, "get")
     def test_200_with_hits(self, mock_get):
@@ -227,10 +239,21 @@ class TestClientCatalogResilience(unittest.TestCase):
 
 class TestMatcherEngineResilience(unittest.TestCase):
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
         self.config = Config(developer_token="dummy_dev_token", storefront="cn")
         self.client = AppleMusicClient(self.config)
         self.client.limiter = AdaptiveRateLimiter(target_qps=1000.0, max_concurrency=10)
+        self.client.persistent_cache = PersistentCache(Path(self.temp_dir.name) / "test.db")
         self.engine = MatchingEngine(self.client)
+        self.engine.persistent_cache = self.client.persistent_cache
+
+    def tearDown(self):
+        self.client.persistent_cache.close()
+        self.engine.persistent_cache.close()
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
 
     @patch.object(AppleMusicClient, "search_catalog")
     def test_genuine_no_match_classification(self, mock_search):

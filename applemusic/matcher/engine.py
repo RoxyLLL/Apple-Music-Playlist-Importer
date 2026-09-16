@@ -35,6 +35,8 @@ class MatchingEngine:
             from applemusic.client import AppleMusicClient
             client = AppleMusicClient(self.config)
         self.client = client
+        from applemusic.cache import PersistentCache
+        self.persistent_cache = PersistentCache.get_instance()
 
     @staticmethod
     def get_stable_track_key(track: Track) -> Tuple:
@@ -295,19 +297,69 @@ class MatchingEngine:
                     stop_expansion = True
 
         # -------------------------------------------------------------
-        # Tier 1 - 4: Multi-Tiered Query Expansion Budget
+        # Streamlined Query Budget for Initial Matching (Max 1-2 targeted queries)
         # -------------------------------------------------------------
-        tiered_queries = TextCleaner.generate_tiered_queries(
-            title=source.title,
-            artists=source.artists,
-            album=source.album,
-            version_tags=version_tags,
-        )
+        primary_q = f"{core_title} {primary_artist}".strip() if primary_artist else core_title
+        queries_to_run: List[str] = [primary_q] if primary_q else []
 
-        for tier, q_str in tiered_queries:
-            if stop_expansion:
-                break
+        def _evaluate_current():
+            if not collected_candidates:
+                return None, ConfidenceLevel.NOT_FOUND, DecisionStatus.NO_MATCH.value, [], None
+            temp_scored = [TrackScorer.score(source, cand) for cand in collected_candidates.values()]
+            temp_scored.sort(key=lambda x: x.score, reverse=True)
+            return TrackScorer.evaluate_candidates(
+                source,
+                temp_scored,
+                auto_accept_threshold=self.config.auto_accept_threshold,
+                min_review_score=self.config.min_review_score,
+                min_score_gap=self.config.min_score_gap,
+            )
 
+        # 1. Primary Query: core_title + primary_artist
+        if not stop_expansion and queries_to_run:
+            q_str = queries_to_run[0]
+            query_attempts += 1
+            outcome = self.client.search_catalog(q_str, storefront=sf, limit=self.config.search_limit)
+            outcomes.append(outcome)
+
+            if outcome.kind == "ok":
+                for r in outcome.tracks:
+                    if r.id not in collected_candidates:
+                        collected_candidates[r.id] = r
+                best, conf, dec, reasons, gap = _evaluate_current()
+                if dec == DecisionStatus.AUTO_ACCEPT.value:
+                    stop_expansion = True
+                else:
+                    # Candidates found but not auto-accepted: schedule 1 refined fallback if available
+                    raw_title = source.title.strip()
+                    if version_tags and primary_artist:
+                        queries_to_run.append(f"{core_title} {primary_artist} {version_tags[0]}")
+                    elif source.album and primary_artist:
+                        clean_alb = TextCleaner.clean_title(source.album)
+                        if clean_alb:
+                            queries_to_run.append(f"{core_title} {primary_artist} {clean_alb}")
+                    elif raw_title and raw_title.lower() != core_title.lower() and primary_artist:
+                        queries_to_run.append(f"{raw_title} {primary_artist}")
+            elif outcome.kind == "no_hits":
+                # Primary query returned 0 hits.
+                # If raw title differs from core title, schedule 1 fallback query with raw title
+                raw_title = source.title.strip()
+                if raw_title and raw_title.lower() != core_title.lower() and primary_artist:
+                    queries_to_run.append(f"{raw_title} {primary_artist}")
+                elif not primary_artist and raw_title and raw_title.lower() != core_title.lower():
+                    queries_to_run.append(raw_title)
+            else:
+                has_partial_failures = True
+                failures.append(f"{q_str}: {outcome.safe_message or outcome.kind}")
+                if outcome.kind == "auth_failed":
+                    stop_expansion = True
+                elif outcome.kind == "rate_limited":
+                    rate_limited_retry_after = outcome.retry_after_seconds
+                    stop_expansion = True
+
+        # 2. Secondary Query (executed only if needed and scheduled, max 1 extra query)
+        if not stop_expansion and len(queries_to_run) > 1:
+            q_str = queries_to_run[1]
             query_attempts += 1
             outcome = self.client.search_catalog(q_str, storefront=sf, limit=self.config.search_limit)
             outcomes.append(outcome)
@@ -326,21 +378,6 @@ class MatchingEngine:
                 elif outcome.kind == "rate_limited":
                     rate_limited_retry_after = outcome.retry_after_seconds
                     stop_expansion = True
-
-            if collected_candidates:
-                temp_scored = [TrackScorer.score(source, cand) for cand in collected_candidates.values()]
-                temp_scored.sort(key=lambda x: x.score, reverse=True)
-
-                best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
-                    source,
-                    temp_scored,
-                    auto_accept_threshold=self.config.auto_accept_threshold,
-                    min_review_score=self.config.min_review_score,
-                    min_score_gap=self.config.min_score_gap,
-                )
-
-                if dec == DecisionStatus.AUTO_ACCEPT.value:
-                    break
 
         return self._evaluate_and_aggregate(
             source=source,
@@ -425,37 +462,60 @@ class MatchingEngine:
 
             return res
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_key = {
-                executor.submit(_worker_task, unique_tracks[k]): k
-                for k in unique_keys
-            }
-
-            for future in as_completed(future_to_key):
-                key = future_to_key[future]
+        # Check persistent match cache first for instant 0ms resolution
+        to_query_keys: List[Tuple] = []
+        for key in unique_keys:
+            key_str = ":".join(str(x) for x in key)
+            cached_match = self.persistent_cache.get_match(sf, key_str)
+            if cached_match:
                 indices = key_to_indices[key]
-                try:
-                    match_res = future.result()
-                except Exception as e:
-                    match_res = SongMatchResult(
-                        source_track=unique_tracks[key],
-                        candidates=[],
-                        selected_candidate=None,
-                        status=ConfidenceLevel.NOT_FOUND,
-                        decision="error",
-                        decision_reasons=[f"检索处理异常: {str(e)}"],
-                        search_status="network_error",
-                        search_incomplete=True,
-                    )
-
-                # Broadcast result to all identical track locations
                 for idx in indices:
-                    res_copy = match_res.model_copy(deep=True)
+                    res_copy = cached_match.model_copy(deep=True)
                     res_copy.source_track = playlist.tracks[idx]
                     results[idx] = res_copy
                     completed_count += 1
                     if on_progress:
                         on_progress(completed_count, total, res_copy)
+            else:
+                to_query_keys.append(key)
+
+        if to_query_keys:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_key = {
+                    executor.submit(_worker_task, unique_tracks[k]): k
+                    for k in to_query_keys
+                }
+
+                for future in as_completed(future_to_key):
+                    key = future_to_key[future]
+                    indices = key_to_indices[key]
+                    try:
+                        match_res = future.result()
+                    except Exception as e:
+                        match_res = SongMatchResult(
+                            source_track=unique_tracks[key],
+                            candidates=[],
+                            selected_candidate=None,
+                            status=ConfidenceLevel.NOT_FOUND,
+                            decision="error",
+                            decision_reasons=[f"检索处理异常: {str(e)}"],
+                            search_status="network_error",
+                            search_incomplete=True,
+                        )
+
+                    # Persist confident or verified no-match outcomes
+                    if match_res.decision in ("auto_accept", "user_confirmed", "no_match") and not match_res.search_incomplete:
+                        key_str = ":".join(str(x) for x in key)
+                        self.persistent_cache.set_match(sf, key_str, match_res)
+
+                    # Broadcast result to all identical track locations
+                    for idx in indices:
+                        res_copy = match_res.model_copy(deep=True)
+                        res_copy.source_track = playlist.tracks[idx]
+                        results[idx] = res_copy
+                        completed_count += 1
+                        if on_progress:
+                            on_progress(completed_count, total, res_copy)
 
         return [r for r in results if r is not None]
 
@@ -665,6 +725,13 @@ class MatchingEngine:
                         search_status="network_error",
                         search_incomplete=True,
                     )
+
+                # Persist confident or verified no-match outcomes
+                if match_res.decision in ("auto_accept", "user_confirmed", "no_match") and not match_res.search_incomplete:
+                    key = self.get_stable_track_key(tracks[idx])
+                    key_str = ":".join(str(x) for x in key)
+                    self.persistent_cache.set_match(sf, key_str, match_res)
+
                 results[idx] = match_res
                 completed_count += 1
                 if on_progress:
