@@ -6,12 +6,18 @@
   <title>Apple Music Playlist Importer</title>
   <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
   <link rel="apple-touch-icon" href="/static/app_icon.png">
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Vue 3 CDN -->
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <!-- FontAwesome 6 -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <!-- Tailwind CSS: Local bundle with CDN fallback -->
+  <script src="/static/tailwind.js"></script>
+  <script>window.tailwind || document.write('<script src="https://cdn.tailwindcss.com"><\/script>')</script>
+
+  <!-- Vue 3: Local bundle with multi-CDN fallback -->
+  <script src="/static/vue.global.prod.js"></script>
+  <script>window.Vue || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"><\/script>')</script>
+  <script>window.Vue || document.write('<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"><\/script>')</script>
+
+  <!-- FontAwesome 6: Local bundle with CDN fallback -->
+  <link rel="stylesheet" href="/static/fontawesome/css/all.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" onerror="this.onerror=null;">
   <script>
     tailwind.config = {
       theme: {
@@ -34,7 +40,7 @@
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
-    [v-cloak] { display: none; }
+    [v-cloak] { display: none !important; }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #d1d1d6; border-radius: 4px; }
@@ -1073,10 +1079,14 @@
 
   <!-- VUE 3 APPLICATION SCRIPT -->
   <script>
-    const { createApp, ref, computed, onMounted } = Vue;
+    try {
+      if (typeof Vue === 'undefined') {
+        throw new Error('Vue 核心库未载入，请检查本地静态资源');
+      }
+      const { createApp, ref, computed, onMounted } = Vue;
 
-    createApp({
-      setup() {
+      createApp({
+        setup() {
         // Core State
         const inputTab = ref('netease'); // 'netease' | 'qqmusic' | 'spotify' | 'local'
         const sourceInput = ref('');
@@ -2328,6 +2338,14 @@
         };
       }
     }).mount('#app');
+    } catch (err) {
+      console.error('界面挂载异常:', err);
+      var appEl = document.getElementById('app');
+      if (appEl) {
+        appEl.removeAttribute('v-cloak');
+        appEl.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;"><div style="max-width:480px;background:white;padding:36px;border-radius:20px;box-shadow:0 12px 36px rgba(0,0,0,0.08);text-align:center;"><div style="font-size:46px;margin-bottom:14px;">⚠️</div><h2 style="font-size:19px;font-weight:bold;color:#1d1d1f;margin-bottom:8px;">界面渲染引擎加载异常</h2><p style="font-size:13px;color:#6e6e73;line-height:1.6;margin-bottom:22px;">' + (err.message || err) + '。<br>请尝试刷新界面或重新启动应用。</p><button onclick="location.reload()" style="background:#fa243c;color:white;border:none;padding:10px 24px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity 0.2s;">刷新界面</button></div></div>';
+      }
+    }
   </script>
 </body>
 </html>
