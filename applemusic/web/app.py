@@ -406,7 +406,7 @@ async def match_tracks(req: MatchRequest):
 
     dummy_playlist = Playlist(name="temp", tracks=req.tracks)
     results: List[SongMatchResult] = await asyncio.to_thread(
-        engine.match_playlist, dummy_playlist, sf, 2
+        engine.match_playlist, dummy_playlist, sf, 1
     )
     diagnostics = client.get_diagnostics(sf)
     cache_stats = client.persistent_cache.get_stats()
@@ -437,7 +437,7 @@ async def rematch_tracks(req: RematchRequest):
         sf,
         req.relaxed_mode,
         req.fallback_storefronts,
-        2,
+        1,
     )
     diagnostics = client.get_diagnostics(sf)
     cache_stats = client.persistent_cache.get_stats()

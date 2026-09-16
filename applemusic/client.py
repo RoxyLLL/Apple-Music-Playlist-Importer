@@ -45,13 +45,14 @@ class AdaptiveRateLimiter:
     shared by all outbound Apple Music Catalog and ISRC queries.
     """
 
-    def __init__(self, target_qps: float = 1.8, max_concurrency: int = 1, circuit_breaker_threshold: int = 5):
+    def __init__(self, target_qps: float = 1.0, max_concurrency: int = 1, circuit_breaker_threshold: int = 6):
         self._lock = threading.Lock()
-        self.target_qps = max(0.5, target_qps)
+        self.target_qps = max(0.1, target_qps)
         self.max_concurrency = max_concurrency
         self.circuit_breaker_threshold = circuit_breaker_threshold
         self._tokens = float(max_concurrency)
         self._last_token_time = time.time()
+        self._last_request_time = 0.0
 
         self._semaphore = threading.BoundedSemaphore(max_concurrency)
         self.global_pause_until = 0.0
@@ -90,7 +91,7 @@ class AdaptiveRateLimiter:
     def circuit_breaker_tripped(self, val: bool):
         self.circuit_broken = val
 
-    def acquire(self, timeout: float = 45.0) -> bool:
+    def acquire(self, timeout: float = 60.0) -> bool:
         """Acquire a concurrency slot and rate-limit token, respecting global pause and circuit breaker cooldown."""
         start = time.time()
 
@@ -113,20 +114,25 @@ class AdaptiveRateLimiter:
         if remaining <= 0 or not self._semaphore.acquire(timeout=remaining):
             return False
 
-        # 3. Refill and consume token
+        # 3. Refill and consume token, enforcing minimal pacing
         try:
+            min_interval = 1.0 / self.target_qps if self.target_qps > 0 else 1.0
             while True:
                 with self._lock:
                     now = time.time()
                     elapsed = now - self._last_token_time
                     self._tokens = min(float(self.max_concurrency), self._tokens + elapsed * self.target_qps)
                     self._last_token_time = now
-                    if self._tokens >= 1.0:
+
+                    time_since_last = now - self._last_request_time
+                    if self._tokens >= 1.0 and (self._last_request_time == 0.0 or time_since_last >= min_interval):
                         self._tokens -= 1.0
+                        self._last_request_time = now
                         return True
                     else:
-                        needed = (1.0 - self._tokens) / self.target_qps
-                        sleep_time = max(0.05, needed)
+                        token_wait = max(0.0, (1.0 - self._tokens) / self.target_qps)
+                        interval_wait = max(0.0, min_interval - time_since_last)
+                        sleep_time = max(0.05, max(token_wait, interval_wait))
 
                 if (time.time() - start) + sleep_time > timeout:
                     self._semaphore.release()
@@ -150,16 +156,16 @@ class AdaptiveRateLimiter:
             self.consecutive_429 += 1
             jitter = random.uniform(0.3, 0.8)
             if retry_after is not None and retry_after > 0:
-                backoff = min(float(retry_after), 8.0) + jitter
+                backoff = float(retry_after) + jitter
             else:
-                backoff = min(2.5 + 1.5 * min(self.consecutive_429 - 1, 3), 8.0) + jitter
+                backoff = min(4.0 + 2.0 * (self.consecutive_429 - 1), 16.0) + jitter
 
             self.global_pause_until = max(self.global_pause_until, now + backoff)
 
-            # If threshold consecutive 429s occur, trip circuit breaker for a reasonable cooldown (max 12s)
+            # If threshold consecutive 429s occur, trip circuit breaker for a reasonable cooldown (max 18s)
             if self.consecutive_429 >= self.circuit_breaker_threshold:
                 self._circuit_broken = True
-                self.circuit_break_until = now + min(12.0, max(6.0, backoff))
+                self.circuit_break_until = now + min(18.0, max(8.0, backoff))
 
             return backoff
 
@@ -280,8 +286,8 @@ class AppleMusicClient:
         self.auth = AppleMusicAuth(self.config)
         self.session = requests.Session()
 
-        # Shared adaptive rate limiter & circuit breaker (conservative 1.8 req/s, strict single queue)
-        self.limiter = AdaptiveRateLimiter(target_qps=1.8, max_concurrency=1, circuit_breaker_threshold=5)
+        # Shared adaptive rate limiter & circuit breaker (stable 1.0 req/s, strict interval pacing)
+        self.limiter = AdaptiveRateLimiter(target_qps=1.0, max_concurrency=1, circuit_breaker_threshold=6)
         # Shared diagnostics accumulator
         self.diagnostics = ClientDiagnostics()
 
@@ -580,7 +586,7 @@ class AppleMusicClient:
         query: str,
         storefront: Optional[str] = None,
         limit: int = 10,
-        retries: int = 3,
+        retries: int = 4,
     ) -> CatalogSearchOutcome:
         """
         Search songs in Apple Music Catalog for a specific storefront.

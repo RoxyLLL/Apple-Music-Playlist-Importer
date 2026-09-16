@@ -1328,8 +1328,8 @@
               console.warn('Preflight check error:', pfErr);
             }
 
-            // Start matching tracks with adaptive throttled pipeline (batch 8, conservative pacing)
-            const BATCH_SIZE = 8;
+            // Start matching tracks with adaptive throttled pipeline (batch 6, conservative pacing)
+            const BATCH_SIZE = 6;
             const totalTracks = playlistTracks.length;
             let completed = 0;
             matchProgressPercent.value = 0;
@@ -1367,37 +1367,55 @@
                 let batchSuccess = false;
                 let chunkHasRateLimit = false;
                 let chunkMaxRetryAfter = 0;
-                try {
-                  const matchRes = await fetch('/api/match', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      tracks: tracks,
-                      storefront: config.value.storefront
-                    })
-                  });
-                  if (matchRes.ok) {
-                    const matchData = await matchRes.json();
-                    if (matchData.success && matchData.results) {
-                      batchSuccess = true;
-                      matchData.results.forEach((r, idx) => {
-                        allResults[offset + idx] = {
-                          ...r,
-                          selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
-                          bilibili_downloaded: false,
-                          bilibili_downloading: false,
-                        };
-                        if (r.search_status === 'rate_limited') {
-                          chunkHasRateLimit = true;
-                          if (r.retry_after_seconds && r.retry_after_seconds > chunkMaxRetryAfter) {
-                            chunkMaxRetryAfter = r.retry_after_seconds;
+                let chunkAttempts = 0;
+                const MAX_CHUNK_RETRIES = 2;
+
+                while (chunkAttempts <= MAX_CHUNK_RETRIES) {
+                  chunkAttempts++;
+                  chunkHasRateLimit = false;
+                  chunkMaxRetryAfter = 0;
+                  try {
+                    const matchRes = await fetch('/api/match', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        tracks: tracks,
+                        storefront: config.value.storefront
+                      })
+                    });
+                    if (matchRes.ok) {
+                      const matchData = await matchRes.json();
+                      if (matchData.success && matchData.results) {
+                        batchSuccess = true;
+                        matchData.results.forEach((r, idx) => {
+                          allResults[offset + idx] = {
+                            ...r,
+                            selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
+                            bilibili_downloaded: false,
+                            bilibili_downloading: false,
+                          };
+                          if (r.search_status === 'rate_limited') {
+                            chunkHasRateLimit = true;
+                            if (r.retry_after_seconds && r.retry_after_seconds > chunkMaxRetryAfter) {
+                              chunkMaxRetryAfter = r.retry_after_seconds;
+                            }
                           }
-                        }
-                      });
+                        });
+                      }
                     }
+                  } catch (batchErr) {
+                    console.warn('Batch match error:', batchErr);
                   }
-                } catch (batchErr) {
-                  console.warn('Batch match error:', batchErr);
+
+                  // If this chunk had rate-limited tracks, wait out cooldown and retry this chunk!
+                  if (chunkHasRateLimit && chunkAttempts <= MAX_CHUNK_RETRIES) {
+                    const coolTime = Math.min(18, Math.max(5.0, chunkMaxRetryAfter || 6.0));
+                    currentStatusText.value = `Apple Music 频控保护生效中，避让冷却 ${Math.ceil(coolTime)} 秒后自动重试本批 (${chunkAttempts}/${MAX_CHUNK_RETRIES})...`;
+                    matchResults.value = [...allResults];
+                    await new Promise(r => setTimeout(r, coolTime * 1000));
+                    continue;
+                  }
+                  break;
                 }
 
                 if (!batchSuccess) {
@@ -1423,14 +1441,8 @@
                 currentStatusText.value = `正在检索 Apple Music 曲库 (${Math.min(completed, totalTracks)}/${totalTracks} 首 · ${curPct}%)...`;
                 matchResults.value = [...allResults];
 
-                // Adaptive rate limit cooldown or healthy pacing between chunks
-                if (chunkHasRateLimit) {
-                  const coolTime = Math.min(15, Math.max(3.0, chunkMaxRetryAfter || 4.0));
-                  currentStatusText.value = `Apple Music 频控保护生效中，智能避让冷却 ${Math.ceil(coolTime)} 秒后自动继续...`;
-                  await new Promise(r => setTimeout(r, coolTime * 1000));
-                } else {
-                  await new Promise(r => setTimeout(r, 600));
-                }
+                // Steady pacing between chunks: 1.0s keeps Apple rolling quota completely unstressed
+                await new Promise(r => setTimeout(r, 1000));
               }
             };
 
@@ -1944,7 +1956,7 @@
             failCount: 0,
           };
 
-          const BATCH_SIZE = 5;
+          const BATCH_SIZE = 4;
           const sf = rematchStorefront.value || config.value.storefront || 'cn';
           const fallbackList = rematchFallback.value ? ['hk', 'tw', 'us'] : [];
 
@@ -1961,67 +1973,81 @@
 
             let chunkHasRateLimit = false;
             let chunkMaxRetryAfter = 0;
-            try {
-              const res = await fetch('/api/rematch', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  tracks: chunk.map(c => c.source_track),
-                  storefront: sf,
-                  relaxed_mode: rematchRelaxed.value,
-                  fallback_storefronts: fallbackList,
-                })
-              });
-              const data = await res.json();
-              if (data.success && data.results) {
-                data.results.forEach((matchRes, idx) => {
-                  const originalItem = chunk[idx];
-                  if (originalItem) {
-                    originalItem.candidates = matchRes.candidates || [];
-                    originalItem.selected_candidate = matchRes.selected_candidate;
-                    originalItem.status = matchRes.status;
-                    originalItem.decision = matchRes.decision;
-                    originalItem.decision_reasons = matchRes.decision_reasons;
-                    originalItem.score_gap = matchRes.score_gap;
-                    originalItem.search_status = matchRes.search_status;
-                    originalItem.search_attempts = matchRes.search_attempts;
-                    originalItem.search_failures = matchRes.search_failures;
-                    originalItem.retry_after_seconds = matchRes.retry_after_seconds;
-                    originalItem.search_incomplete = matchRes.search_incomplete;
+            let chunkAttempts = 0;
+            const MAX_REMATCH_CHUNK_RETRIES = 2;
 
-                    if (matchRes.search_status === 'rate_limited') {
-                      chunkHasRateLimit = true;
-                      if (matchRes.retry_after_seconds && matchRes.retry_after_seconds > chunkMaxRetryAfter) {
-                        chunkMaxRetryAfter = matchRes.retry_after_seconds;
+            while (chunkAttempts <= MAX_REMATCH_CHUNK_RETRIES) {
+              chunkAttempts++;
+              chunkHasRateLimit = false;
+              chunkMaxRetryAfter = 0;
+              try {
+                const res = await fetch('/api/rematch', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    tracks: chunk.map(c => c.source_track),
+                    storefront: sf,
+                    relaxed_mode: rematchRelaxed.value,
+                    fallback_storefronts: fallbackList,
+                  })
+                });
+                const data = await res.json();
+                if (data.success && data.results) {
+                  data.results.forEach((matchRes, idx) => {
+                    const originalItem = chunk[idx];
+                    if (originalItem) {
+                      originalItem.candidates = matchRes.candidates || [];
+                      originalItem.selected_candidate = matchRes.selected_candidate;
+                      originalItem.status = matchRes.status;
+                      originalItem.decision = matchRes.decision;
+                      originalItem.decision_reasons = matchRes.decision_reasons;
+                      originalItem.score_gap = matchRes.score_gap;
+                      originalItem.search_status = matchRes.search_status;
+                      originalItem.search_attempts = matchRes.search_attempts;
+                      originalItem.search_failures = matchRes.search_failures;
+                      originalItem.retry_after_seconds = matchRes.retry_after_seconds;
+                      originalItem.search_incomplete = matchRes.search_incomplete;
+
+                      if (matchRes.search_status === 'rate_limited') {
+                        chunkHasRateLimit = true;
+                        if (matchRes.retry_after_seconds && matchRes.retry_after_seconds > chunkMaxRetryAfter) {
+                          chunkMaxRetryAfter = matchRes.retry_after_seconds;
+                        }
+                      }
+
+                      if (matchRes.selected_candidate) {
+                        originalItem.selected = true;
                       }
                     }
-
-                    if (matchRes.selected_candidate) {
-                      originalItem.selected = true;
-                      rematchProgress.value.successCount++;
-                    } else {
-                      rematchProgress.value.failCount++;
-                    }
-                  }
-                });
+                  });
+                }
+              } catch (e) {
+                console.error('批量重试检索异常:', e);
               }
-            } catch (e) {
-              console.error('批量重试检索异常:', e);
-              rematchProgress.value.failCount += chunk.length;
-            } finally {
-              chunk.forEach(item => { item.rematching = false; });
-              completedCount += chunk.length;
-              rematchProgress.value.current = Math.min(completedCount, unmatchedList.length);
-              rematchProgress.value.percent = Math.round((rematchProgress.value.current / unmatchedList.length) * 100);
+
+              if (chunkHasRateLimit && chunkAttempts <= MAX_REMATCH_CHUNK_RETRIES) {
+                const coolTime = Math.min(18, Math.max(5.0, chunkMaxRetryAfter || 6.0));
+                await new Promise(r => setTimeout(r, coolTime * 1000));
+                continue;
+              }
+              break;
             }
 
-            // Adaptive rate limit cooldown or pacing between chunks
-            if (chunkHasRateLimit) {
-              const coolTime = Math.min(15, Math.max(3.0, chunkMaxRetryAfter || 4.0));
-              await new Promise(r => setTimeout(r, coolTime * 1000));
-            } else {
-              await new Promise(r => setTimeout(r, 600));
-            }
+            chunk.forEach(originalItem => {
+              if (originalItem.selected_candidate) {
+                rematchProgress.value.successCount++;
+              } else {
+                rematchProgress.value.failCount++;
+              }
+            });
+
+            chunk.forEach(item => { item.rematching = false; });
+            completedCount += chunk.length;
+            rematchProgress.value.current = Math.min(completedCount, unmatchedList.length);
+            rematchProgress.value.percent = Math.round((rematchProgress.value.current / unmatchedList.length) * 100);
+
+            // Steady pacing between rematch chunks
+            await new Promise(r => setTimeout(r, 1000));
           }
 
           const successCount = rematchProgress.value.successCount;

@@ -407,12 +407,12 @@ class MatchingEngine:
         self,
         playlist: Playlist,
         storefront: Optional[str] = None,
-        max_workers: int = 2,
+        max_workers: int = 1,
         on_progress: Optional[Callable[[int, int, SongMatchResult], None]] = None,
     ) -> List[SongMatchResult]:
         """
         Match all tracks in a playlist with pre-search stable track deduplication
-        and batch early-abort protection for auth loss or rate limits.
+        and batch early-abort protection for auth loss.
         """
         sf = storefront or self.config.storefront or "cn"
         total = len(playlist.tracks)
@@ -445,14 +445,8 @@ class MatchingEngine:
                 init_retry = max(getattr(limiter, "circuit_break_until", 0) - time.time(), 5.0)
             else:
                 is_cooling, cd_remaining = limiter.is_cooling_down()
-                if is_cooling and cd_remaining > 0.2:
-                    # If cooldown is brief (<= 3s), pause smoothly instead of aborting the batch
-                    if cd_remaining <= 3.0:
-                        time.sleep(cd_remaining + 0.1)
-                    else:
-                        init_status = "rate_limited"
-                        init_reason = f"Apple Music 频控保护生效中，预计 {round(cd_remaining, 1)} 秒后自动恢复"
-                        init_retry = cd_remaining
+                if is_cooling and cd_remaining > 0.05:
+                    time.sleep(cd_remaining + 0.15)
         abort_state: Dict[str, Any] = {"status": init_status, "reason": init_reason, "retry_after": init_retry}
 
         def _worker_task(track: Track) -> SongMatchResult:
@@ -479,7 +473,7 @@ class MatchingEngine:
                         abort_state["reason"] = "批次已中止：Apple Music 授权已失效，请重新连接 Apple ID"
                     elif res.search_status == "rate_limited" and getattr(self.client.limiter, "circuit_broken", False):
                         abort_state["status"] = "rate_limited"
-                        abort_state["reason"] = "批次已暂停：触发 Apple Music 频控保护，等待重试"
+                        abort_state["reason"] = "批次已暂停：触发 Apple Music 频控保护熔断，等待重试"
                         abort_state["retry_after"] = res.retry_after_seconds
 
             return res
@@ -746,17 +740,18 @@ class MatchingEngine:
         storefront: Optional[str] = None,
         relaxed: bool = True,
         fallback_storefronts: Optional[List[str]] = None,
-        max_workers: int = 2,
+        max_workers: int = 1,
         on_progress: Optional[Callable[[int, int, SongMatchResult], None]] = None,
     ) -> List[SongMatchResult]:
         """
-        Batch rematch a list of tracks with concurrency and batch early abort.
+        Batch rematch a list of tracks with safe pacing and auth loss early abort.
         """
         sf = storefront or self.config.storefront or "cn"
         total = len(tracks)
         results: List[Optional[SongMatchResult]] = [None] * total
         completed_count = 0
 
+        # Batch early-abort coordinator
         batch_abort_lock = threading.Lock()
         init_status = None
         init_reason = None
@@ -769,13 +764,8 @@ class MatchingEngine:
                 init_retry = max(getattr(limiter, "circuit_break_until", 0) - time.time(), 5.0)
             else:
                 is_cooling, cd_remaining = limiter.is_cooling_down()
-                if is_cooling and cd_remaining > 0.2:
-                    if cd_remaining <= 3.0:
-                        time.sleep(cd_remaining + 0.1)
-                    else:
-                        init_status = "rate_limited"
-                        init_reason = f"Apple Music 频控保护生效中，预计 {round(cd_remaining, 1)} 秒后自动恢复"
-                        init_retry = cd_remaining
+                if is_cooling and cd_remaining > 0.05:
+                    time.sleep(cd_remaining + 0.15)
         abort_state: Dict[str, Any] = {"status": init_status, "reason": init_reason, "retry_after": init_retry}
 
         def _worker_rematch(track: Track) -> SongMatchResult:
@@ -802,7 +792,7 @@ class MatchingEngine:
                         abort_state["reason"] = "批次已中止：Apple Music 授权已失效，请重新连接 Apple ID"
                     elif res.search_status == "rate_limited" and getattr(self.client.limiter, "circuit_broken", False):
                         abort_state["status"] = "rate_limited"
-                        abort_state["reason"] = "批次已暂停：触发 Apple Music 频控保护，等待重试"
+                        abort_state["reason"] = "批次已暂停：触发 Apple Music 频控保护熔断，等待重试"
                         abort_state["retry_after"] = res.retry_after_seconds
 
             return res
