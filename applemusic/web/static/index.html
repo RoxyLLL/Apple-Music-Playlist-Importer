@@ -236,22 +236,26 @@
                 <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
                 待复核 {{ mediumConfidenceCount }} 首
               </span>
-              <span v-if="unmatchedCount > 0" class="text-rose-600 font-medium flex items-center gap-1">
+              <span v-if="noMatchCount > 0" class="text-neutral-600 font-medium flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-neutral-400"></span>
+                确认未收录 {{ noMatchCount }} 首
+              </span>
+              <span v-if="retryableCount > 0" class="text-rose-600 font-medium flex items-center gap-1">
                 <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                未找到 {{ unmatchedCount }} 首
+                检索受限/失败 {{ retryableCount }} 首
               </span>
             </div>
           </div>
 
           <!-- Quick Filters & Actions -->
-          <div class="flex items-center space-x-2">
+          <div class="flex items-center space-x-2 flex-wrap gap-y-1">
             <!-- Filter Pills -->
-            <div class="bg-neutral-100 p-0.5 rounded-lg flex text-xs">
+            <div class="bg-neutral-100 p-0.5 rounded-lg flex text-xs flex-wrap">
               <button @click="filter = 'all'" :class="filter === 'all' ? 'bg-white font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">全部</button>
-              <button @click="filter = 'matched'" :class="filter === 'matched' ? 'bg-white text-emerald-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">高匹配</button>
-              <button @click="filter = 'confirmed'" :class="filter === 'confirmed' ? 'bg-white text-indigo-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">已确认</button>
+              <button @click="filter = 'matched'" :class="filter === 'matched' ? 'bg-white text-emerald-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">已匹配</button>
               <button @click="filter = 'medium'" :class="filter === 'medium' ? 'bg-white text-amber-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">待复核</button>
-              <button @click="filter = 'unmatched'" :class="filter === 'unmatched' ? 'bg-white text-rose-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">未匹配</button>
+              <button @click="filter = 'no_match'" :class="filter === 'no_match' ? 'bg-white text-neutral-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">确认未收录</button>
+              <button @click="filter = 'failed'" :class="filter === 'failed' ? 'bg-white text-rose-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">失败/重试</button>
             </div>
 
             <!-- Rematch Action Shortcut in toolbar -->
@@ -262,8 +266,13 @@
               <span>重搜未匹配 ({{ unmatchedCount }})</span>
             </button>
 
+            <!-- Diagnostics Summary Button -->
+            <button @click="openDiagnosticsModal" class="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200/80 rounded-lg text-xs font-medium text-neutral-600 transition" title="查看检索诊断统计">
+              <i class="fa-solid fa-chart-pie mr-1"></i>诊断
+            </button>
+
             <!-- Export CSV -->
-            <button @click="exportCSV" class="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200/80 rounded-lg text-xs font-medium text-neutral-600 transition" title="导出匹配结果为 CSV 文件">
+            <button @click="exportCSV" class="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200/80 rounded-lg text-xs font-medium text-neutral-600 transition" title="导出匹配结果为 CSV 文件 (含诊断状态)">
               <i class="fa-solid fa-download mr-1"></i>导出
             </button>
           </div>
@@ -281,11 +290,12 @@
               </div>
               <div>
                 <div class="text-xs font-bold text-appledark flex items-center gap-1.5 flex-wrap">
-                  <span>初次检索有 <span class="text-rose-600 font-extrabold text-sm">{{ unmatchedCount }}</span> 首歌曲未在 Apple Music 匹配</span>
+                  <span v-if="retryableCount > 0">有 <span class="text-rose-600 font-extrabold text-sm">{{ retryableCount }}</span> 首检索受限/异常，另有 <span class="text-neutral-700 font-extrabold text-sm">{{ noMatchCount }}</span> 首确认未收录</span>
+                  <span v-else>初次检索有 <span class="text-neutral-700 font-extrabold text-sm">{{ noMatchCount }}</span> 首歌曲确认未在 Apple Music 收录</span>
                   <span class="text-[10px] bg-sky-600 text-white px-2 py-0.5 rounded-full font-bold shadow-2xs">支持深度重新检索</span>
                 </div>
                 <div class="text-[11px] text-applegray mt-0.5">
-                  可使用深度去噪（去除影视剧/主题曲等噪音）重新检索 Apple Music，或尝试跨区曲库探测；若曲库确未收录，亦可一键从 B 站补全！
+                  可使用深度去噪重新检索 Apple Music，或尝试跨区曲库探测；仅对确实未收录曲目支持从 B 站补全！
                 </div>
               </div>
             </div>
@@ -297,14 +307,15 @@
               <button @click="triggerBatchRematch" :disabled="rematchLoading || bilibiliBatchLoading"
                 class="px-4 py-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-sky-500/25 disabled:opacity-50">
                 <i :class="rematchLoading ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-arrows-rotate'"></i>
-                <span>{{ rematchLoading ? '正在深度重搜 Apple Music...' : '重新检索未收录 (' + unmatchedCount + ' 首)' }}</span>
+                <span>{{ rematchLoading ? '正在重新检索 Apple Music...' : '重新检索 (' + unmatchedCount + ' 首)' }}</span>
               </button>
 
-              <!-- Bilibili fallback button -->
+              <!-- Bilibili fallback button (Protected: only feeds genuine no_match) -->
               <button @click="batchDownloadBilibili" :disabled="bilibiliBatchLoading || rematchLoading"
-                class="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-applered border border-rose-200 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-2xs disabled:opacity-50">
+                class="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-applered border border-rose-200 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-2xs disabled:opacity-50"
+                :title="noMatchCount > 0 ? '从 B 站批量补全确认未收录的歌曲' : '无确认未收录的歌曲'">
                 <i class="fa-solid fa-wand-magic-sparkles"></i>
-                <span>从 B 站补全</span>
+                <span>从 B 站补全 ({{ noMatchCount }})</span>
               </button>
 
               <!-- Open Folder Button -->
@@ -499,7 +510,7 @@
                   </div>
                 </template>
                 <template v-else>
-                  <div class="flex items-center space-x-2 text-[11px]">
+                  <div class="flex items-center space-x-2 text-[11px] truncate">
                     <span v-if="item.bilibili_downloaded" class="text-emerald-600 font-bold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                       <i class="fa-solid fa-circle-check"></i>
                       <span>已从 B 站补全 (已入 Apple Music)</span>
@@ -512,7 +523,23 @@
                       <i class="fa-solid fa-circle-exclamation text-[10px] text-amber-500"></i>
                       <span>{{ item.bilibili_error }}</span>
                     </span>
-                    <span v-else class="text-rose-500 italic">Apple Music 曲库未收录</span>
+                    <span v-else-if="item.search_status === 'auth_required'" class="text-purple-600 font-semibold flex items-center gap-1">
+                      <i class="fa-solid fa-lock text-[10px]"></i>
+                      <span>Apple ID 授权失效，请重新登录</span>
+                    </span>
+                    <span v-else-if="item.search_status === 'rate_limited'" class="text-amber-600 font-semibold flex items-center gap-1" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
+                      <i class="fa-solid fa-hourglass-half text-[10px]"></i>
+                      <span>频控受限 (429)，可等待片刻后重试</span>
+                    </span>
+                    <span v-else-if="['timeout', 'network_error', 'upstream_error', 'search_error'].includes(item.search_status)" class="text-rose-600 font-medium flex items-center gap-1" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
+                      <i class="fa-solid fa-circle-exclamation text-[10px]"></i>
+                      <span>检索服务暂不可用 (尚未判断是否收录)</span>
+                    </span>
+                    <span v-else-if="item.decision === 'unprocessed'" class="text-neutral-400 font-medium flex items-center gap-1">
+                      <i class="fa-solid fa-pause text-[10px]"></i>
+                      <span>未执行 (等待重试)</span>
+                    </span>
+                    <span v-else class="text-neutral-500 italic">Apple Music 当前区域未找到匹配歌曲</span>
                   </div>
                 </template>
               </div>
@@ -546,14 +573,26 @@
                   <span v-else-if="item.bilibili_downloading" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-applered border border-rose-200 animate-pulse">
                     下载中...
                   </span>
-                  <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-600 border border-rose-200">
-                    未找到
+                  <span v-else-if="item.search_status === 'auth_required'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                    需授权
+                  </span>
+                  <span v-else-if="item.search_status === 'rate_limited'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                    频控限制
+                  </span>
+                  <span v-else-if="['timeout', 'network_error', 'upstream_error', 'search_error'].includes(item.search_status)" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 cursor-help" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
+                    检索失败
+                  </span>
+                  <span v-else-if="item.decision === 'unprocessed'" class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-500 border border-neutral-200">
+                    待重试
+                  </span>
+                  <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200">
+                    未收录
                   </span>
                 </template>
               </div>
 
               <!-- Actions: Preview & Change Candidate OR Rematch / Search / Bilibili -->
-              <div class="w-44 flex items-center justify-end space-x-1.5 flex-shrink-0">
+              <div class="w-48 flex items-center justify-end space-x-1.5 flex-shrink-0">
                 <template v-if="item.status === 'matching'">
                   <span class="text-[11px] text-neutral-300">--</span>
                 </template>
@@ -574,6 +613,14 @@
                   </button>
                 </template>
                 <template v-else>
+                  <!-- Auth required fast action -->
+                  <button v-if="item.search_status === 'auth_required'" @click="showAuthModal = true"
+                    class="px-2 py-1 rounded-md text-[11px] font-bold border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition flex items-center space-x-1 shadow-2xs"
+                    title="重新连接 Apple ID 授权">
+                    <i class="fa-brands fa-apple text-[11px]"></i>
+                    <span>连接</span>
+                  </button>
+
                   <!-- Single Track Rematch button -->
                   <button @click="rematchSingleTrack(item)" :disabled="item.rematching"
                     class="px-2 py-1 rounded-md text-[11px] font-bold border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 transition flex items-center space-x-1 shadow-2xs disabled:opacity-50"
@@ -589,8 +636,9 @@
                     搜曲库
                   </button>
 
-                  <!-- Single Bilibili auto-download button -->
-                  <button @click="openBilibiliModal(item)"
+                  <!-- Single Bilibili auto-download button (ONLY shown when confirmed no_match or already downloaded) -->
+                  <button v-if="item.search_status === 'no_match' || item.bilibili_downloaded || item.bilibili_downloading"
+                    @click="openBilibiliModal(item)"
                     :disabled="item.bilibili_downloading || item.bilibili_downloaded"
                     :class="item.bilibili_downloaded ? 'bg-emerald-50 text-emerald-700 border-emerald-200 cursor-default' : (item.bilibili_downloading ? 'bg-rose-50 text-applered border-rose-200 cursor-wait' : 'bg-rose-50 text-applered hover:bg-rose-100 border-rose-200 cursor-pointer')"
                     class="px-2 py-1 rounded-md text-[11px] font-bold border transition flex items-center space-x-1 shadow-xs">
@@ -899,6 +947,128 @@
     </div>
 
 
+    <!-- ==================== MODAL 5: DIAGNOSTICS MODAL ==================== -->
+    <div v-if="showDiagnosticsModal" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-appleborder space-y-5 animate-in fade-in zoom-in duration-200">
+        
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div class="flex items-center space-x-2.5">
+            <span class="w-8 h-8 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center text-sm font-bold shadow-xs">
+              <i class="fa-solid fa-chart-pie"></i>
+            </span>
+            <div>
+              <h3 class="text-base font-bold text-appledark">Apple Music 检索健康诊断中心</h3>
+              <p class="text-xs text-applegray mt-0.5">实时监测客户端频控、网关延迟与异常分流状态</p>
+            </div>
+          </div>
+          <button @click="showDiagnosticsModal = false" class="w-7 h-7 rounded-full flex items-center justify-center text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition">
+            <i class="fa-solid fa-xmark text-sm"></i>
+          </button>
+        </div>
+
+        <!-- Metrics Grid -->
+        <div v-if="diagnosticsData" class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+          <div class="p-3 bg-neutral-50 rounded-xl border border-neutral-200/60">
+            <div class="text-[11px] text-neutral-500 font-medium">总请求 / 成功</div>
+            <div class="text-lg font-extrabold text-appledark mt-0.5">
+              {{ diagnosticsData.total_requests }} <span class="text-xs text-neutral-400 font-normal">/ {{ diagnosticsData.success_requests }}</span>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-xl border" :class="diagnosticsData.rate_limit_429_count > 0 ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-neutral-50 border-neutral-200/60 text-appledark'">
+            <div class="text-[11px] font-medium" :class="diagnosticsData.rate_limit_429_count > 0 ? 'text-amber-600' : 'text-neutral-500'">429 频控触发</div>
+            <div class="text-lg font-extrabold mt-0.5">{{ diagnosticsData.rate_limit_429_count }} <span class="text-xs font-normal">次</span></div>
+          </div>
+
+          <div class="p-3 rounded-xl border" :class="diagnosticsData.auth_failure_count > 0 ? 'bg-purple-50 border-purple-200 text-purple-700' : 'bg-neutral-50 border-neutral-200/60 text-appledark'">
+            <div class="text-[11px] font-medium" :class="diagnosticsData.auth_failure_count > 0 ? 'text-purple-600' : 'text-neutral-500'">鉴权失效 (401/403)</div>
+            <div class="text-lg font-extrabold mt-0.5">{{ diagnosticsData.auth_failure_count }} <span class="text-xs font-normal">次</span></div>
+          </div>
+
+          <div class="p-3 rounded-xl border" :class="(diagnosticsData.timeout_count + diagnosticsData.network_error_count) > 0 ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-neutral-50 border-neutral-200/60 text-appledark'">
+            <div class="text-[11px] font-medium" :class="(diagnosticsData.timeout_count + diagnosticsData.network_error_count) > 0 ? 'text-rose-600' : 'text-neutral-500'">超时 / 网络异常</div>
+            <div class="text-lg font-extrabold mt-0.5">{{ diagnosticsData.timeout_count + diagnosticsData.network_error_count }} <span class="text-xs font-normal">次</span></div>
+          </div>
+        </div>
+
+        <!-- Latency & Circuit Breaker status -->
+        <div v-if="diagnosticsData" class="flex flex-wrap items-center justify-between p-3 bg-neutral-50/80 rounded-xl text-xs gap-2 border border-neutral-200/60">
+          <div class="flex items-center space-x-3">
+            <span class="text-neutral-500">P95 响应延迟: <b class="text-neutral-800 font-mono">{{ diagnosticsData.latency_p95_ms }} ms</b></span>
+            <span>|</span>
+            <span class="text-neutral-500">熔断保护状态:
+              <b v-if="diagnosticsData.circuit_breaker_tripped" class="text-rose-600 font-bold">已熔断 (暂停检索)</b>
+              <b v-else class="text-emerald-600 font-bold">健康良好</b>
+            </span>
+          </div>
+          <div v-if="diagnosticsData.cooldown_remaining_seconds > 0" class="text-amber-700 font-bold bg-amber-100/70 px-2 py-0.5 rounded text-[11px] animate-pulse">
+            频控冷却中: 剩余 {{ Math.round(diagnosticsData.cooldown_remaining_seconds) }} 秒
+          </div>
+        </div>
+
+        <!-- Problematic songs in current match results -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs font-bold text-neutral-700">
+            <span>当前列表中受限 / 异常曲目 ({{ retryableCount }} 首)</span>
+            <span class="text-[11px] font-normal text-neutral-400">此类曲目不会被错误判断为未收录，更不会推向 B 站</span>
+          </div>
+
+          <div v-if="retryableCount > 0" class="max-h-48 overflow-y-auto divide-y divide-neutral-100 border border-neutral-200/70 rounded-xl text-xs">
+            <div v-for="(item, idx) in matchResults.filter(r => ['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed'].includes(r.search_status || r.decision) && !r.selected_candidate && !r.bilibili_downloaded)" :key="idx"
+              class="p-2.5 hover:bg-neutral-50 flex items-center justify-between space-x-2">
+              <div class="min-w-0 flex-1">
+                <div class="font-medium text-neutral-900 truncate">{{ item.source_track.title }} - {{ item.source_track.artists.join('/') }}</div>
+                <div class="text-[10px] text-neutral-500 truncate mt-0.5">
+                  <span v-if="item.search_status === 'rate_limited'" class="text-amber-600 font-semibold">429 频控限制</span>
+                  <span v-else-if="item.search_status === 'auth_required'" class="text-purple-600 font-semibold">401 授权凭证失效</span>
+                  <span v-else-if="item.search_status === 'timeout'" class="text-rose-600 font-semibold">请求超时</span>
+                  <span v-else-if="item.search_status === 'network_error'" class="text-rose-600 font-semibold">网络连接中断</span>
+                  <span v-else class="text-neutral-500 font-semibold">等待重试</span>
+                  <span v-if="item.decision_reasons && item.decision_reasons.length > 0" class="ml-1 text-neutral-400">({{ item.decision_reasons[0] }})</span>
+                </div>
+              </div>
+              <button @click="rematchSingleTrack(item)" :disabled="item.rematching"
+                class="px-2 py-1 bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200 rounded-lg text-[11px] font-bold transition flex items-center gap-1 flex-shrink-0">
+                <i :class="item.rematching ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-arrows-rotate'"></i>
+                <span>单曲重试</span>
+              </button>
+            </div>
+          </div>
+          <div v-else class="py-4 text-center text-xs text-neutral-400 border border-neutral-100 rounded-xl bg-neutral-50/50">
+            暂无受限或异常曲目，所有曲目检索均已完成并已确认状态！
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs">
+          <div class="flex items-center space-x-2">
+            <button @click="refreshDiagnostics" :disabled="loadingDiagnostics"
+              class="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200/80 rounded-xl font-medium text-neutral-700 transition flex items-center space-x-1">
+              <i :class="loadingDiagnostics ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-rotate-right'"></i>
+              <span>刷新指标</span>
+            </button>
+            <button @click="resetDiagnostics"
+              class="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200/80 rounded-xl font-medium text-neutral-500 hover:text-rose-600 transition">
+              清空统计
+            </button>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button v-if="retryableCount > 0" @click="showDiagnosticsModal = false; triggerBatchRematch();"
+              class="px-4 py-1.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white rounded-xl font-bold transition shadow-xs">
+              重试受限曲目 ({{ retryableCount }})
+            </button>
+            <button @click="showDiagnosticsModal = false"
+              class="px-4 py-1.5 bg-neutral-900 hover:bg-black text-white rounded-xl font-bold transition">
+              关闭
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
   </div>
 
   <!-- VUE 3 APPLICATION SCRIPT -->
@@ -1119,7 +1289,36 @@
             targetPlaylistName.value = pl.name || '导入歌单';
             const playlistTracks = pl.tracks || parseData.tracks || [];
 
-            // Start matching tracks with high-speed Keep-Alive pipeline
+            // Preflight check before starting batch matching
+            currentStatusText.value = '正在执行 Apple Music 连通性与授权预检...';
+            try {
+              const pfRes = await fetch('/api/preflight', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ storefront: config.value.storefront })
+              });
+              if (pfRes.ok) {
+                const pfData = await pfRes.json();
+                if (!pfData.can_proceed) {
+                  if (pfData.kind === 'rate_limited') {
+                    const waitSec = Math.round(pfData.retry_after_seconds || 15);
+                    alert(`【频控保护】Apple Music 当前正处于访问限制冷却中 (预计剩余 ${waitSec} 秒)，请稍后再试，避免连续请求导致更长时间限制。`);
+                  } else if (pfData.kind === 'auth_failed') {
+                    alert(`【授权失效】Apple Music 授权异常: ${pfData.reason}。请重新连接 Apple ID。`);
+                    showAuthModal.value = true;
+                  } else {
+                    alert(`【服务异常】无法连接 Apple Music 曲库: ${pfData.reason}。`);
+                  }
+                  loading.value = false;
+                  currentStatusText.value = '';
+                  return;
+                }
+              }
+            } catch (pfErr) {
+              console.warn('Preflight check error:', pfErr);
+            }
+
+            // Start matching tracks with adaptive throttled pipeline
             const BATCH_SIZE = 15;
             const totalTracks = playlistTracks.length;
             let completed = 0;
@@ -1131,6 +1330,7 @@
               candidates: [],
               selected_candidate: null,
               status: 'matching',
+              search_status: 'matching',
               selected: false,
               bilibili_downloaded: false,
               bilibili_downloading: false,
@@ -1189,8 +1389,9 @@
                       candidates: [],
                       selected_candidate: null,
                       status: 'not_found',
+                      search_status: 'network_error',
                       decision: 'error',
-                      decision_reasons: ['检索请求失败或服务异常'],
+                      decision_reasons: ['检索服务异常或网络中断，尚未判断是否收录'],
                       selected: false,
                       bilibili_downloaded: false,
                       bilibili_downloading: false,
@@ -1203,9 +1404,6 @@
                 matchProgressPercent.value = curPct;
                 currentStatusText.value = `正在检索 Apple Music 曲库 (${Math.min(completed, totalTracks)}/${totalTracks} 首 · ${curPct}%)...`;
                 matchResults.value = [...allResults];
-
-                // Small pacing delay to ensure rate limit window drains smoothly
-                await new Promise(r => setTimeout(r, 200));
               }
             };
 
@@ -1258,11 +1456,40 @@
                 matchResults.value = [];
                 matchProgressPercent.value = 0;
 
+                // Preflight check before starting batch matching
+                currentStatusText.value = '正在执行 Apple Music 连通性与授权预检...';
+                try {
+                  const pfRes = await fetch('/api/preflight', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ storefront: config.value.storefront })
+                  });
+                  if (pfRes.ok) {
+                    const pfData = await pfRes.json();
+                    if (!pfData.can_proceed) {
+                      if (pfData.kind === 'rate_limited') {
+                        const waitSec = Math.round(pfData.retry_after_seconds || 15);
+                        alert(`【频控保护】Apple Music 当前正处于访问限制冷却中 (预计剩余 ${waitSec} 秒)，请稍后再试。`);
+                      } else if (pfData.kind === 'auth_failed') {
+                        alert(`【授权失效】Apple Music 授权异常: ${pfData.reason}。请重新连接 Apple ID。`);
+                        showAuthModal.value = true;
+                      } else {
+                        alert(`【服务异常】无法连接 Apple Music 曲库: ${pfData.reason}。`);
+                      }
+                      loading.value = false;
+                      currentStatusText.value = '';
+                      return;
+                    }
+                  }
+                } catch (pfErr) {
+                  console.warn('Preflight check error:', pfErr);
+                }
+
                 for (let i = 0; i < totalTracks; i += BATCH_SIZE) {
                   const chunk = data.playlist.tracks.slice(i, i + BATCH_SIZE);
                   const curPct = Math.round((completed / totalTracks) * 100);
                   matchProgressPercent.value = curPct;
-                  currentStatusText.value = `正在极速并发检索 Apple Music 曲库 (${completed}/${totalTracks} 首 · ${curPct}%)...`;
+                  currentStatusText.value = `正在并发检索 Apple Music 曲库 (${completed}/${totalTracks} 首 · ${curPct}%)...`;
 
                   let chunkSuccess = false;
                   try {
@@ -1297,8 +1524,9 @@
                       candidates: [],
                       selected_candidate: null,
                       status: 'not_found',
+                      search_status: 'network_error',
                       decision: 'error',
-                      decision_reasons: ['检索请求失败或服务异常'],
+                      decision_reasons: ['检索服务异常或网络中断，尚未判断是否收录'],
                       selected: false,
                       bilibili_downloaded: false,
                       bilibili_downloading: false,
@@ -1395,23 +1623,63 @@
         // Computed Filters & Stats
         const filteredResults = computed(() => {
           if (filter.value === 'matched') {
-            return matchResults.value.filter(r => (r.status === 'exact' || r.status === 'high') && r.status !== 'user_confirmed');
+            return matchResults.value.filter(r => (r.status === 'exact' || r.status === 'high' || r.decision === 'auto_accept') && r.status !== 'user_confirmed');
           } else if (filter.value === 'confirmed') {
             return matchResults.value.filter(r => r.status === 'user_confirmed');
           } else if (filter.value === 'medium') {
             return matchResults.value.filter(r => (r.status === 'medium' || r.decision === 'review') && r.status !== 'user_confirmed');
-          } else if (filter.value === 'unmatched') {
-            return matchResults.value.filter(r => r.status === 'not_found' || r.status === 'low');
+          } else if (filter.value === 'no_match') {
+            return matchResults.value.filter(r => (r.search_status === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded);
+          } else if (filter.value === 'failed') {
+            return matchResults.value.filter(r => ['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed'].includes(r.search_status || r.decision) && !r.selected_candidate && !r.bilibili_downloaded);
           }
           return matchResults.value;
         });
 
-        const highConfidenceCount = computed(() => matchResults.value.filter(r => (r.status === 'exact' || r.status === 'high') && r.status !== 'user_confirmed').length);
+        const highConfidenceCount = computed(() => matchResults.value.filter(r => (r.status === 'exact' || r.status === 'high' || r.decision === 'auto_accept') && r.status !== 'user_confirmed').length);
         const userConfirmedCount = computed(() => matchResults.value.filter(r => r.status === 'user_confirmed').length);
         const mediumConfidenceCount = computed(() => matchResults.value.filter(r => (r.status === 'medium' || r.decision === 'review') && r.status !== 'user_confirmed').length);
-        const unmatchedCount = computed(() => matchResults.value.filter(r => r.status === 'not_found' || r.status === 'low').length);
+        const noMatchCount = computed(() => matchResults.value.filter(r => (r.search_status === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded).length);
+        const retryableCount = computed(() => matchResults.value.filter(r => ['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed'].includes(r.search_status || r.decision) && !r.selected_candidate && !r.bilibili_downloaded).length);
+        const unmatchedCount = computed(() => matchResults.value.filter(r => !r.selected_candidate && !r.bilibili_downloaded).length);
         const matchedCount = computed(() => matchResults.value.filter(r => r.selected_candidate || r.bilibili_downloaded).length);
         const selectedTracksCount = computed(() => matchResults.value.filter(r => r.selected && (r.selected_candidate || r.bilibili_downloaded)).length);
+
+        // Diagnostics State & Methods
+        const showDiagnosticsModal = ref(false);
+        const diagnosticsData = ref(null);
+        const loadingDiagnostics = ref(false);
+
+        const openDiagnosticsModal = async () => {
+          showDiagnosticsModal.value = true;
+          await refreshDiagnostics();
+        };
+
+        const refreshDiagnostics = async () => {
+          loadingDiagnostics.value = true;
+          try {
+            const sf = config.value.storefront || 'cn';
+            const res = await fetch(`/api/diagnostics?storefront=${encodeURIComponent(sf)}`);
+            const data = await res.json();
+            if (data.success && data.diagnostics) {
+              diagnosticsData.value = data.diagnostics;
+            }
+          } catch (e) {
+            console.error('获取诊断信息失败:', e);
+          } finally {
+            loadingDiagnostics.value = false;
+          }
+        };
+
+        const resetDiagnostics = async () => {
+          if (!confirm('确定清空当前诊断统计数据吗？')) return;
+          try {
+            await fetch('/api/diagnostics/reset', { method: 'POST' });
+            await refreshDiagnostics();
+          } catch (e) {
+            alert('重置诊断信息失败: ' + e.message);
+          }
+        };
 
         const isAllSelected = computed(() => {
           const selectable = filteredResults.value.filter(r => r.selected_candidate || r.bilibili_downloaded);
@@ -1526,7 +1794,7 @@
 
         const exportCSV = () => {
           if (matchResults.value.length === 0) return;
-          let csv = '原歌名,原歌手,版本标签,AppleMusic歌名,AppleMusic歌手,AppleMusic专辑,匹配度,决策状态,第一二名分差,置信度,AppleMusicID\n';
+          let csv = '原歌名,原歌手,版本标签,AppleMusic歌名,AppleMusic歌手,AppleMusic专辑,匹配度,决策状态,检索状态,尝试次数,失败原因,第一二名分差,置信度,AppleMusicID\n';
           matchResults.value.forEach(r => {
             const cand = r.selected_candidate ? r.selected_candidate.track : null;
             const score = r.selected_candidate ? Math.round(r.selected_candidate.score * 100) + '%' : '0%';
@@ -1539,7 +1807,10 @@
             const cArtists = (cand && cand.artists) ? cand.artists.join('/') : '';
             const cAlbum = cand ? cand.album : '';
             const cId = cand ? cand.id : '';
-            csv += `${csvEscape(sTitle)},${csvEscape(sArtists)},${csvEscape(vtags)},${csvEscape(cTitle)},${csvEscape(cArtists)},${csvEscape(cAlbum)},${csvEscape(score)},${csvEscape(dec)},${csvEscape(gap)},${csvEscape(r.status)},${csvEscape(cId)}\n`;
+            const searchStatus = r.search_status || (cand ? 'ok' : 'no_match');
+            const searchAttempts = r.search_attempts || 1;
+            const searchFailures = (r.search_failures || []).map(f => `${f.tier}:${f.kind}`).join(';') || (r.decision_reasons ? r.decision_reasons.join(';') : '');
+            csv += `${csvEscape(sTitle)},${csvEscape(sArtists)},${csvEscape(vtags)},${csvEscape(cTitle)},${csvEscape(cArtists)},${csvEscape(cAlbum)},${csvEscape(score)},${csvEscape(dec)},${csvEscape(searchStatus)},${csvEscape(searchAttempts)},${csvEscape(searchFailures)},${csvEscape(gap)},${csvEscape(r.status)},${csvEscape(cId)}\n`;
           });
           const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
           const link = document.createElement("a");
@@ -1588,6 +1859,11 @@
               item.decision = matchResult.decision;
               item.decision_reasons = matchResult.decision_reasons;
               item.score_gap = matchResult.score_gap;
+              item.search_status = matchResult.search_status;
+              item.search_attempts = matchResult.search_attempts;
+              item.search_failures = matchResult.search_failures;
+              item.retry_after_seconds = matchResult.retry_after_seconds;
+              item.search_incomplete = matchResult.search_incomplete;
               if (matchResult.selected_candidate) {
                 item.selected = true;
               }
@@ -1659,6 +1935,11 @@
                     originalItem.decision = matchRes.decision;
                     originalItem.decision_reasons = matchRes.decision_reasons;
                     originalItem.score_gap = matchRes.score_gap;
+                    originalItem.search_status = matchRes.search_status;
+                    originalItem.search_attempts = matchRes.search_attempts;
+                    originalItem.search_failures = matchRes.search_failures;
+                    originalItem.retry_after_seconds = matchRes.retry_after_seconds;
+                    originalItem.search_incomplete = matchRes.search_incomplete;
 
                     if (matchRes.selected_candidate) {
                       originalItem.selected = true;
@@ -1777,15 +2058,24 @@
         };
 
         const batchDownloadBilibili = async () => {
+          const retryableTracks = matchResults.value.filter(r =>
+            ['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed'].includes(r.search_status || r.decision)
+            && !r.selected_candidate && !r.bilibili_downloaded
+          );
+          if (retryableTracks.length > 0) {
+            const proceed = confirm(`注意：当前列表中有 ${retryableTracks.length} 首歌曲是因网络或频控受限而检索失败，尚未确认是否在曲库中未收录。\n\n建议先点击「重新检索」或「失败/重试」标签进行重试。\n\n点击【确定】将仅对确认未收录的歌曲继续 B 站补全（跳过受限歌曲）；点击【取消】返回。`);
+            if (!proceed) return;
+          }
+
           const unmatchedTracks = matchResults.value
-            .filter(r => !r.selected_candidate && !r.bilibili_downloaded);
+            .filter(r => (r.search_status === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded);
 
           if (unmatchedTracks.length === 0) {
-            alert('所有缺失歌曲均已从 B 站补全！');
+            alert('当前没有确认未收录的歌曲需要从 B 站补全！\n若有受限或失败的歌曲，请点击「重新检索」或「诊断」查看详情。');
             return;
           }
 
-          if (!confirm(`准备从 B 站检索并自动下载 ${unmatchedTracks.length} 首未收录歌曲至 Apple Music 资料库，是否继续？`)) {
+          if (!confirm(`准备从 B 站检索并自动下载 ${unmatchedTracks.length} 首确认未收录歌曲至 Apple Music 资料库，是否继续？`)) {
             return;
           }
 
@@ -1924,9 +2214,17 @@
           highConfidenceCount,
           userConfirmedCount,
           mediumConfidenceCount,
+          noMatchCount,
+          retryableCount,
           unmatchedCount,
           matchedCount,
           selectedTracksCount,
+          showDiagnosticsModal,
+          diagnosticsData,
+          loadingDiagnostics,
+          openDiagnosticsModal,
+          refreshDiagnostics,
+          resetDiagnostics,
           isAllSelected,
           candidateModalItem,
           modalCandidates,

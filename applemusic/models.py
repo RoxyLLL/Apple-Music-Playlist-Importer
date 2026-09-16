@@ -3,7 +3,7 @@ Data models for Apple Music Playlist Importer.
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -70,6 +70,25 @@ class AppleMusicTrack(BaseModel):
         return self.artwork_url.replace("{w}", str(width)).replace("{h}", str(height))
 
 
+class CatalogSearchOutcome(BaseModel):
+    """Structured result of querying Apple Music Catalog or ISRC."""
+    kind: Literal[
+        "ok",
+        "no_hits",
+        "rate_limited",
+        "auth_failed",
+        "network_error",
+        "timeout",
+        "upstream_error",
+        "invalid_response",
+    ]
+    tracks: List[AppleMusicTrack] = Field(default_factory=list)
+    http_status: Optional[int] = None
+    retry_after_seconds: Optional[float] = None
+    request_id: Optional[str] = None
+    safe_message: Optional[str] = None
+
+
 class MatchCandidate(BaseModel):
     """Candidate match with scoring details."""
     track: AppleMusicTrack
@@ -95,9 +114,34 @@ class SongMatchResult(BaseModel):
     decision_reasons: List[str] = Field(default_factory=list)
     metadata_adequacy: float = 1.0
 
+    # Structured search status and diagnostics
+    search_status: str = "no_match"
+    search_attempts: int = 0
+    search_failures: List[str] = Field(default_factory=list)
+    retry_after_seconds: Optional[float] = None
+    search_incomplete: bool = False
+
     @property
     def is_matched(self) -> bool:
         return self.selected_candidate is not None
+
+
+class BatchDiagnosticSummary(BaseModel):
+    """Diagnostic statistics for a batch matching run."""
+    batch_id: str = ""
+    storefront: str = "cn"
+    total_tracks: int = 0
+    total_queries: int = 0
+    ok_with_hits: int = 0
+    no_hits: int = 0
+    rate_limits: int = 0
+    auth_failures: int = 0
+    timeouts: int = 0
+    network_errors: int = 0
+    upstream_errors: int = 0
+    avg_latency_ms: float = 0.0
+    p95_latency_ms: float = 0.0
+    backoff_count: int = 0
 
 
 class Playlist(BaseModel):

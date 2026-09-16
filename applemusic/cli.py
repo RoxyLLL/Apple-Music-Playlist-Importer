@@ -330,11 +330,22 @@ def search_catalog(
     """直接检索 Apple Music 官方曲库。"""
     config = get_config()
     client = AppleMusicClient(config)
-    results = client.search_catalog(query, storefront=storefront, limit=limit)
+    outcome = client.search_catalog(query, storefront=storefront, limit=limit)
 
-    if not results:
+    if outcome.kind == "rate_limited":
+        console.print(f"[red]Apple Music 频控限制 (HTTP 429)，预计 {round(outcome.retry_after_seconds or 10, 1)} 秒后恢复。[/red]")
+        return
+    elif outcome.kind == "auth_failed":
+        console.print("[red]Apple Music 授权失效或未授权 (HTTP 401/403)，请检查凭证。[/red]")
+        return
+    elif outcome.kind in ("network_error", "timeout", "upstream_error"):
+        console.print(f"[red]检索异常 ({outcome.kind}): {outcome.safe_message}[/red]")
+        return
+    elif outcome.kind == "no_hits" or not outcome.tracks:
         console.print(f"[yellow]在 [{storefront.upper()}] 区未检索到关于 '{query}' 的歌曲。[/yellow]")
         return
+
+    results = outcome.tracks
 
     table = Table(title=f"Apple Music [{storefront.upper()}] 检索结果: {query}")
     table.add_column("序号", justify="right", style="cyan")

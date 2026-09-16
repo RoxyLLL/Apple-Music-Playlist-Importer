@@ -22,6 +22,7 @@ from applemusic.client import AppleMusicClient
 from applemusic.config import Config, get_config
 from applemusic.extractors import get_extractor_for
 from applemusic.matcher.engine import MatchingEngine
+from applemusic.matcher.scorer import TrackScorer
 from applemusic.models import Playlist, SongMatchResult, Track
 
 thread_pool = ThreadPoolExecutor(max_workers=8)
@@ -300,6 +301,33 @@ async def upload_file(req: UploadFileRequest):
             os.unlink(tmp_path)
 
 
+class PreflightRequest(BaseModel):
+    storefront: Optional[str] = None
+
+
+@app.post("/api/preflight")
+async def api_preflight_check(req: Optional[PreflightRequest] = None):
+    client, _ = get_shared_engine()
+    sf = req.storefront if req and req.storefront else client.config.storefront or "cn"
+    result = await asyncio.to_thread(client.preflight_check, sf)
+    return result
+
+
+@app.get("/api/diagnostics")
+async def api_get_diagnostics(storefront: Optional[str] = None):
+    client, _ = get_shared_engine()
+    sf = storefront or client.config.storefront or "cn"
+    summary = client.get_diagnostics(sf)
+    return {"success": True, "diagnostics": summary.model_dump()}
+
+
+@app.post("/api/diagnostics/reset")
+async def api_reset_diagnostics():
+    client, _ = get_shared_engine()
+    client.reset_diagnostics()
+    return {"success": True, "message": "诊断指标已重置"}
+
+
 class SearchTrackRequest(BaseModel):
     query: str
     storefront: Optional[str] = None
@@ -314,7 +342,18 @@ class SearchTrackRequest(BaseModel):
 async def search_single_track(req: SearchTrackRequest):
     client, engine = get_shared_engine()
     sf = req.storefront or client.config.storefront or "cn"
-    raw_results = await asyncio.to_thread(client.search_catalog, req.query, sf, req.limit)
+    outcome = await asyncio.to_thread(client.search_catalog, req.query, sf, req.limit)
+
+    if outcome.kind in ("rate_limited", "auth_failed", "upstream_error", "network_error", "timeout"):
+        return {
+            "success": False,
+            "kind": outcome.kind,
+            "error": outcome.safe_message or f"检索失败 ({outcome.kind})",
+            "retry_after_seconds": outcome.retry_after_seconds,
+            "results": [],
+        }
+
+    raw_results = outcome.tracks
 
     # If source track metadata is provided, compute real similarity scores
     if req.source_title:
@@ -369,10 +408,12 @@ async def match_tracks(req: MatchRequest):
     results: List[SongMatchResult] = await asyncio.to_thread(
         engine.match_playlist, dummy_playlist, sf, 3
     )
+    diagnostics = client.get_diagnostics(sf)
 
     return {
         "success": True,
         "results": [r.model_dump() for r in results],
+        "diagnostics": diagnostics.model_dump(),
     }
 
 
@@ -396,10 +437,12 @@ async def rematch_tracks(req: RematchRequest):
         req.fallback_storefronts,
         4,
     )
+    diagnostics = client.get_diagnostics(sf)
 
     return {
         "success": True,
         "results": [r.model_dump() for r in results],
+        "diagnostics": diagnostics.model_dump(),
     }
 
 
