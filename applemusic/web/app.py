@@ -5,6 +5,7 @@ FastAPI Web Application backend for Apple Music Playlist Importer.
 import asyncio
 import os
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -172,27 +173,71 @@ async def update_config(req: ConfigUpdateRequest):
     }
 
 
+_active_capturer: Optional[BrowserTokenCapturer] = None
+_capturer_lock = threading.Lock()
+
+
+@app.get("/api/auto-login/status")
+async def get_auto_login_status():
+    """Query live status of Edge browser token capture session."""
+    global _active_capturer
+    with _capturer_lock:
+        if _active_capturer is None:
+            config = get_config()
+            return {
+                "active": False,
+                "status": "idle",
+                "message": "",
+                "is_authorized": bool(config.media_user_token),
+                "storefront": config.storefront,
+            }
+        state = _active_capturer.get_state()
+        if not state.get("active") and not state.get("is_authorized"):
+            config = get_config()
+            if config.media_user_token:
+                state["is_authorized"] = True
+                state["storefront"] = config.storefront
+        return state
+
+
+@app.post("/api/auto-login/cancel")
+async def cancel_auto_login():
+    """Cancel and terminate running browser token capture session."""
+    global _active_capturer
+    with _capturer_lock:
+        if _active_capturer is not None:
+            _active_capturer.cancel()
+            _active_capturer = None
+    return {"success": True, "message": "已取消自动登录"}
+
+
 @app.post("/api/auto-login")
 async def trigger_auto_login():
-    """Launch Edge browser to automatically capture media-user-token."""
-    capturer = BrowserTokenCapturer()
-    loop = asyncio.get_running_loop()
-    
-    token = await loop.run_in_executor(thread_pool, lambda: capturer.capture(timeout_seconds=180))
-    if token:
-        config = get_config()
-        return {
-            "success": True,
-            "message": f"成功捕获并验证 Token！已连接至 Apple Music [{config.storefront.upper()}]",
-            "storefront": config.storefront,
-            "is_authorized": True,
-        }
-    else:
-        return {
-            "success": False,
-            "message": "未能捕获 Token（可能浏览器已提前关闭或未完成登录）",
-            "is_authorized": False,
-        }
+    """Launch Edge browser in background to automatically capture media-user-token."""
+    global _active_capturer
+    with _capturer_lock:
+        if _active_capturer is not None and _active_capturer.is_active():
+            state = _active_capturer.get_state()
+            return {
+                "success": True,
+                "active": True,
+                "message": state.get("message", "正在监听浏览器登录..."),
+            }
+        capturer = BrowserTokenCapturer()
+        _active_capturer = capturer
+
+    def _run_capturer():
+        try:
+            capturer.capture(timeout_seconds=240)
+        except Exception:
+            pass
+
+    thread_pool.submit(_run_capturer)
+    return {
+        "success": True,
+        "active": True,
+        "message": "已成功唤起 Edge 浏览器，请在弹出的 Apple Music 网页中登录您的 Apple ID...",
+    }
 
 
 @app.post("/api/parse")

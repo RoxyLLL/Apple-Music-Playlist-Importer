@@ -735,26 +735,47 @@
               <i class="fa-brands fa-edge text-blue-600"></i>
               <span>方案 1：Edge 浏览器一键自动提取 (推荐)</span>
             </span>
-            <span class="text-[10px] font-bold text-applered uppercase bg-white px-2 py-0.5 rounded-full border border-red-200">免 F12</span>
+            <span class="text-[10px] font-bold text-applered uppercase bg-white px-2 py-0.5 rounded-full border border-red-200">免 F12 · 自动持久化</span>
           </div>
-          <p class="text-[11px] text-neutral-600">
-            点击下方按钮将自动唤起系统的 Edge 浏览器。在弹出的 Apple Music 网页中正常登录您的 Apple ID，程序将在毫秒内自动截获 Token 并保存！
+          <p class="text-[11px] text-neutral-600 leading-relaxed">
+            点击下方按钮将自动唤起系统的 Edge 浏览器并打开 Apple Music。在弹出的窗口中登录您的 Apple ID，程序将自动截获 Token 并保存（登录态自动保存，后续无需重复登录）！
           </p>
-          <button @click="triggerAutoLogin" :disabled="autoLoggingIn"
-            class="w-full py-2.5 rounded-xl bg-applered text-white text-xs font-bold hover:bg-applepink active:scale-95 disabled:opacity-50 transition flex items-center justify-center space-x-2 shadow-sm shadow-applered/30">
-            <i v-if="autoLoggingIn" class="fa-solid fa-circle-notch fa-spin"></i>
-            <i v-else class="fa-solid fa-wand-magic-sparkles"></i>
-            <span>{{ autoLoggingIn ? autoLoginStatusText : '启动 Edge 自动抓取 Token' }}</span>
-          </button>
+          <div class="space-y-2">
+            <button @click="triggerAutoLogin" :disabled="autoLoggingIn"
+              class="w-full py-2.5 rounded-xl bg-applered text-white text-xs font-bold hover:bg-applepink active:scale-95 disabled:opacity-50 transition flex items-center justify-center space-x-2 shadow-sm shadow-applered/30">
+              <i v-if="autoLoggingIn" class="fa-solid fa-circle-notch fa-spin"></i>
+              <i v-else class="fa-solid fa-wand-magic-sparkles"></i>
+              <span>{{ autoLoggingIn ? autoLoginStatusText : '启动 Edge 自动抓取 Token' }}</span>
+            </button>
+            <div v-if="autoLoggingIn" class="flex items-center justify-between px-1 text-[11px]">
+              <span class="text-neutral-500 animate-pulse flex items-center gap-1.5">
+                <i class="fa-solid fa-spinner fa-spin text-applered"></i>
+                <span>{{ autoLoginStatusText }}</span>
+              </span>
+              <button @click="cancelAutoLogin" type="button" class="text-neutral-400 hover:text-neutral-700 underline">
+                取消
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- Method 2: Manual Token Input (Collapsible / Advanced) -->
         <div class="space-y-2 pt-2 border-t border-neutral-100">
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold text-neutral-700">方案 2：手动填入 media-user-token</span>
-            <a href="https://music.apple.com" target="_blank" class="text-[11px] text-applered hover:underline">访问 music.apple.com</a>
+            <div class="flex items-center space-x-2">
+              <button @click="copyConsoleScript" type="button" class="text-[11px] text-applered hover:underline font-medium flex items-center gap-1">
+                <i class="fa-regular fa-copy"></i>
+                <span>{{ copyConsoleFeedback ? '已复制脚本！' : '复制 F12 提取脚本' }}</span>
+              </button>
+              <span class="text-neutral-300">|</span>
+              <a href="https://music.apple.com" target="_blank" class="text-[11px] text-neutral-500 hover:text-applered hover:underline">打开官网</a>
+            </div>
           </div>
-          <textarea v-model="tokenInput" rows="2" placeholder="在此粘贴从浏览器 Application -> Cookies 中复制的 media-user-token"
+          <div v-if="copyConsoleFeedback" class="text-[11px] text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200 leading-tight">
+            ✓ 脚本已复制！在 music.apple.com 按 F12 -> 控制台 (Console) 粘贴并回车，Token 将瞬间自动复制到剪贴板，随后直接在此粘贴即可！
+          </div>
+          <textarea v-model="tokenInput" rows="2" placeholder="在此粘贴从浏览器获取的 media-user-token"
             class="w-full p-2.5 bg-[#fbfbfd] border border-neutral-300 rounded-xl text-xs font-mono focus:outline-none focus:border-applered focus:ring-1 focus:ring-applered transition"></textarea>
           <div class="flex justify-end">
             <button @click="testAndSaveToken" :disabled="testingToken || !tokenInput.trim()"
@@ -1183,22 +1204,47 @@
           }
         };
 
+        const copyConsoleFeedback = ref(false);
+        const copyConsoleScript = async () => {
+          const scriptText = `(function(){const match=document.cookie.split('; ').find(row=>row.startsWith('media-user-token='));if(match){const token=decodeURIComponent(match.split('=')[1]);navigator.clipboard.writeText(token).then(()=>{alert('✓ 已成功复制 media-user-token 到剪贴板！\\n请返回导入工具粘贴到【方案 2】并点击保存即可。');});}else{alert('未在当前页面 Cookie 中找到 media-user-token。\\n请确认已在 music.apple.com 右上角完成 Apple ID 登录！');}})();`;
+          try {
+            await navigator.clipboard.writeText(scriptText);
+            copyConsoleFeedback.value = true;
+            setTimeout(() => { copyConsoleFeedback.value = false; }, 4000);
+          } catch (e) {
+            prompt('请复制以下提取脚本并在 Console 中运行：', scriptText);
+          }
+        };
+
+        const cancelAutoLogin = async () => {
+          if (window._autoLoginInterval) {
+            clearInterval(window._autoLoginInterval);
+            window._autoLoginInterval = null;
+          }
+          try {
+            await fetch('/api/auto-login/cancel', { method: 'POST' });
+          } catch (e) {}
+          autoLoggingIn.value = false;
+          autoLoginStatusText.value = '启动 Edge 自动抓取 Token';
+        };
+
         const triggerAutoLogin = async () => {
           autoLoggingIn.value = true;
           autoLoginStatusText.value = '正在唤起 Edge 浏览器...';
+          authTestResult.value = null;
           try {
             const res = await fetch('/api/auto-login', { method: 'POST' });
             const data = await res.json();
             if (data.success) {
-              autoLoginStatusText.value = '等待网页登录...';
+              autoLoginStatusText.value = data.message || '已唤起 Edge，请在窗口中登录...';
               pollAutoLoginStatus();
             } else {
-              alert('唤起 Edge 失败: ' + (data.detail || data.message));
+              authTestResult.value = { valid: false, message: '唤起 Edge 失败: ' + (data.detail || data.message) };
               autoLoggingIn.value = false;
               autoLoginStatusText.value = '启动 Edge 自动抓取 Token';
             }
           } catch (e) {
-            alert('自动登录请求异常: ' + e.message);
+            authTestResult.value = { valid: false, message: '自动登录请求异常: ' + e.message };
             autoLoggingIn.value = false;
             autoLoginStatusText.value = '启动 Edge 自动抓取 Token';
           }
@@ -1206,28 +1252,43 @@
 
         const pollAutoLoginStatus = () => {
           let attempts = 0;
-          const interval = setInterval(async () => {
+          if (window._autoLoginInterval) clearInterval(window._autoLoginInterval);
+          window._autoLoginInterval = setInterval(async () => {
             attempts++;
             try {
-              const res = await fetch('/api/config');
+              const res = await fetch('/api/auto-login/status');
               const data = await res.json();
               if (data.is_authorized) {
-                clearInterval(interval);
-                config.value = data;
+                clearInterval(window._autoLoginInterval);
+                window._autoLoginInterval = null;
                 autoLoggingIn.value = false;
                 autoLoginStatusText.value = '抓取成功！';
-                authTestResult.value = { valid: true, message: '已自动捕获并连接 Apple ID 资料库！' };
-                setTimeout(() => { showAuthModal.value = false; }, 1200);
+                authTestResult.value = { valid: true, message: data.message || '已自动捕获并连接 Apple ID 资料库！' };
+                fetchConfig();
+                setTimeout(() => { showAuthModal.value = false; }, 1500);
                 return;
+              }
+              if (data.status === 'failed') {
+                clearInterval(window._autoLoginInterval);
+                window._autoLoginInterval = null;
+                autoLoggingIn.value = false;
+                autoLoginStatusText.value = '启动 Edge 自动抓取 Token';
+                authTestResult.value = { valid: false, message: data.message || '未能捕获 Token（可能浏览器已关闭或登录未完成）' };
+                return;
+              }
+              if (data.message) {
+                autoLoginStatusText.value = data.message;
               }
             } catch (e) {}
 
-            if (attempts > 60) {
-              clearInterval(interval);
+            if (attempts > 200) {
+              clearInterval(window._autoLoginInterval);
+              window._autoLoginInterval = null;
               autoLoggingIn.value = false;
               autoLoginStatusText.value = '启动 Edge 自动抓取 Token';
+              authTestResult.value = { valid: false, message: '等待登录超时（超过 4 分钟），请重试或使用手动方案' };
             }
-          }, 2000);
+          }, 1200);
         };
 
         const getPlaceholderForTab = () => {
@@ -2338,6 +2399,9 @@
           saveConfig,
           testAndSaveToken,
           triggerAutoLogin,
+          cancelAutoLogin,
+          copyConsoleScript,
+          copyConsoleFeedback,
           getPlaceholderForTab,
           startExtractAndMatch,
           handleFileDrop,
