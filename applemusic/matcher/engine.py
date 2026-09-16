@@ -42,8 +42,12 @@ class MatchingEngine:
     def get_stable_track_key(track: Track) -> Tuple:
         """
         Generate a unique stable signature for a track to prevent duplicate network searches.
-        Prefers platform + original_id; falls back to normalized core title, primary artist, and duration bucket.
+        Prefers ISRC if present; then platform + original_id; falls back to normalized core title, primary artist, and duration bucket.
         """
+        isrc = (track.isrc or "").strip().upper()
+        if isrc and len(isrc) >= 8:
+            return ("isrc", isrc)
+
         orig_id = str(track.original_id).strip() if track.original_id is not None else ""
         if orig_id and orig_id.lower() not in ("none", "null", "unknown", "undefined") and track.source != "unknown":
             return (track.source, orig_id)
@@ -462,11 +466,12 @@ class MatchingEngine:
 
             return res
 
-        # Check persistent match cache first for instant 0ms resolution
+        # Check persistent match cache first for instant 0ms resolution (supports multi-index lookup)
         to_query_keys: List[Tuple] = []
         for key in unique_keys:
+            track = unique_tracks[key]
             key_str = ":".join(str(x) for x in key)
-            cached_match = self.persistent_cache.get_match(sf, key_str)
+            cached_match = self.persistent_cache.get_match(sf, key_str) or self.persistent_cache.find_match(sf, track)
             if cached_match:
                 indices = key_to_indices[key]
                 for idx in indices:
@@ -478,6 +483,75 @@ class MatchingEngine:
                         on_progress(completed_count, total, res_copy)
             else:
                 to_query_keys.append(key)
+
+        # Phase 1.5: Batch ISRC Fast-Path Resolution (reduces HTTP calls by up to 25x)
+        isrc_keys = [k for k in to_query_keys if unique_tracks[k].isrc and len(unique_tracks[k].isrc.strip()) >= 8]
+        if isrc_keys and abort_state["status"] is None:
+            isrc_list = [unique_tracks[k].isrc.strip() for k in isrc_keys]
+            batch_outcomes = self.client.search_by_isrc_batch(isrc_list, storefront=sf)
+
+            remaining_to_query_keys: List[Tuple] = []
+            for k in to_query_keys:
+                if k not in isrc_keys:
+                    remaining_to_query_keys.append(k)
+                    continue
+
+                track = unique_tracks[k]
+                clean_isrc = track.isrc.strip().upper()
+                outcome = batch_outcomes.get(clean_isrc)
+
+                matched = False
+                if outcome and outcome.kind == "ok" and outcome.tracks:
+                    scored_isrc = [TrackScorer.score(track, cand) for cand in outcome.tracks]
+                    scored_isrc.sort(key=lambda x: x.score, reverse=True)
+                    best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
+                        track,
+                        scored_isrc,
+                        auto_accept_threshold=self.config.auto_accept_threshold,
+                        min_review_score=self.config.min_review_score,
+                        min_score_gap=self.config.min_score_gap,
+                    )
+                    if dec == DecisionStatus.AUTO_ACCEPT.value:
+                        matched = True
+                        match_res = SongMatchResult(
+                            source_track=track,
+                            candidates=scored_isrc[:5],
+                            selected_candidate=best,
+                            status=conf,
+                            score_gap=gap,
+                            decision=dec,
+                            decision_reasons=["ISRC 批量极速精准匹配", *reasons],
+                            search_status="matched",
+                            search_attempts=1,
+                            search_failures=[],
+                        )
+                        key_str = ":".join(str(x) for x in k)
+                        self.persistent_cache.set_match(sf, key_str, match_res, track=track)
+
+                        indices = key_to_indices[k]
+                        for idx in indices:
+                            res_copy = match_res.model_copy(deep=True)
+                            res_copy.source_track = playlist.tracks[idx]
+                            results[idx] = res_copy
+                            completed_count += 1
+                            if on_progress:
+                                on_progress(completed_count, total, res_copy)
+
+                elif outcome and outcome.kind in ("auth_failed", "rate_limited"):
+                    with batch_abort_lock:
+                        if abort_state["status"] is None:
+                            if outcome.kind == "auth_failed":
+                                abort_state["status"] = "auth_required"
+                                abort_state["reason"] = "批次已中止：Apple Music 授权已失效，请重新连接 Apple ID"
+                            else:
+                                abort_state["status"] = "rate_limited"
+                                abort_state["reason"] = "批次已暂停：触发 Apple Music 频控保护，等待重试"
+                                abort_state["retry_after"] = outcome.retry_after_seconds
+
+                if not matched:
+                    remaining_to_query_keys.append(k)
+
+            to_query_keys = remaining_to_query_keys
 
         if to_query_keys:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -506,7 +580,7 @@ class MatchingEngine:
                     # Persist confident or verified no-match outcomes
                     if match_res.decision in ("auto_accept", "user_confirmed", "no_match") and not match_res.search_incomplete:
                         key_str = ":".join(str(x) for x in key)
-                        self.persistent_cache.set_match(sf, key_str, match_res)
+                        self.persistent_cache.set_match(sf, key_str, match_res, track=unique_tracks[key])
 
                     # Broadcast result to all identical track locations
                     for idx in indices:

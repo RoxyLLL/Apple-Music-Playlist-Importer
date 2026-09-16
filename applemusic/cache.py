@@ -244,9 +244,58 @@ class PersistentCache:
             logger.debug("Failed to read from persistent match cache: %s", e)
             return None
 
-    def set_match(self, storefront: str, track_hash: str, match_result: SongMatchResult) -> None:
+    def find_match(self, storefront: str, track: Any) -> Optional[SongMatchResult]:
+        """
+        Multi-index lookup for cached SongMatchResult across:
+        1. ISRC: 'isrc:{isrc}'
+        2. Source Original ID: '{source}:{original_id}'
+        3. Canonical Text: 'text:{clean_title}:{clean_artist}'
+        """
+        if track is None:
+            return None
+
+        sf = (storefront or "cn").lower()
+        keys_to_try: List[str] = []
+
+        # 1. ISRC index
+        isrc = getattr(track, "isrc", None)
+        if isrc and len(str(isrc).strip()) >= 8:
+            keys_to_try.append(f"isrc:{str(isrc).strip().upper()}")
+
+        # 2. Source Original ID index
+        orig_id = getattr(track, "original_id", None)
+        src = getattr(track, "source", None)
+        if orig_id and str(orig_id).strip() and str(orig_id).lower() not in ("none", "null", "unknown", "undefined") and src:
+            keys_to_try.append(f"{src}:{str(orig_id).strip()}")
+
+        # 3. Canonical text index
+        title = getattr(track, "title", None)
+        artists = getattr(track, "artists", [])
+        if title:
+            from applemusic.matcher.cleaner import TextCleaner
+            clean_t = TextCleaner.clean_title(title).lower()
+            pri_a, _ = TextCleaner.parse_artists(artists)
+            norm_a = TextCleaner.normalize(pri_a).lower()
+            if clean_t:
+                keys_to_try.append(f"text:{clean_t}:{norm_a}")
+
+        for k in keys_to_try:
+            m = self.get_match(sf, k)
+            if m:
+                return m
+
+        return None
+
+    def set_match(
+        self,
+        storefront: str,
+        track_hash: str,
+        match_result: SongMatchResult,
+        track: Optional[Any] = None,
+    ) -> None:
         """
         Persist SongMatchResult for high confidence or verified no-match decisions.
+        Writes primary track_hash and optional secondary indexes (ISRC, source:id, text).
         """
         # Only cache confident auto-accept or definitive no-match
         if match_result.decision not in ("auto_accept", "user_confirmed", "no_match"):
@@ -259,27 +308,51 @@ class PersistentCache:
         ttl = TTL_MATCH_AUTO_ACCEPT if match_result.decision != "no_match" else TTL_MATCH_NO_MATCH
         expires_at = now + ttl
 
+        # Collect all index keys to persist
+        keys_to_save: List[str] = [track_hash]
+        t = track or getattr(match_result, "source_track", None)
+        if t is not None:
+            isrc = getattr(t, "isrc", None)
+            if isrc and len(str(isrc).strip()) >= 8:
+                keys_to_save.append(f"isrc:{str(isrc).strip().upper()}")
+
+            orig_id = getattr(t, "original_id", None)
+            src = getattr(t, "source", None)
+            if orig_id and str(orig_id).strip() and str(orig_id).lower() not in ("none", "null", "unknown", "undefined") and src:
+                keys_to_save.append(f"{src}:{str(orig_id).strip()}")
+
+            title = getattr(t, "title", None)
+            artists = getattr(t, "artists", [])
+            if title:
+                from applemusic.matcher.cleaner import TextCleaner
+                clean_t = TextCleaner.clean_title(title).lower()
+                pri_a, _ = TextCleaner.parse_artists(artists)
+                norm_a = TextCleaner.normalize(pri_a).lower()
+                if clean_t:
+                    keys_to_save.append(f"text:{clean_t}:{norm_a}")
+
         try:
             json_str = match_result.model_dump_json()
             with self._lock:
                 conn = self._get_connection()
                 with conn:
-                    conn.execute(
-                        """
-                        INSERT OR REPLACE INTO match_cache 
-                        (storefront, track_hash, result_json, decision, status, created_at, expires_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            sf,
-                            track_hash,
-                            json_str,
-                            match_result.decision,
-                            str(match_result.status.value if hasattr(match_result.status, "value") else match_result.status),
-                            now,
-                            expires_at,
-                        ),
-                    )
+                    for k in set(keys_to_save):
+                        conn.execute(
+                            """
+                            INSERT OR REPLACE INTO match_cache 
+                            (storefront, track_hash, result_json, decision, status, created_at, expires_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                sf,
+                                k,
+                                json_str,
+                                match_result.decision,
+                                str(match_result.status.value if hasattr(match_result.status, "value") else match_result.status),
+                                now,
+                                expires_at,
+                            ),
+                        )
         except Exception as e:
             logger.debug("Failed to write to persistent match cache: %s", e)
 

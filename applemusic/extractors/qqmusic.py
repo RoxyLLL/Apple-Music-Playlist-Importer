@@ -80,12 +80,16 @@ class QQMusicExtractor(BaseExtractor):
             duration_ms = interval * 1000 if interval else None
 
             orig_id = s.get("songmid") or s.get("songid")
+            raw_isrc = s.get("isrc") or s.get("song_isrc") or s.get("f_isrc") or ""
+            clean_isrc = str(raw_isrc).strip().upper() if raw_isrc else None
+
             track = Track(
                 title=song_name.strip(),
                 artists=singers,
                 album=album_name.strip() if album_name else None,
                 duration_ms=duration_ms,
                 original_id=str(orig_id).strip() if orig_id else None,
+                isrc=clean_isrc if clean_isrc and len(clean_isrc) >= 8 else None,
                 source="qqmusic",
             )
             tracks.append(track)

@@ -127,14 +127,15 @@ class AdaptiveRateLimiter:
             pass
 
     def record_429(self, retry_after: Optional[float] = None) -> float:
-        """Called when a 429 response is received. Updates coordinated pause and backoff."""
+        """Called when a 429 response is received. Updates coordinated pause and backoff with jitter."""
         with self._lock:
             now = time.time()
             self.consecutive_429 += 1
+            jitter = random.uniform(0.3, 0.8)
             if retry_after is not None and retry_after > 0:
-                backoff = float(retry_after)
+                backoff = float(retry_after) + jitter
             else:
-                backoff = max(2.5, 1.8 * (1.6 ** min(self.consecutive_429 - 1, 3))) + random.uniform(0.2, 0.5)
+                backoff = max(2.5, 1.8 * (1.6 ** min(self.consecutive_429 - 1, 3))) + jitter
 
             self.global_pause_until = max(self.global_pause_until, now + backoff)
 
@@ -308,66 +309,70 @@ class AppleMusicClient:
             raise ValueError("未配置 media-user-token，无法执行资料库写入操作")
         return headers
 
-    def search_by_isrc(
+    def search_by_isrc_batch(
         self,
-        isrc: str,
+        isrc_list: List[str],
         storefront: Optional[str] = None,
         retries: int = 2,
-    ) -> CatalogSearchOutcome:
+    ) -> Dict[str, CatalogSearchOutcome]:
         """
-        Search songs in Apple Music Catalog by exact ISRC using official filter[isrc] parameter.
-        Returns structured CatalogSearchOutcome.
+        Search songs in Apple Music Catalog by a batch of ISRCs using official filter[isrc] parameter.
+        Supports chunking of up to 25 ISRCs per request (Apple Music API limit).
+        Checks both persistent SQLite cache and in-memory cache first to avoid unnecessary requests.
+        Caches positive matches (14 days) and negative misses (3 days) in persistent storage.
+        Returns a mapping of uppercase ISRC -> CatalogSearchOutcome.
         """
-        clean_isrc = isrc.strip().upper()
-        if not clean_isrc:
-            return CatalogSearchOutcome(kind="no_hits", safe_message="ISRC 参数为空")
-
         sf = storefront or self.config.storefront or "cn"
-        cache_key = ("isrc", sf, clean_isrc)
+        clean_isrcs: List[str] = []
+        seen = set()
+        for raw in isrc_list:
+            c = raw.strip().upper() if raw else ""
+            if c and len(c) >= 8 and c not in seen:
+                seen.add(c)
+                clean_isrcs.append(c)
 
-        # 0. Check persistent SQLite cache (instant 0ms resolution)
-        cached_p = self.persistent_cache.get_catalog(sf, "isrc", clean_isrc)
-        if cached_p:
-            self.diagnostics.record("cache_hit")
-            return cached_p
+        if not clean_isrcs:
+            return {}
 
-        # 1. Check in-memory cache (only valid hits/no_hits are cached)
-        if cache_key in self._catalog_cache:
-            cache_time, cached_outcome = self._catalog_cache[cache_key]
-            if time.time() - cache_time < 3600:
-                return cached_outcome
+        results: Dict[str, CatalogSearchOutcome] = {}
+        to_fetch: List[str] = []
 
-        # 2. Singleflight: coalesce identical in-flight searches
-        wait_event = None
-        is_initiator = False
-        with self._in_flight_lock:
-            if cache_key in self._in_flight_events:
-                wait_event = self._in_flight_events[cache_key]
-            else:
-                event = threading.Event()
-                self._in_flight_events[cache_key] = event
-                is_initiator = True
+        # 0. Check caches for each ISRC
+        for c in clean_isrcs:
+            cached_p = self.persistent_cache.get_catalog(sf, "isrc", c)
+            if cached_p:
+                self.diagnostics.record("cache_hit")
+                results[c] = cached_p
+                continue
 
-        if wait_event:
-            wait_event.wait(timeout=35.0)
-            with self._in_flight_lock:
-                if cache_key in self._in_flight_results:
-                    return self._in_flight_results[cache_key]
+            cache_key = ("isrc", sf, c)
             if cache_key in self._catalog_cache:
-                return self._catalog_cache[cache_key][1]
-            return CatalogSearchOutcome(kind="timeout", safe_message="并发等待 ISRC 查询超时")
+                cache_time, cached_outcome = self._catalog_cache[cache_key]
+                if time.time() - cache_time < 3600:
+                    results[c] = cached_outcome
+                    continue
 
+            to_fetch.append(c)
+
+        if not to_fetch:
+            return results
+
+        # Apple Music Catalog API supports up to 25 comma-separated ISRCs in filter[isrc]
+        CHUNK_SIZE = 25
+        chunks = [to_fetch[i : i + CHUNK_SIZE] for i in range(0, len(to_fetch), CHUNK_SIZE)]
         url = f"{self.API_URL}/catalog/{sf}/songs"
-        params = {"filter[isrc]": clean_isrc}
-        last_outcome: Optional[CatalogSearchOutcome] = None
 
-        try:
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_param = ",".join(chunk)
+            params = {"filter[isrc]": chunk_param}
+            chunk_outcome: Optional[CatalogSearchOutcome] = None
+
             for attempt in range(retries):
-                # Acquire rate limiter slot (waits out 429 pause / circuit breaker smoothly)
+                # Acquire rate limiter slot
                 acquired = self.limiter.acquire(timeout=45.0)
                 if not acquired:
                     is_cool, cd = self.limiter.is_cooling_down()
-                    last_outcome = CatalogSearchOutcome(
+                    chunk_outcome = CatalogSearchOutcome(
                         kind="rate_limited",
                         retry_after_seconds=cd or 10.0,
                         safe_message=f"Apple Music 频控冷却中，熔断保护中 (预计 {round(cd or 10.0, 1)} 秒)",
@@ -378,56 +383,72 @@ class AppleMusicClient:
                 req_start = time.time()
                 try:
                     headers = self._get_auth_headers(require_user=False)
-                    resp = self.session.get(url, headers=headers, params=params, timeout=(5.0, 9.0))
+                    resp = self.session.get(url, headers=headers, params=params, timeout=(6.0, 12.0))
                     latency_ms = (time.time() - req_start) * 1000.0
 
                     if resp.status_code == 200:
                         self.limiter.record_success()
                         data = resp.json()
                         songs_data = data.get("data", [])
-                        results: List[AppleMusicTrack] = []
+                        req_id = _extract_request_id(resp.headers)
+
+                        # Group returned songs by their ISRC
+                        songs_by_isrc: Dict[str, List[AppleMusicTrack]] = {c: [] for c in chunk}
                         for item in songs_data:
                             attrs = item.get("attributes", {})
+                            item_isrc = (attrs.get("isrc") or "").strip().upper()
                             artist_name = attrs.get("artistName", "")
                             artists = [a.strip() for a in artist_name.split(",") if a.strip()] or [artist_name]
                             artwork = attrs.get("artwork", {})
                             previews = attrs.get("previews") or []
 
-                            results.append(AppleMusicTrack(
+                            track_obj = AppleMusicTrack(
                                 id=item.get("id"),
                                 title=attrs.get("name", ""),
                                 artists=artists,
                                 album=attrs.get("albumName"),
                                 duration_ms=attrs.get("durationInMillis"),
-                                isrc=attrs.get("isrc") or clean_isrc,
+                                isrc=item_isrc or None,
                                 artwork_url=artwork.get("url"),
                                 preview_url=previews[0].get("url") if previews else None,
                                 storefront=sf,
                                 url=attrs.get("url"),
-                            ))
+                            )
 
-                        kind = "ok" if results else "no_hits"
-                        outcome = CatalogSearchOutcome(
-                            kind=kind,
-                            tracks=results,
-                            http_status=200,
-                            request_id=_extract_request_id(resp.headers),
-                            safe_message=None if results else "Apple Music 未收录此 ISRC 对应曲目",
-                        )
-                        self._catalog_cache[cache_key] = (time.time(), outcome)
-                        self.persistent_cache.set_catalog(sf, "isrc", clean_isrc, outcome)
-                        self.diagnostics.record(kind, latency_ms=latency_ms)
-                        last_outcome = outcome
-                        return outcome
+                            if item_isrc in songs_by_isrc:
+                                songs_by_isrc[item_isrc].append(track_obj)
+                            else:
+                                for c in chunk:
+                                    if c == item_isrc:
+                                        songs_by_isrc[c].append(track_obj)
+                                        break
+
+                        for c in chunk:
+                            matched_tracks = songs_by_isrc.get(c, [])
+                            kind = "ok" if matched_tracks else "no_hits"
+                            outcome = CatalogSearchOutcome(
+                                kind=kind,
+                                tracks=matched_tracks,
+                                http_status=200,
+                                request_id=req_id,
+                                safe_message=None if matched_tracks else "Apple Music 未收录此 ISRC 对应曲目",
+                            )
+                            results[c] = outcome
+                            self._catalog_cache[("isrc", sf, c)] = (time.time(), outcome)
+                            self.persistent_cache.set_catalog(sf, "isrc", c, outcome)
+
+                        self.diagnostics.record("ok" if songs_data else "no_hits", latency_ms=latency_ms)
+                        chunk_outcome = None
+                        break  # Chunk success
 
                     elif resp.status_code == 429:
                         retry_after = parse_retry_after(resp.headers.get("Retry-After"))
                         pause = self.limiter.record_429(retry_after)
                         self.diagnostics.record("rate_limited", latency_ms=latency_ms, backoff=True)
-                        last_outcome = CatalogSearchOutcome(
+                        chunk_outcome = CatalogSearchOutcome(
                             kind="rate_limited",
                             http_status=429,
-                            retry_after_seconds=pause,
+                            retry_after_seconds=retry_after or pause,
                             request_id=_extract_request_id(resp.headers),
                             safe_message=f"Apple Music 频控受限 (HTTP 429)，退避 {round(pause, 1)} 秒",
                         )
@@ -442,7 +463,7 @@ class AppleMusicClient:
                             self.auth.get_developer_token(force_refresh=True)
                             time.sleep(0.3)
                             continue
-                        last_outcome = CatalogSearchOutcome(
+                        chunk_outcome = CatalogSearchOutcome(
                             kind="auth_failed",
                             http_status=resp.status_code,
                             request_id=_extract_request_id(resp.headers),
@@ -452,7 +473,7 @@ class AppleMusicClient:
 
                     elif resp.status_code >= 500:
                         self.diagnostics.record("upstream_error", latency_ms=latency_ms)
-                        last_outcome = CatalogSearchOutcome(
+                        chunk_outcome = CatalogSearchOutcome(
                             kind="upstream_error",
                             http_status=resp.status_code,
                             request_id=_extract_request_id(resp.headers),
@@ -462,8 +483,9 @@ class AppleMusicClient:
                             time.sleep(0.5 + 0.3 * attempt)
                             continue
                         break
+
                     else:
-                        last_outcome = CatalogSearchOutcome(
+                        chunk_outcome = CatalogSearchOutcome(
                             kind="invalid_response",
                             http_status=resp.status_code,
                             safe_message=f"未预期的 HTTP 状态码: {resp.status_code}",
@@ -472,9 +494,9 @@ class AppleMusicClient:
 
                 except requests.Timeout:
                     self.diagnostics.record("timeout", backoff=True)
-                    last_outcome = CatalogSearchOutcome(
+                    chunk_outcome = CatalogSearchOutcome(
                         kind="timeout",
-                        safe_message="ISRC 检索 Apple Music 曲库超时",
+                        safe_message="ISRC 批量检索 Apple Music 曲库超时",
                     )
                     if attempt < retries - 1:
                         time.sleep(0.4)
@@ -482,9 +504,9 @@ class AppleMusicClient:
                     break
                 except requests.RequestException as e:
                     self.diagnostics.record("network_error")
-                    last_outcome = CatalogSearchOutcome(
+                    chunk_outcome = CatalogSearchOutcome(
                         kind="network_error",
-                        safe_message=f"ISRC 请求网络连接异常: {type(e).__name__}",
+                        safe_message=f"ISRC 批量请求网络连接异常: {type(e).__name__}",
                     )
                     if attempt < retries - 1:
                         time.sleep(0.4)
@@ -492,23 +514,46 @@ class AppleMusicClient:
                     break
                 except Exception as e:
                     self.diagnostics.record("invalid_response")
-                    last_outcome = CatalogSearchOutcome(
+                    chunk_outcome = CatalogSearchOutcome(
                         kind="invalid_response",
-                        safe_message=f"ISRC 响应解析异常: {str(e)[:100]}",
+                        safe_message=f"ISRC 批量响应解析异常: {str(e)[:100]}",
                     )
                     break
                 finally:
                     self.limiter.release()
 
-            return last_outcome or CatalogSearchOutcome(kind="network_error", safe_message="ISRC 查询异常未完成")
-        finally:
-            if is_initiator:
-                with self._in_flight_lock:
-                    if last_outcome:
-                        self._in_flight_results[cache_key] = last_outcome
-                    event = self._in_flight_events.pop(cache_key, None)
-                    if event:
-                        event.set()
+            if chunk_outcome is not None:
+                for c in chunk:
+                    if c not in results:
+                        results[c] = chunk_outcome
+                if chunk_outcome.kind in ("auth_failed", "rate_limited"):
+                    for rem_chunk in chunks[chunk_idx + 1 :]:
+                        for c in rem_chunk:
+                            if c not in results:
+                                results[c] = chunk_outcome
+                    break
+
+        return results
+
+    def search_by_isrc(
+        self,
+        isrc: str,
+        storefront: Optional[str] = None,
+        retries: int = 2,
+    ) -> CatalogSearchOutcome:
+        """
+        Search songs in Apple Music Catalog by exact ISRC using official filter[isrc] parameter.
+        Delegates directly to search_by_isrc_batch for unified caching and rate limiting.
+        """
+        clean_isrc = isrc.strip().upper() if isrc else ""
+        if not clean_isrc:
+            return CatalogSearchOutcome(kind="no_hits", safe_message="ISRC 参数为空")
+
+        batch_res = self.search_by_isrc_batch([clean_isrc], storefront=storefront, retries=retries)
+        return batch_res.get(
+            clean_isrc,
+            CatalogSearchOutcome(kind="network_error", safe_message="ISRC 查询异常未完成"),
+        )
 
     def search_catalog(
         self,
@@ -638,7 +683,7 @@ class AppleMusicClient:
                         last_outcome = CatalogSearchOutcome(
                             kind="rate_limited",
                             http_status=429,
-                            retry_after_seconds=pause,
+                            retry_after_seconds=retry_after or pause,
                             request_id=_extract_request_id(resp.headers),
                             safe_message=f"Apple Music 频控限制 (HTTP 429)，预计 {round(pause, 1)} 秒后可恢复",
                         )

@@ -3,4 +3,4 @@ Apple Music Playlist Importer
 Import playlists from NetEase Cloud Music, QQ Music, Spotify, and Local files to Apple Music.
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"

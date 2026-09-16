@@ -57,6 +57,7 @@ class LocalFileExtractor(BaseExtractor):
                     title = ""
                     artist = ""
                     album = ""
+                    isrc = ""
                     for idx, h in enumerate(headers):
                         if idx < len(row):
                             val = row[idx].strip()
@@ -66,9 +67,17 @@ class LocalFileExtractor(BaseExtractor):
                                 artist = val
                             elif h in ("album", "专辑"):
                                 album = val
+                            elif h in ("isrc", "isrc_code"):
+                                isrc = val
                     if title:
                         artists = [a.strip() for a in artist.split("/") if a.strip()] if artist else []
-                        tracks.append(Track(title=title, artists=artists, album=album or None, source="local_csv"))
+                        tracks.append(Track(
+                            title=title,
+                            artists=artists,
+                            album=album or None,
+                            isrc=isrc.strip().upper() if isrc.strip() else None,
+                            source="local_csv",
+                        ))
                 else:
                     # Positional columns: Col 0 = Title, Col 1 = Artist
                     title = row[0].strip()
