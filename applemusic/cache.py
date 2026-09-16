@@ -281,7 +281,7 @@ class PersistentCache:
 
         for k in keys_to_try:
             m = self.get_match(sf, k)
-            if m:
+            if m and m.decision in ("auto_accept", "user_confirmed") and not m.search_incomplete:
                 return m
 
         return None
@@ -294,18 +294,18 @@ class PersistentCache:
         track: Optional[Any] = None,
     ) -> None:
         """
-        Persist SongMatchResult for high confidence or verified no-match decisions.
+        Persist SongMatchResult for high confidence matches (auto_accept, user_confirmed).
         Writes primary track_hash and optional secondary indexes (ISRC, source:id, text).
         """
-        # Only cache confident auto-accept or definitive no-match
-        if match_result.decision not in ("auto_accept", "user_confirmed", "no_match"):
+        # Only cache confident positive matches
+        if match_result.decision not in ("auto_accept", "user_confirmed"):
             return
         if match_result.search_incomplete:
             return
 
         sf = (storefront or "cn").lower()
         now = time.time()
-        ttl = TTL_MATCH_AUTO_ACCEPT if match_result.decision != "no_match" else TTL_MATCH_NO_MATCH
+        ttl = TTL_MATCH_AUTO_ACCEPT
         expires_at = now + ttl
 
         # Collect all index keys to persist

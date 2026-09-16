@@ -70,12 +70,15 @@ class TextCleaner:
 
     @staticmethod
     def normalize(text: str) -> str:
-        """Normalize unicode, convert full-width characters, strip spaces."""
+        """Normalize unicode, convert full-width characters, strip spaces, convert Traditional to Simplified Chinese."""
         if not text:
             return ""
         text = unicodedata.normalize("NFKC", text)
         # Convert non-breaking space
         text = text.replace("\xa0", " ").replace("\u3000", " ")
+        # Convert Traditional to Simplified Chinese
+        from applemusic.matcher.zh_table import to_simplified
+        text = to_simplified(text)
         # Lowercase
         text = text.lower().strip()
         return text

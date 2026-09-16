@@ -336,7 +336,11 @@ class MatchingEngine:
                 else:
                     # Candidates found but not auto-accepted: schedule 1 refined fallback if available
                     raw_title = source.title.strip()
-                    if version_tags and primary_artist:
+                    if best is None or best.score < self.config.min_review_score:
+                        # None of the candidates scored high enough; try core title alone as fallback
+                        if primary_artist and core_title:
+                            queries_to_run.append(core_title)
+                    elif version_tags and primary_artist:
                         queries_to_run.append(f"{core_title} {primary_artist} {version_tags[0]}")
                     elif source.album and primary_artist:
                         clean_alb = TextCleaner.clean_title(source.album)
@@ -346,10 +350,13 @@ class MatchingEngine:
                         queries_to_run.append(f"{raw_title} {primary_artist}")
             elif outcome.kind == "no_hits":
                 # Primary query returned 0 hits.
-                # If raw title differs from core title, schedule 1 fallback query with raw title
+                # If raw title differs from core title, schedule fallback query with raw title;
+                # Otherwise, fallback to core_title alone so the scorer can evaluate potential artist aliases.
                 raw_title = source.title.strip()
                 if raw_title and raw_title.lower() != core_title.lower() and primary_artist:
                     queries_to_run.append(f"{raw_title} {primary_artist}")
+                elif primary_artist and core_title:
+                    queries_to_run.append(core_title)
                 elif not primary_artist and raw_title and raw_title.lower() != core_title.lower():
                     queries_to_run.append(raw_title)
             else:

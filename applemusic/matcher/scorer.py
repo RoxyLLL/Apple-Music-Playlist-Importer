@@ -7,6 +7,7 @@ short title strictness, ISRC priority, and score-gap decision boundaries.
 import re
 from difflib import SequenceMatcher
 from typing import List, Optional, Tuple
+from applemusic.matcher.artist_aliases import are_artists_equivalent
 from applemusic.matcher.cleaner import TextCleaner
 from applemusic.models import AppleMusicTrack, ConfidenceLevel, DecisionStatus, MatchCandidate, Track
 
@@ -61,6 +62,7 @@ class TrackScorer:
         """
         Calculate similarity between artist lists.
         Avoids false neutral score (0.60) when artists are missing.
+        Supports cross-lingual alias equivalence (e.g. 周华健 <-> Emil Wakin Chau).
         """
         if not source_artists or not candidate_artists:
             return 0.0
@@ -71,8 +73,8 @@ class TrackScorer:
         norm_pri_s = TextCleaner.normalize(pri_s)
         norm_pri_c = TextCleaner.normalize(pri_c)
 
-        # Primary artist exact match
-        if norm_pri_s and norm_pri_c and norm_pri_s == norm_pri_c:
+        # Primary artist exact or known cross-lingual alias match
+        if norm_pri_s and norm_pri_c and (norm_pri_s == norm_pri_c or are_artists_equivalent(norm_pri_s, norm_pri_c)):
             return 1.0
 
         # Primary artist substring or high similarity
@@ -83,9 +85,11 @@ class TrackScorer:
             else:
                 pri_score = SequenceMatcher(None, norm_pri_s, norm_pri_c).ratio()
 
-        # Check full list cross-matching
-        norm_s = [TextCleaner.normalize(a) for a in (source_artists or []) if a.strip()]
-        norm_c = [TextCleaner.normalize(a) for a in (candidate_artists or []) if a.strip()]
+        # Check full list cross-matching with parsed artists
+        raw_s_list = ([pri_s] + fea_s) if pri_s else source_artists
+        raw_c_list = ([pri_c] + fea_c) if pri_c else candidate_artists
+        norm_s = [TextCleaner.normalize(a) for a in raw_s_list if a.strip()]
+        norm_c = [TextCleaner.normalize(a) for a in raw_c_list if a.strip()]
 
         if set(norm_s) == set(norm_c):
             return 1.0
@@ -93,7 +97,7 @@ class TrackScorer:
         max_cross_score = 0.0
         for s in norm_s:
             for c in norm_c:
-                if s == c:
+                if s == c or are_artists_equivalent(s, c):
                     max_cross_score = max(max_cross_score, 1.0)
                 elif s in c or c in s:
                     max_cross_score = max(max_cross_score, 0.90)
@@ -243,10 +247,19 @@ class TrackScorer:
         composite = base_score + version_factor
 
         # 4. Hard Guards
+        # Check cross-script artist (CJK vs Latin)
+        s_cjk = any(re.search(r"[\u4e00-\u9fa5]", a) for a in (source.artists or []))
+        c_cjk = any(re.search(r"[\u4e00-\u9fa5]", a) for a in (candidate.artists or []))
+        is_cross_script = (s_cjk and not c_cjk) or (not s_cjk and c_cjk)
+
         # Artist mismatch guard:
         if source.artists and artist_score < 0.35:
-            composite *= 0.30
-            reasons.append("艺人明显不匹配")
+            if is_cross_script and title_score >= 0.80:
+                composite = min(composite, 0.78)
+                reasons.append("艺人跨语种未直接匹配(待复核)")
+            else:
+                composite *= 0.30
+                reasons.append("艺人明显不匹配")
 
         # Title mismatch guard:
         if title_score < 0.45:
@@ -314,15 +327,24 @@ class TrackScorer:
 
         # Check auto_accept requirements:
         # 1. Score reaches threshold
-        # 2. Score gap >= min_score_gap (if second candidate exists and has reasonable score)
+        # 2. Score gap >= min_score_gap (or top candidates are multiple editions of the same song)
         # 3. Artist score >= 0.70 (if source has artists)
         # 4. Title score >= 0.80
         # 5. Version score >= 0.0 (no version conflict)
         has_artist = bool(source.artists)
         artist_ok = best.artist_score >= 0.70 if has_artist else False
         title_ok = best.title_score >= 0.80
-        gap_ok = (score_gap >= min_score_gap) if (second and second.score >= 0.65) else True
         version_ok = best.version_score >= 0.0
+
+        # Check if second candidate is actually the same song variant (same title core & primary artist)
+        is_same_song_variant = False
+        if second and second.score >= 0.65:
+            sec_title_sim = cls.calculate_title_similarity(best.track.title, second.track.title)
+            sec_artist_sim = cls.calculate_artist_similarity(best.track.artists, second.track.artists)
+            if sec_title_sim >= 0.90 and sec_artist_sim >= 0.70:
+                is_same_song_variant = True
+
+        gap_ok = True if is_same_song_variant else ((score_gap >= min_score_gap) if (second and second.score >= 0.65) else True)
 
         if best.score >= auto_accept_threshold and artist_ok and title_ok and gap_ok and version_ok:
             reasons.append("各项校验完全通过，自动采纳")
