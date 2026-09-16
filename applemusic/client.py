@@ -56,7 +56,7 @@ class AdaptiveRateLimiter:
         self._semaphore = threading.BoundedSemaphore(max_concurrency)
         self.global_pause_until = 0.0
         self.consecutive_429 = 0
-        self.circuit_broken = False
+        self._circuit_broken = False
         self.circuit_break_until = 0.0
 
     def __enter__(self):
@@ -65,6 +65,22 @@ class AdaptiveRateLimiter:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.release()
+
+    @property
+    def circuit_broken(self) -> bool:
+        with self._lock:
+            now = time.time()
+            if self._circuit_broken and now >= self.circuit_break_until:
+                self._circuit_broken = False
+                self.consecutive_429 = 0
+            return self._circuit_broken
+
+    @circuit_broken.setter
+    def circuit_broken(self, val: bool):
+        with self._lock:
+            self._circuit_broken = val
+            if val and self.circuit_break_until <= time.time():
+                self.circuit_break_until = time.time() + 15.0
 
     @property
     def circuit_breaker_tripped(self) -> bool:
@@ -77,44 +93,45 @@ class AdaptiveRateLimiter:
     def acquire(self, timeout: float = 45.0) -> bool:
         """Acquire a concurrency slot and rate-limit token, respecting global pause and circuit breaker cooldown."""
         start = time.time()
+
+        # 1. Wait out any 429 pause or circuit breaker cooldown WITHOUT holding semaphore
+        while True:
+            with self._lock:
+                now = time.time()
+                if self._circuit_broken and now >= self.circuit_break_until:
+                    self._circuit_broken = False
+                    self.consecutive_429 = 0
+                cooldown = max(self.global_pause_until - now, self.circuit_break_until - now, 0.0)
+                if cooldown <= 0.0:
+                    break
+            if (time.time() - start) + cooldown > timeout:
+                return False
+            time.sleep(min(cooldown, 0.4))
+
+        # 2. Acquire concurrency semaphore slot
         remaining = timeout - (time.time() - start)
         if remaining <= 0 or not self._semaphore.acquire(timeout=remaining):
             return False
 
+        # 3. Refill and consume token
         try:
             while True:
                 with self._lock:
                     now = time.time()
-                    # Check circuit breaker cooldown
-                    if self.circuit_broken:
-                        if now < self.circuit_break_until:
-                            sleep_time = self.circuit_break_until - now
-                        else:
-                            self.circuit_broken = False
-                            self.consecutive_429 = 0
-                            sleep_time = 0.0
-                    # Check global pause from 429
-                    elif now < self.global_pause_until:
-                        sleep_time = self.global_pause_until - now
+                    elapsed = now - self._last_token_time
+                    self._tokens = min(float(self.max_concurrency), self._tokens + elapsed * self.target_qps)
+                    self._last_token_time = now
+                    if self._tokens >= 1.0:
+                        self._tokens -= 1.0
+                        return True
                     else:
-                        sleep_time = 0.0
-
-                    if sleep_time <= 0:
-                        # Refill tokens
-                        elapsed = now - self._last_token_time
-                        self._tokens = min(float(self.max_concurrency), self._tokens + elapsed * self.target_qps)
-                        self._last_token_time = now
-                        if self._tokens >= 1.0:
-                            self._tokens -= 1.0
-                            return True
-                        else:
-                            needed = (1.0 - self._tokens) / self.target_qps
-                            sleep_time = max(0.05, needed)
+                        needed = (1.0 - self._tokens) / self.target_qps
+                        sleep_time = max(0.05, needed)
 
                 if (time.time() - start) + sleep_time > timeout:
                     self._semaphore.release()
                     return False
-                time.sleep(min(sleep_time, 0.4))
+                time.sleep(min(sleep_time, 0.3))
         except Exception:
             self._semaphore.release()
             raise
@@ -133,16 +150,16 @@ class AdaptiveRateLimiter:
             self.consecutive_429 += 1
             jitter = random.uniform(0.3, 0.8)
             if retry_after is not None and retry_after > 0:
-                backoff = float(retry_after) + jitter
+                backoff = min(float(retry_after), 8.0) + jitter
             else:
-                backoff = max(2.5, 1.8 * (1.6 ** min(self.consecutive_429 - 1, 3))) + jitter
+                backoff = min(2.5 + 1.5 * min(self.consecutive_429 - 1, 3), 8.0) + jitter
 
             self.global_pause_until = max(self.global_pause_until, now + backoff)
 
-            # If threshold consecutive 429s occur, trip circuit breaker
+            # If threshold consecutive 429s occur, trip circuit breaker for a reasonable cooldown (max 12s)
             if self.consecutive_429 >= self.circuit_breaker_threshold:
-                self.circuit_broken = True
-                self.circuit_break_until = now + max(12.0, backoff)
+                self._circuit_broken = True
+                self.circuit_break_until = now + min(12.0, max(6.0, backoff))
 
             return backoff
 
@@ -152,7 +169,7 @@ class AdaptiveRateLimiter:
         """Called when a 200 OK response is received."""
         with self._lock:
             self.consecutive_429 = 0
-            self.circuit_broken = False
+            self._circuit_broken = False
 
     on_success = record_success
 
@@ -161,13 +178,16 @@ class AdaptiveRateLimiter:
         with self._lock:
             self.global_pause_until = 0.0
             self.consecutive_429 = 0
-            self.circuit_broken = False
+            self._circuit_broken = False
             self.circuit_break_until = 0.0
 
     def is_cooling_down(self) -> Tuple[bool, float]:
         """Check if currently cooling down from 429 or circuit breaker."""
         with self._lock:
             now = time.time()
+            if self._circuit_broken and now >= self.circuit_break_until:
+                self._circuit_broken = False
+                self.consecutive_429 = 0
             cooldown = max(self.global_pause_until - now, self.circuit_break_until - now, 0.0)
             return (cooldown > 0.0, cooldown)
 

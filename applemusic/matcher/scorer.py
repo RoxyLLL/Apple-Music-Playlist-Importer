@@ -36,6 +36,19 @@ class TrackScorer:
         if p1 and p1 == p2:
             return 0.99
 
+        # Japanese Kana <-> Romaji comparison
+        has_kana = bool(re.search(r"[\u3040-\u30ff]", c1) or re.search(r"[\u3040-\u30ff]", c2))
+        if has_kana:
+            r1 = TextCleaner.kana_to_romaji(c1)
+            r2 = TextCleaner.kana_to_romaji(c2)
+            rp1 = re.sub(r"[^\w]", "", r1).lower()
+            rp2 = re.sub(r"[^\w]", "", r2).lower()
+            if rp1 and rp2:
+                if rp1 == rp2:
+                    return 0.99
+                if len(rp1) >= 4 and len(rp2) >= 4 and (rp1 in rp2 or rp2 in rp1):
+                    return 0.92
+
         raw_sim = SequenceMatcher(None, s1, s2).ratio()
         clean_sim = SequenceMatcher(None, c1, c2).ratio()
 

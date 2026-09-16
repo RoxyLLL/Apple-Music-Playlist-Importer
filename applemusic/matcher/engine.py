@@ -438,10 +438,21 @@ class MatchingEngine:
         init_reason = None
         init_retry = None
         limiter = getattr(self.client, "limiter", None)
-        if limiter and getattr(limiter, "circuit_broken", False):
-            init_status = "rate_limited"
-            init_reason = "批次已暂停：触发 Apple Music 频控保护熔断，等待重试"
-            init_retry = max(getattr(limiter, "circuit_break_until", 0) - time.time(), 5.0)
+        if limiter:
+            if limiter.circuit_broken:
+                init_status = "rate_limited"
+                init_reason = "批次已暂停：触发 Apple Music 频控保护熔断，等待重试"
+                init_retry = max(getattr(limiter, "circuit_break_until", 0) - time.time(), 5.0)
+            else:
+                is_cooling, cd_remaining = limiter.is_cooling_down()
+                if is_cooling and cd_remaining > 0.2:
+                    # If cooldown is brief (<= 3s), pause smoothly instead of aborting the batch
+                    if cd_remaining <= 3.0:
+                        time.sleep(cd_remaining + 0.1)
+                    else:
+                        init_status = "rate_limited"
+                        init_reason = f"Apple Music 频控保护生效中，预计 {round(cd_remaining, 1)} 秒后自动恢复"
+                        init_retry = cd_remaining
         abort_state: Dict[str, Any] = {"status": init_status, "reason": init_reason, "retry_after": init_retry}
 
         def _worker_task(track: Track) -> SongMatchResult:
@@ -612,11 +623,8 @@ class MatchingEngine:
         Uses expanded queries, relaxed score thresholds, and optional multi-storefront search.
         """
         sf = storefront or self.config.storefront or "cn"
+        # Always prioritize the user's active storefront for playable library imports
         storefronts_to_try = [sf]
-        if fallback_storefronts:
-            for fs in fallback_storefronts:
-                if fs and fs != sf and fs not in storefronts_to_try:
-                    storefronts_to_try.append(fs)
 
         core_title, version_tags = TextCleaner.parse_title(source.title)
         primary_artist, featured_artists = TextCleaner.parse_artists(source.artists)
@@ -653,6 +661,9 @@ class MatchingEngine:
                 seen_q.add(q_norm)
                 deduped_queries.append((tier, q_str.strip()))
 
+        # Cap rematch queries to at most 3 targeted queries to prevent rate limits
+        deduped_queries = deduped_queries[:3]
+
         collected_candidates: Dict[str, AppleMusicTrack] = {}
         outcomes: List[CatalogSearchOutcome] = []
         query_attempts = 0
@@ -673,7 +684,7 @@ class MatchingEngine:
                 has_partial_failures = True
                 failures.append(f"ISRC: {isrc_outcome.safe_message or isrc_outcome.kind}")
 
-        # Try searching catalog across storefronts
+        # Try searching catalog
         for cur_sf in storefronts_to_try:
             if stop_expansion:
                 break
@@ -711,7 +722,8 @@ class MatchingEngine:
                         min_review_score=0.45 if relaxed else self.config.min_review_score,
                         min_score_gap=self.config.min_score_gap,
                     )
-                    if dec == DecisionStatus.AUTO_ACCEPT.value:
+                    # Stop early if candidate is accepted or achieves high confidence
+                    if dec == DecisionStatus.AUTO_ACCEPT.value or (best and best.score >= 0.70):
                         stop_expansion = True
                         break
 
@@ -750,10 +762,20 @@ class MatchingEngine:
         init_reason = None
         init_retry = None
         limiter = getattr(self.client, "limiter", None)
-        if limiter and getattr(limiter, "circuit_broken", False):
-            init_status = "rate_limited"
-            init_reason = "批次已暂停：触发 Apple Music 频控保护熔断，等待重试"
-            init_retry = max(getattr(limiter, "circuit_break_until", 0) - time.time(), 5.0)
+        if limiter:
+            if limiter.circuit_broken:
+                init_status = "rate_limited"
+                init_reason = "批次已暂停：触发 Apple Music 频控保护熔断，等待重试"
+                init_retry = max(getattr(limiter, "circuit_break_until", 0) - time.time(), 5.0)
+            else:
+                is_cooling, cd_remaining = limiter.is_cooling_down()
+                if is_cooling and cd_remaining > 0.2:
+                    if cd_remaining <= 3.0:
+                        time.sleep(cd_remaining + 0.1)
+                    else:
+                        init_status = "rate_limited"
+                        init_reason = f"Apple Music 频控保护生效中，预计 {round(cd_remaining, 1)} 秒后自动恢复"
+                        init_retry = cd_remaining
         abort_state: Dict[str, Any] = {"status": init_status, "reason": init_reason, "retry_after": init_retry}
 
         def _worker_rematch(track: Track) -> SongMatchResult:
