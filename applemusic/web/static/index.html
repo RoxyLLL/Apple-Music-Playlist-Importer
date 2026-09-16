@@ -1318,8 +1318,8 @@
               console.warn('Preflight check error:', pfErr);
             }
 
-            // Start matching tracks with adaptive throttled pipeline
-            const BATCH_SIZE = 15;
+            // Start matching tracks with adaptive throttled pipeline (batch 8, conservative pacing)
+            const BATCH_SIZE = 8;
             const totalTracks = playlistTracks.length;
             let completed = 0;
             matchProgressPercent.value = 0;
@@ -1336,7 +1336,7 @@
               bilibili_downloading: false,
             }));
             matchResults.value = [...allResults];
-            currentStatusText.value = `已解析 ${totalTracks} 首歌曲，正在并发检索 Apple Music 曲库...`;
+            currentStatusText.value = `已解析 ${totalTracks} 首歌曲，正在平滑检索 Apple Music 曲库...`;
 
             const chunks = [];
             for (let i = 0; i < totalTracks; i += BATCH_SIZE) {
@@ -1355,6 +1355,8 @@
                 const { offset, tracks } = chunks[chunkIndex];
 
                 let batchSuccess = false;
+                let chunkHasRateLimit = false;
+                let chunkMaxRetryAfter = 0;
                 try {
                   const matchRes = await fetch('/api/match', {
                     method: 'POST',
@@ -1375,6 +1377,12 @@
                           bilibili_downloaded: false,
                           bilibili_downloading: false,
                         };
+                        if (r.search_status === 'rate_limited') {
+                          chunkHasRateLimit = true;
+                          if (r.retry_after_seconds && r.retry_after_seconds > chunkMaxRetryAfter) {
+                            chunkMaxRetryAfter = r.retry_after_seconds;
+                          }
+                        }
                       });
                     }
                   }
@@ -1404,6 +1412,15 @@
                 matchProgressPercent.value = curPct;
                 currentStatusText.value = `正在检索 Apple Music 曲库 (${Math.min(completed, totalTracks)}/${totalTracks} 首 · ${curPct}%)...`;
                 matchResults.value = [...allResults];
+
+                // Adaptive rate limit cooldown or healthy pacing between chunks
+                if (chunkHasRateLimit) {
+                  const coolTime = Math.min(15, Math.max(3.0, chunkMaxRetryAfter || 4.0));
+                  currentStatusText.value = `Apple Music 频控保护生效中，智能避让冷却 ${Math.ceil(coolTime)} 秒后自动继续...`;
+                  await new Promise(r => setTimeout(r, coolTime * 1000));
+                } else {
+                  await new Promise(r => setTimeout(r, 600));
+                }
               }
             };
 
@@ -1450,7 +1467,7 @@
               if (data.success) {
                 extractedPlaylist.value = data.playlist;
                 targetPlaylistName.value = data.playlist.name;
-                const BATCH_SIZE = 10;
+                const BATCH_SIZE = 8;
                 const totalTracks = data.playlist.tracks.length;
                 let completed = 0;
                 matchResults.value = [];
@@ -1489,9 +1506,11 @@
                   const chunk = data.playlist.tracks.slice(i, i + BATCH_SIZE);
                   const curPct = Math.round((completed / totalTracks) * 100);
                   matchProgressPercent.value = curPct;
-                  currentStatusText.value = `正在并发检索 Apple Music 曲库 (${completed}/${totalTracks} 首 · ${curPct}%)...`;
+                  currentStatusText.value = `正在检索 Apple Music 曲库 (${completed}/${totalTracks} 首 · ${curPct}%)...`;
 
                   let chunkSuccess = false;
+                  let chunkHasRateLimit = false;
+                  let chunkMaxRetryAfter = 0;
                   try {
                     const matchRes = await fetch('/api/match', {
                       method: 'POST',
@@ -1505,12 +1524,20 @@
                       const matchData = await matchRes.json();
                       if (matchData.success && matchData.results) {
                         chunkSuccess = true;
-                        const formatted = matchData.results.map(r => ({
-                          ...r,
-                          selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
-                          bilibili_downloaded: false,
-                          bilibili_downloading: false,
-                        }));
+                        const formatted = matchData.results.map(r => {
+                          if (r.search_status === 'rate_limited') {
+                            chunkHasRateLimit = true;
+                            if (r.retry_after_seconds && r.retry_after_seconds > chunkMaxRetryAfter) {
+                              chunkMaxRetryAfter = r.retry_after_seconds;
+                            }
+                          }
+                          return {
+                            ...r,
+                            selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
+                            bilibili_downloaded: false,
+                            bilibili_downloading: false,
+                          };
+                        });
                         matchResults.value.push(...formatted);
                       }
                     }
@@ -1537,7 +1564,16 @@
                   completed += chunk.length;
                   const finalPct = Math.min(100, Math.round((completed / totalTracks) * 100));
                   matchProgressPercent.value = finalPct;
-                  currentStatusText.value = `正在极速并发检索 Apple Music 曲库 (${Math.min(completed, totalTracks)}/${totalTracks} 首 · ${finalPct}%)...`;
+                  currentStatusText.value = `正在检索 Apple Music 曲库 (${Math.min(completed, totalTracks)}/${totalTracks} 首 · ${finalPct}%)...`;
+
+                  // Adaptive rate limit cooldown or healthy pacing between chunks
+                  if (chunkHasRateLimit) {
+                    const coolTime = Math.min(15, Math.max(3.0, chunkMaxRetryAfter || 4.0));
+                    currentStatusText.value = `Apple Music 频控保护生效中，智能避让冷却 ${Math.ceil(coolTime)} 秒后自动继续...`;
+                    await new Promise(r => setTimeout(r, coolTime * 1000));
+                  } else {
+                    await new Promise(r => setTimeout(r, 600));
+                  }
                 }
               } else {
                 alert('解析文件失败: ' + data.detail);
@@ -1913,6 +1949,8 @@
             chunk.forEach(item => { item.rematching = true; });
             rematchProgress.value.currentTrackName = chunk.map(c => c.source_track.title).join(' / ');
 
+            let chunkHasRateLimit = false;
+            let chunkMaxRetryAfter = 0;
             try {
               const res = await fetch('/api/rematch', {
                 method: 'POST',
@@ -1941,6 +1979,13 @@
                     originalItem.retry_after_seconds = matchRes.retry_after_seconds;
                     originalItem.search_incomplete = matchRes.search_incomplete;
 
+                    if (matchRes.search_status === 'rate_limited') {
+                      chunkHasRateLimit = true;
+                      if (matchRes.retry_after_seconds && matchRes.retry_after_seconds > chunkMaxRetryAfter) {
+                        chunkMaxRetryAfter = matchRes.retry_after_seconds;
+                      }
+                    }
+
                     if (matchRes.selected_candidate) {
                       originalItem.selected = true;
                       rematchProgress.value.successCount++;
@@ -1958,6 +2003,14 @@
               completedCount += chunk.length;
               rematchProgress.value.current = Math.min(completedCount, unmatchedList.length);
               rematchProgress.value.percent = Math.round((rematchProgress.value.current / unmatchedList.length) * 100);
+            }
+
+            // Adaptive rate limit cooldown or pacing between chunks
+            if (chunkHasRateLimit) {
+              const coolTime = Math.min(15, Math.max(3.0, chunkMaxRetryAfter || 4.0));
+              await new Promise(r => setTimeout(r, coolTime * 1000));
+            } else {
+              await new Promise(r => setTimeout(r, 600));
             }
           }
 

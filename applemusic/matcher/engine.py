@@ -359,7 +359,7 @@ class MatchingEngine:
         self,
         playlist: Playlist,
         storefront: Optional[str] = None,
-        max_workers: int = 4,
+        max_workers: int = 2,
         on_progress: Optional[Callable[[int, int, SongMatchResult], None]] = None,
     ) -> List[SongMatchResult]:
         """
@@ -593,7 +593,7 @@ class MatchingEngine:
         storefront: Optional[str] = None,
         relaxed: bool = True,
         fallback_storefronts: Optional[List[str]] = None,
-        max_workers: int = 4,
+        max_workers: int = 2,
         on_progress: Optional[Callable[[int, int, SongMatchResult], None]] = None,
     ) -> List[SongMatchResult]:
         """

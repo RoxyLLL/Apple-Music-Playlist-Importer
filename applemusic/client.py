@@ -44,7 +44,7 @@ class AdaptiveRateLimiter:
     shared by all outbound Apple Music Catalog and ISRC queries.
     """
 
-    def __init__(self, target_qps: float = 4.0, max_concurrency: int = 4, circuit_breaker_threshold: int = 3):
+    def __init__(self, target_qps: float = 1.8, max_concurrency: int = 2, circuit_breaker_threshold: int = 5):
         self._lock = threading.Lock()
         self.target_qps = max(0.5, target_qps)
         self.max_concurrency = max_concurrency
@@ -134,14 +134,14 @@ class AdaptiveRateLimiter:
             if retry_after is not None and retry_after > 0:
                 backoff = float(retry_after)
             else:
-                backoff = 1.2 * (2 ** min(self.consecutive_429 - 1, 4)) + random.uniform(0.1, 0.3)
+                backoff = max(2.5, 1.8 * (1.6 ** min(self.consecutive_429 - 1, 3))) + random.uniform(0.2, 0.5)
 
             self.global_pause_until = max(self.global_pause_until, now + backoff)
 
             # If threshold consecutive 429s occur, trip circuit breaker
             if self.consecutive_429 >= self.circuit_breaker_threshold:
                 self.circuit_broken = True
-                self.circuit_break_until = now + max(15.0, backoff)
+                self.circuit_break_until = now + max(12.0, backoff)
 
             return backoff
 
@@ -255,8 +255,8 @@ class AppleMusicClient:
         self.auth = AppleMusicAuth(self.config)
         self.session = requests.Session()
 
-        # Shared adaptive rate limiter & circuit breaker
-        self.limiter = AdaptiveRateLimiter(target_qps=4.0, max_concurrency=4)
+        # Shared adaptive rate limiter & circuit breaker (conservative 1.8 req/s, 2 concurrent)
+        self.limiter = AdaptiveRateLimiter(target_qps=1.8, max_concurrency=2, circuit_breaker_threshold=5)
         # Shared diagnostics accumulator
         self.diagnostics = ClientDiagnostics()
 
@@ -347,7 +347,7 @@ class AppleMusicClient:
         try:
             for attempt in range(retries):
                 # Acquire rate limiter slot
-                acquired = self.limiter.acquire(timeout=20.0)
+                acquired = self.limiter.acquire(timeout=30.0)
                 if not acquired:
                     is_cool, cd = self.limiter.is_cooling_down()
                     last_outcome = CatalogSearchOutcome(
@@ -547,7 +547,7 @@ class AppleMusicClient:
         try:
             for attempt in range(retries):
                 # Acquire rate limiter slot
-                acquired = self.limiter.acquire(timeout=20.0)
+                acquired = self.limiter.acquire(timeout=30.0)
                 if not acquired:
                     is_cool, cd = self.limiter.is_cooling_down()
                     last_outcome = CatalogSearchOutcome(
