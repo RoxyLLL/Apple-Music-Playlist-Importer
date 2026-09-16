@@ -45,14 +45,23 @@ class AdaptiveRateLimiter:
     shared by all outbound Apple Music Catalog and ISRC queries.
     """
 
-    def __init__(self, target_qps: float = 1.0, max_concurrency: int = 1, circuit_breaker_threshold: int = 6):
+    def __init__(
+        self,
+        target_qps: float = 0.95,
+        max_concurrency: int = 1,
+        circuit_breaker_threshold: int = 6,
+        max_requests_per_minute: Optional[int] = None,
+    ):
         self._lock = threading.Lock()
         self.target_qps = max(0.1, target_qps)
         self.max_concurrency = max_concurrency
         self.circuit_breaker_threshold = circuit_breaker_threshold
+        # Strictly cap at 55 requests in any rolling 60-second window (Apple hard limit is 60/min)
+        self.max_requests_per_minute = max_requests_per_minute or max(55, int(self.target_qps * 60))
         self._tokens = float(max_concurrency)
         self._last_token_time = time.time()
         self._last_request_time = 0.0
+        self._request_history: List[float] = []
 
         self._semaphore = threading.BoundedSemaphore(max_concurrency)
         self.global_pause_until = 0.0
@@ -91,8 +100,8 @@ class AdaptiveRateLimiter:
     def circuit_breaker_tripped(self, val: bool):
         self.circuit_broken = val
 
-    def acquire(self, timeout: float = 60.0) -> bool:
-        """Acquire a concurrency slot and rate-limit token, respecting global pause and circuit breaker cooldown."""
+    def acquire(self, timeout: float = 90.0) -> bool:
+        """Acquire a concurrency slot and rate-limit token, strictly respecting 60-second quota, global pause and cooldown."""
         start = time.time()
 
         # 1. Wait out any 429 pause or circuit breaker cooldown WITHOUT holding semaphore
@@ -114,25 +123,41 @@ class AdaptiveRateLimiter:
         if remaining <= 0 or not self._semaphore.acquire(timeout=remaining):
             return False
 
-        # 3. Refill and consume token, enforcing minimal pacing
+        # 3. Refill and consume token, strictly enforcing 60-second rolling quota and minimum interval
         try:
-            min_interval = 1.0 / self.target_qps if self.target_qps > 0 else 1.0
+            min_interval = 1.0 / self.target_qps if self.target_qps > 0 else 1.05
             while True:
                 with self._lock:
                     now = time.time()
+                    # Clean up timestamps older than 60.0s
+                    cutoff = now - 60.0
+                    self._request_history = [t for t in self._request_history if t > cutoff]
+
+                    # Check rolling 60s quota
+                    if len(self._request_history) >= self.max_requests_per_minute:
+                        oldest = self._request_history[0]
+                        window_wait = max(0.1, 60.0 - (now - oldest) + 0.15)
+                    else:
+                        window_wait = 0.0
+
                     elapsed = now - self._last_token_time
                     self._tokens = min(float(self.max_concurrency), self._tokens + elapsed * self.target_qps)
                     self._last_token_time = now
 
                     time_since_last = now - self._last_request_time
-                    if self._tokens >= 1.0 and (self._last_request_time == 0.0 or time_since_last >= min_interval):
+                    if (
+                        window_wait <= 0.0
+                        and self._tokens >= 1.0
+                        and (self._last_request_time == 0.0 or time_since_last >= min_interval)
+                    ):
                         self._tokens -= 1.0
                         self._last_request_time = now
+                        self._request_history.append(now)
                         return True
                     else:
                         token_wait = max(0.0, (1.0 - self._tokens) / self.target_qps)
                         interval_wait = max(0.0, min_interval - time_since_last)
-                        sleep_time = max(0.05, max(token_wait, interval_wait))
+                        sleep_time = max(0.05, max(token_wait, interval_wait, window_wait))
 
                 if (time.time() - start) + sleep_time > timeout:
                     self._semaphore.release()
@@ -186,6 +211,8 @@ class AdaptiveRateLimiter:
             self.consecutive_429 = 0
             self._circuit_broken = False
             self.circuit_break_until = 0.0
+            self._request_history.clear()
+            self._last_request_time = 0.0
 
     def is_cooling_down(self) -> Tuple[bool, float]:
         """Check if currently cooling down from 429 or circuit breaker."""
@@ -286,8 +313,8 @@ class AppleMusicClient:
         self.auth = AppleMusicAuth(self.config)
         self.session = requests.Session()
 
-        # Shared adaptive rate limiter & circuit breaker (stable 1.0 req/s, strict interval pacing)
-        self.limiter = AdaptiveRateLimiter(target_qps=1.0, max_concurrency=1, circuit_breaker_threshold=6)
+        # Shared adaptive rate limiter & circuit breaker (strictly <= 55 req/min, Apple limit is 60)
+        self.limiter = AdaptiveRateLimiter(target_qps=0.95, max_concurrency=1, circuit_breaker_threshold=6, max_requests_per_minute=55)
         # Shared diagnostics accumulator
         self.diagnostics = ClientDiagnostics()
 
