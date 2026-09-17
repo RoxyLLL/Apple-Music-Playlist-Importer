@@ -601,7 +601,7 @@
               </div>
 
               <!-- Actions: Preview & Change Candidate OR Rematch / Search / Bilibili -->
-              <div class="w-48 flex items-center justify-end space-x-1.5 flex-shrink-0">
+              <div class="w-56 flex items-center justify-end space-x-1.5 flex-shrink-0">
                 <template v-if="item.status === 'matching'">
                   <span class="text-[11px] text-neutral-300">--</span>
                 </template>
@@ -645,16 +645,17 @@
                     搜曲库
                   </button>
 
-                  <!-- Single Bilibili auto-download button (ONLY shown when confirmed no_match or already downloaded) -->
-                  <button v-if="item.search_status === 'no_match' || item.bilibili_downloaded || item.bilibili_downloading"
+                  <!-- Single Bilibili auto-download / modal button (Directly available for uncollected songs) -->
+                  <button
                     @click="openBilibiliModal(item)"
                     :disabled="item.bilibili_downloading || item.bilibili_downloaded"
                     :class="item.bilibili_downloaded ? 'bg-emerald-50 text-emerald-700 border-emerald-200 cursor-default' : (item.bilibili_downloading ? 'bg-rose-50 text-applered border-rose-200 cursor-wait' : 'bg-rose-50 text-applered hover:bg-rose-100 border-rose-200 cursor-pointer')"
-                    class="px-2 py-1 rounded-md text-[11px] font-bold border transition flex items-center space-x-1 shadow-xs">
+                    class="px-2 py-1 rounded-md text-[11px] font-bold border transition flex items-center space-x-1 shadow-xs"
+                    :title="item.bilibili_downloaded ? '已从 B 站补全并入库' : '从 B 站检索并补全下载至 Apple Music 资料库'">
                     <i v-if="item.bilibili_downloading" class="fa-solid fa-circle-notch fa-spin text-[10px]"></i>
                     <i v-else-if="item.bilibili_downloaded" class="fa-solid fa-check text-[10px]"></i>
                     <i v-else class="fa-solid fa-bolt text-[10px]"></i>
-                    <span>{{ item.bilibili_downloading ? '下载中' : (item.bilibili_downloaded ? '已入库' : 'B站') }}</span>
+                    <span>{{ item.bilibili_downloading ? '下载中' : (item.bilibili_downloaded ? '已入库' : 'B站补全') }}</span>
                   </button>
                 </template>
               </div>
@@ -975,6 +976,19 @@
         <p class="text-xs text-applegray leading-relaxed">
           程序已在 B 站全站检索相关视频（MV/演唱会现场/纯享音频等）。选定后将自动下载视频缓存并提取/转码原音为 M4A 音乐格式、写入原歌曲名/歌手/封面元数据，并直接投放至 Apple Music 自动导入目录，全设备自动漫游！
         </p>
+
+        <!-- Search input box in modal -->
+        <div class="flex items-center space-x-2">
+          <div class="relative flex-1">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400"></i>
+            <input v-model="bilibiliSearchQuery" @keyup.enter="searchBilibiliManual" type="text" placeholder="输入关键词在 B 站检索..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-applered transition">
+          </div>
+          <button @click="searchBilibiliManual" :disabled="bilibiliSearching" class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-900 text-white rounded-lg text-xs font-bold transition flex items-center space-x-1 disabled:opacity-50">
+            <i v-if="bilibiliSearching" class="fa-solid fa-circle-notch fa-spin text-[10px]"></i>
+            <i v-else class="fa-solid fa-magnifying-glass text-[10px]"></i>
+            <span>搜索</span>
+          </button>
+        </div>
 
         <!-- Loading Candidates Indicator -->
         <div v-if="bilibiliSearching" class="py-8 text-center space-y-2">
@@ -1872,7 +1886,7 @@
           } else if (filter.value === 'medium') {
             return matchResults.value.filter(r => (r.status === 'medium' || r.decision === 'review') && r.status !== 'user_confirmed');
           } else if (filter.value === 'no_match') {
-            return matchResults.value.filter(r => (r.search_status === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded);
+            return matchResults.value.filter(r => (r.search_status === 'no_match' || r.decision === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded);
           } else if (filter.value === 'failed') {
             return matchResults.value.filter(r => ['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed'].includes(r.search_status || r.decision) && !r.selected_candidate && !r.bilibili_downloaded);
           }
@@ -1939,7 +1953,7 @@
 
             if (!hasMatch) {
               const sStatus = r.search_status;
-              if (sStatus === 'no_match' || (r.status === 'not_found' && !sStatus)) {
+              if (sStatus === 'no_match' || r.decision === 'no_match' || (r.status === 'not_found' && !sStatus)) {
                 noMatch++;
               }
               if (retrySet.has(sStatus || r.decision)) {
@@ -2338,9 +2352,38 @@
           failCount: 0,
         });
 
+        const bilibiliSearchQuery = ref('');
+
+        const searchBilibiliManual = async () => {
+          if (!bilibiliSearchQuery.value.trim() || bilibiliSearching.value) return;
+          bilibiliCandidates.value = [];
+          bilibiliSearching.value = true;
+          try {
+            const res = await fetch('/api/bilibili/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                title: bilibiliSearchQuery.value.trim(),
+                artist: '',
+                limit: 8
+              })
+            });
+            const data = await res.json();
+            if (data.success) {
+              bilibiliCandidates.value = data.candidates || [];
+            }
+          } catch (e) {
+            console.error('B站检索异常:', e);
+          } finally {
+            bilibiliSearching.value = false;
+          }
+        };
+
         const openBilibiliModal = async (item) => {
           bilibiliModalItem.value = item;
           bilibiliCandidates.value = [];
+          const query = `${item.source_track.title} ${(item.source_track.artists && item.source_track.artists[0]) || ''}`.trim();
+          bilibiliSearchQuery.value = query;
           bilibiliSearching.value = true;
           try {
             const res = await fetch('/api/bilibili/search', {
@@ -2349,7 +2392,7 @@
               body: JSON.stringify({
                 title: item.source_track.title,
                 artist: (item.source_track.artists && item.source_track.artists[0]) || '',
-                limit: 6
+                limit: 8
               })
             });
             const data = await res.json();
@@ -2413,7 +2456,7 @@
           }
 
           const unmatchedTracks = matchResults.value
-            .filter(r => (r.search_status === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded);
+            .filter(r => (r.search_status === 'no_match' || r.decision === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded);
 
           if (unmatchedTracks.length === 0) {
             alert('当前没有确认未收录的歌曲需要从 B 站补全！\n若有受限或失败的歌曲，请点击「重新检索」或「诊断」查看详情。');
@@ -2584,6 +2627,8 @@
           modalSearchQuery,
           bilibiliModalItem,
           bilibiliCandidates,
+          bilibiliSearchQuery,
+          searchBilibiliManual,
           bilibiliSearching,
           bilibiliDownloading,
           downloadingBvid,
