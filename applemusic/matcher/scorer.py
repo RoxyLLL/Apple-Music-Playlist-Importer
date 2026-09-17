@@ -6,10 +6,100 @@ short title strictness, ISRC priority, and score-gap decision boundaries.
 
 import re
 from difflib import SequenceMatcher
+from functools import lru_cache
 from typing import List, Optional, Tuple
 from applemusic.matcher.artist_aliases import are_artists_equivalent
 from applemusic.matcher.cleaner import TextCleaner
 from applemusic.models import AppleMusicTrack, ConfidenceLevel, DecisionStatus, MatchCandidate, Track
+
+
+@lru_cache(maxsize=16384)
+def _fast_sequence_ratio(s1: str, s2: str) -> float:
+    """
+    Fast sequence ratio calculation with theoretical bound pruning and LRU memoization.
+    Eliminates expensive difflib.SequenceMatcher O(N*M) passes for strings with disparate lengths
+    or minimal character overlap.
+    """
+    if s1 == s2:
+        return 1.0
+    len1 = len(s1)
+    len2 = len(s2)
+    if len1 == 0 or len2 == 0:
+        return 0.0
+
+    min_len = min(len1, len2)
+    max_len = max(len1, len2)
+    upper_bound = (2.0 * min_len) / (len1 + len2)
+    if upper_bound < 0.25:
+        return upper_bound * 0.5
+
+    # Substring check for fast short-circuiting
+    if min_len >= 2 and (s1 in s2 or s2 in s1):
+        ratio = min_len / max_len
+        if ratio >= 0.85:
+            return 0.90 + 0.10 * ratio
+
+    # Quick character set overlap check for longer strings
+    if min_len >= 4:
+        common_chars = len(set(s1) & set(s2))
+        if common_chars / min_len < 0.20:
+            return 0.15
+
+    return SequenceMatcher(None, s1, s2).ratio()
+
+
+@lru_cache(maxsize=8192)
+def _calculate_title_similarity_cached(source_title: str, candidate_title: str) -> float:
+    """Core cached implementation of title similarity."""
+    s1 = TextCleaner.normalize(source_title)
+    s2 = TextCleaner.normalize(candidate_title)
+
+    if s1 == s2:
+        return 1.0
+
+    # Compare core cleaned versions (without version tags/noise)
+    c1 = TextCleaner.normalize(TextCleaner.clean_title(source_title))
+    c2 = TextCleaner.normalize(TextCleaner.clean_title(candidate_title))
+    if c1 == c2:
+        return 0.98
+
+    # Compare ignoring all punctuation
+    p1 = re.sub(r"[^\w\u4e00-\u9fa5]", "", c1)
+    p2 = re.sub(r"[^\w\u4e00-\u9fa5]", "", c2)
+    if p1 and p1 == p2:
+        return 0.99
+
+    # Japanese Kana <-> Romaji comparison
+    has_kana = bool(re.search(r"[\u3040-\u30ff]", c1) or re.search(r"[\u3040-\u30ff]", c2))
+    if has_kana:
+        r1 = TextCleaner.kana_to_romaji(c1)
+        r2 = TextCleaner.kana_to_romaji(c2)
+        rp1 = re.sub(r"[^\w]", "", r1).lower()
+        rp2 = re.sub(r"[^\w]", "", r2).lower()
+        if rp1 and rp2:
+            if rp1 == rp2:
+                return 0.99
+            if len(rp1) >= 4 and len(rp2) >= 4 and (rp1 in rp2 or rp2 in rp1):
+                return 0.92
+
+    raw_sim = _fast_sequence_ratio(s1, s2)
+    clean_sim = _fast_sequence_ratio(c1, c2)
+
+    # Prefix or substring containment bonus
+    contain_bonus = 0.0
+    if c1 and c2:
+        shorter, longer = (c1, c2) if len(c1) <= len(c2) else (c2, c1)
+        ratio = len(shorter) / max(1, len(longer))
+        if longer.startswith(shorter):
+            if len(shorter) <= 2:
+                if len(longer) <= 3:
+                    contain_bonus = 0.88
+            else:
+                contain_bonus = 0.88
+        elif shorter in longer and ratio >= 0.70:
+            contain_bonus = 0.80
+
+    return max(raw_sim, clean_sim, contain_bonus)
 
 
 class TrackScorer:
@@ -18,55 +108,7 @@ class TrackScorer:
     @classmethod
     def calculate_title_similarity(cls, source_title: str, candidate_title: str) -> float:
         """Calculate similarity between core titles."""
-        s1 = TextCleaner.normalize(source_title)
-        s2 = TextCleaner.normalize(candidate_title)
-
-        if s1 == s2:
-            return 1.0
-
-        # Compare core cleaned versions (without version tags/noise)
-        c1 = TextCleaner.normalize(TextCleaner.clean_title(source_title))
-        c2 = TextCleaner.normalize(TextCleaner.clean_title(candidate_title))
-        if c1 == c2:
-            return 0.98
-
-        # Compare ignoring all punctuation
-        p1 = re.sub(r"[^\w\u4e00-\u9fa5]", "", c1)
-        p2 = re.sub(r"[^\w\u4e00-\u9fa5]", "", c2)
-        if p1 and p1 == p2:
-            return 0.99
-
-        # Japanese Kana <-> Romaji comparison
-        has_kana = bool(re.search(r"[\u3040-\u30ff]", c1) or re.search(r"[\u3040-\u30ff]", c2))
-        if has_kana:
-            r1 = TextCleaner.kana_to_romaji(c1)
-            r2 = TextCleaner.kana_to_romaji(c2)
-            rp1 = re.sub(r"[^\w]", "", r1).lower()
-            rp2 = re.sub(r"[^\w]", "", r2).lower()
-            if rp1 and rp2:
-                if rp1 == rp2:
-                    return 0.99
-                if len(rp1) >= 4 and len(rp2) >= 4 and (rp1 in rp2 or rp2 in rp1):
-                    return 0.92
-
-        raw_sim = SequenceMatcher(None, s1, s2).ratio()
-        clean_sim = SequenceMatcher(None, c1, c2).ratio()
-
-        # Prefix or substring containment bonus
-        contain_bonus = 0.0
-        if c1 and c2:
-            shorter, longer = (c1, c2) if len(c1) <= len(c2) else (c2, c1)
-            ratio = len(shorter) / max(1, len(longer))
-            if longer.startswith(shorter):
-                if len(shorter) <= 2:
-                    if len(longer) <= 3:
-                        contain_bonus = 0.88
-                else:
-                    contain_bonus = 0.88
-            elif shorter in longer and ratio >= 0.70:
-                contain_bonus = 0.80
-
-        return max(raw_sim, clean_sim, contain_bonus)
+        return _calculate_title_similarity_cached(source_title, candidate_title)
 
     @classmethod
     def calculate_artist_similarity(
@@ -96,7 +138,11 @@ class TrackScorer:
             if norm_pri_s in norm_pri_c or norm_pri_c in norm_pri_s:
                 pri_score = 0.95
             else:
-                pri_score = SequenceMatcher(None, norm_pri_s, norm_pri_c).ratio()
+                pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
+
+        # Fast exit if primary artist already exact
+        if pri_score >= 1.0:
+            return 1.0
 
         # Check full list cross-matching with parsed artists
         raw_s_list = ([pri_s] + fea_s) if pri_s else source_artists
@@ -112,11 +158,17 @@ class TrackScorer:
             for c in norm_c:
                 if s == c or are_artists_equivalent(s, c):
                     max_cross_score = max(max_cross_score, 1.0)
+                    break
                 elif s in c or c in s:
                     max_cross_score = max(max_cross_score, 0.90)
                 else:
-                    ratio = SequenceMatcher(None, s, c).ratio()
+                    max_possible = (2.0 * min(len(s), len(c))) / max(1, (len(s) + len(c)))
+                    if max_possible <= max_cross_score:
+                        continue
+                    ratio = _fast_sequence_ratio(s, c)
                     max_cross_score = max(max_cross_score, ratio)
+            if max_cross_score >= 1.0:
+                break
 
         return max(pri_score, max_cross_score)
 
@@ -198,7 +250,7 @@ class TrackScorer:
             return 1.0
         if a1 in a2 or a2 in a1:
             return 0.90
-        return SequenceMatcher(None, a1, a2).ratio()
+        return _fast_sequence_ratio(a1, a2)
 
     @classmethod
     def score(cls, source: Track, candidate: AppleMusicTrack) -> MatchCandidate:

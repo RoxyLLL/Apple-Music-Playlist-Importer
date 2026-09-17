@@ -257,11 +257,11 @@
           <div class="flex items-center space-x-2 flex-wrap gap-y-1">
             <!-- Filter Pills -->
             <div class="bg-neutral-100 p-0.5 rounded-lg flex text-xs flex-wrap">
-              <button @click="filter = 'all'" :class="filter === 'all' ? 'bg-white font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">全部</button>
-              <button @click="filter = 'matched'" :class="filter === 'matched' ? 'bg-white text-emerald-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">已匹配</button>
-              <button @click="filter = 'medium'" :class="filter === 'medium' ? 'bg-white text-amber-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">待复核</button>
-              <button @click="filter = 'no_match'" :class="filter === 'no_match' ? 'bg-white text-neutral-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">确认未收录</button>
-              <button @click="filter = 'failed'" :class="filter === 'failed' ? 'bg-white text-rose-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">失败/重试</button>
+              <button @click="setFilter('all')" :class="filter === 'all' ? 'bg-white font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">全部</button>
+              <button @click="setFilter('matched')" :class="filter === 'matched' ? 'bg-white text-emerald-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">已匹配</button>
+              <button @click="setFilter('medium')" :class="filter === 'medium' ? 'bg-white text-amber-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">待复核</button>
+              <button @click="setFilter('no_match')" :class="filter === 'no_match' ? 'bg-white text-neutral-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">确认未收录</button>
+              <button @click="setFilter('failed')" :class="filter === 'failed' ? 'bg-white text-rose-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">失败/重试</button>
             </div>
 
             <!-- Rematch Action Shortcut in toolbar -->
@@ -448,16 +448,19 @@
             <button @click="unselectAll" class="hover:text-neutral-900">取消选择</button>
           </div>
 
-          <div class="text-[11px] text-neutral-400">
-            可点击试听核对音源，版本不对可点击“换版本”
+          <div class="flex items-center space-x-2 text-[11px] text-neutral-400">
+            <span v-if="pageSize > 0 && filteredResults.length > pageSize" class="bg-neutral-200/70 text-neutral-600 px-2 py-0.5 rounded font-mono font-medium">
+              显示第 {{ (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, filteredResults.length) }} 首 / 共 {{ filteredResults.length }} 首
+            </span>
+            <span>可点击试听核对音源，版本不对可点击“换版本”</span>
           </div>
         </div>
 
         <!-- Matched Songs Table -->
         <div class="border border-neutral-200/80 rounded-xl overflow-hidden">
-          <div class="max-h-[460px] overflow-y-auto divide-y divide-neutral-100">
+          <div class="max-h-[480px] overflow-y-auto divide-y divide-neutral-100">
             
-            <div v-for="(item, idx) in filteredResults" :key="idx"
+            <div v-for="(item, idx) in paginatedResults" :key="item.source_track.id || ((currentPage - 1) * (pageSize > 0 ? pageSize : 0) + idx)"
               class="flex items-center px-4 py-2.5 hover:bg-neutral-50/90 transition group text-xs">
               
               <!-- Checkbox -->
@@ -467,8 +470,8 @@
               </div>
 
               <!-- Index -->
-              <div class="w-8 text-neutral-400 flex-shrink-0 font-mono text-[11px]">
-                {{ idx + 1 }}
+              <div class="w-10 text-neutral-400 flex-shrink-0 font-mono text-[11px]">
+                {{ (currentPage - 1) * (pageSize > 0 ? pageSize : filteredResults.length) + idx + 1 }}
               </div>
 
               <!-- Source Song (Original) -->
@@ -495,7 +498,7 @@
                 <template v-if="item.selected_candidate">
                   <!-- Album artwork thumbnail -->
                   <div class="w-8 h-8 rounded-md bg-neutral-100 border border-neutral-200 overflow-hidden flex-shrink-0 relative">
-                    <img v-if="getArtwork(item.selected_candidate.track)" :src="getArtwork(item.selected_candidate.track)" class="w-full h-full object-cover">
+                    <img v-if="getArtwork(item.selected_candidate.track)" :src="getArtwork(item.selected_candidate.track)" loading="lazy" decoding="async" class="w-full h-full object-cover">
                     <i v-else class="fa-solid fa-music text-neutral-300 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
                   </div>
                   <!-- Title & Artist -->
@@ -656,8 +659,63 @@
                 </template>
               </div>
 
+          </div>
+
+          <!-- Pagination Toolbar -->
+          <div v-if="filteredResults.length > 0" class="flex flex-col sm:flex-row items-center justify-between px-4 py-2.5 bg-neutral-50/80 border-t border-neutral-200/80 text-xs text-neutral-600 gap-2 select-none">
+            <div class="flex items-center space-x-2">
+              <span>共 <strong class="font-bold text-neutral-900">{{ filteredResults.length }}</strong> 首</span>
+              <span class="text-neutral-300">|</span>
+              <span v-if="pageSize > 0">显示第 {{ (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, filteredResults.length) }} 首</span>
+              <span v-else>全部显示</span>
             </div>
 
+            <div class="flex items-center space-x-2">
+              <!-- Page Size Selector -->
+              <div class="flex items-center space-x-1 mr-2 text-[11px] text-neutral-500">
+                <span>每页:</span>
+                <select v-model.number="pageSize" @change="currentPage = 1; pageJumpInput = 1;" class="bg-white border border-neutral-200 rounded px-1.5 py-0.5 text-xs text-neutral-700 focus:outline-none focus:border-applered cursor-pointer">
+                  <option :value="50">50 首</option>
+                  <option :value="100">100 首</option>
+                  <option :value="200">200 首</option>
+                  <option :value="500">500 首</option>
+                  <option :value="0">全部显示</option>
+                </select>
+              </div>
+
+              <!-- Navigation Buttons -->
+              <div v-if="pageSize > 0 && totalPages > 1" class="flex items-center space-x-1">
+                <button @click="goToPage(1)" :disabled="currentPage <= 1"
+                  class="px-2 py-1 rounded bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-[11px] transition" title="首页">
+                  <i class="fa-solid fa-angles-left"></i>
+                </button>
+                <button @click="goToPage(currentPage - 1)" :disabled="currentPage <= 1"
+                  class="px-2.5 py-1 rounded bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-[11px] font-medium transition">
+                  上一页
+                </button>
+
+                <span class="px-2 text-neutral-700 font-semibold font-mono text-[11px]">
+                  {{ currentPage }} / {{ totalPages }}
+                </span>
+
+                <button @click="goToPage(currentPage + 1)" :disabled="currentPage >= totalPages"
+                  class="px-2.5 py-1 rounded bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-[11px] font-medium transition">
+                  下一页
+                </button>
+                <button @click="goToPage(totalPages)" :disabled="currentPage >= totalPages"
+                  class="px-2 py-1 rounded bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-[11px] transition" title="末页">
+                  <i class="fa-solid fa-angles-right"></i>
+                </button>
+
+                <!-- Page Jump Input -->
+                <div class="flex items-center space-x-1 ml-1 text-[11px]">
+                  <span>跳至</span>
+                  <input type="number" :min="1" :max="totalPages" v-model.lazy.number="pageJumpInput" @keyup.enter="handlePageJump"
+                    class="w-11 px-1 py-0.5 text-center bg-white border border-neutral-200 rounded font-mono text-xs focus:outline-none focus:border-applered" />
+                  <span>页</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -826,7 +884,7 @@
             
             <div class="flex items-center space-x-2.5 min-w-0 flex-1">
               <div class="w-9 h-9 rounded-md bg-neutral-100 border border-neutral-200 overflow-hidden flex-shrink-0">
-                <img v-if="getArtwork(cand.track)" :src="getArtwork(cand.track)" class="w-full h-full object-cover">
+                <img v-if="getArtwork(cand.track)" :src="getArtwork(cand.track)" loading="lazy" decoding="async" class="w-full h-full object-cover">
               </div>
               <div class="min-w-0 flex-1">
                 <div class="font-bold text-neutral-900 truncate">{{ cand.track.title }}</div>
@@ -1104,7 +1162,7 @@
       if (typeof Vue === 'undefined') {
         throw new Error('Vue 核心库未载入，请检查本地静态资源');
       }
-      const { createApp, ref, computed, onMounted } = Vue;
+      const { createApp, ref, computed, watch, onMounted } = Vue;
 
       createApp({
         setup() {
@@ -1120,6 +1178,11 @@
         const matchProgressPercent = ref(0);
         const syncing = ref(false);
         const filter = ref('all'); // 'all' | 'matched' | 'medium' | 'unmatched'
+
+        // Pagination & Windowing State
+        const currentPage = ref(1);
+        const pageSize = ref(50);
+        const pageJumpInput = ref(1);
 
         // Audio preview player state
         const audioPlayer = ref(null);
@@ -1394,6 +1457,8 @@
             const totalTracks = playlistTracks.length;
             let completed = 0;
             matchProgressPercent.value = 0;
+            currentPage.value = 1;
+            pageJumpInput.value = 1;
 
             // Pre-populate all tracks with matching placeholder so Card 2 displays INSTANTLY!
             const allResults = playlistTracks.map((t) => ({
@@ -1408,6 +1473,27 @@
             }));
             matchResults.value = [...allResults];
             currentStatusText.value = `已解析 ${totalTracks} 首歌曲，正在平滑检索 Apple Music 曲库...`;
+
+            // Throttled commit function to avoid excessive DOM re-render & reactivity cascades
+            let lastCommitTime = 0;
+            let pendingCommitTimer = null;
+            const commitResults = (force = false) => {
+              const now = performance.now();
+              if (force || now - lastCommitTime >= 1200) {
+                if (pendingCommitTimer) {
+                  clearTimeout(pendingCommitTimer);
+                  pendingCommitTimer = null;
+                }
+                matchResults.value = [...allResults];
+                lastCommitTime = now;
+              } else if (!pendingCommitTimer) {
+                pendingCommitTimer = setTimeout(() => {
+                  pendingCommitTimer = null;
+                  matchResults.value = [...allResults];
+                  lastCommitTime = performance.now();
+                }, Math.max(50, 1200 - (now - lastCommitTime)));
+              }
+            };
 
             const chunks = [];
             for (let i = 0; i < totalTracks; i += BATCH_SIZE) {
@@ -1472,7 +1558,7 @@
                   if (chunkHasRateLimit && chunkAttempts <= MAX_CHUNK_RETRIES) {
                     const coolTime = Math.min(18, Math.max(5.0, chunkMaxRetryAfter || 6.0));
                     currentStatusText.value = `Apple Music 频控保护生效中，避让冷却 ${Math.ceil(coolTime)} 秒后自动重试本批 (${chunkAttempts}/${MAX_CHUNK_RETRIES})...`;
-                    matchResults.value = [...allResults];
+                    commitResults(true);
                     await new Promise(r => setTimeout(r, coolTime * 1000));
                     continue;
                   }
@@ -1500,7 +1586,7 @@
                 const curPct = Math.min(100, Math.round((completed / totalTracks) * 100));
                 matchProgressPercent.value = curPct;
                 currentStatusText.value = `正在检索 Apple Music 曲库 (${Math.min(completed, totalTracks)}/${totalTracks} 首 · ${curPct}%)...`;
-                matchResults.value = [...allResults];
+                commitResults(false);
 
                 // Steady pacing between chunks: 1.0s keeps Apple rolling quota completely unstressed
                 await new Promise(r => setTimeout(r, 1000));
@@ -1512,7 +1598,7 @@
               workers.push(runWorker());
             }
             await Promise.all(workers);
-            matchResults.value = [...allResults];
+            commitResults(true);
 
           } catch (e) {
             alert('流程执行异常: ' + e.message);
@@ -1553,8 +1639,43 @@
                 const BATCH_SIZE = 8;
                 const totalTracks = data.playlist.tracks.length;
                 let completed = 0;
-                matchResults.value = [];
                 matchProgressPercent.value = 0;
+                currentPage.value = 1;
+                pageJumpInput.value = 1;
+
+                // Pre-populate all tracks with matching placeholder so Card 2 displays INSTANTLY!
+                const allResults = data.playlist.tracks.map((t) => ({
+                  source_track: t,
+                  candidates: [],
+                  selected_candidate: null,
+                  status: 'matching',
+                  search_status: 'matching',
+                  selected: false,
+                  bilibili_downloaded: false,
+                  bilibili_downloading: false,
+                }));
+                matchResults.value = [...allResults];
+
+                // Throttled commit to prevent excessive Vue reactivity overhead
+                let lastFileCommitTime = 0;
+                let pendingFileCommitTimer = null;
+                const commitFileResults = (force = false) => {
+                  const now = performance.now();
+                  if (force || now - lastFileCommitTime >= 1200) {
+                    if (pendingFileCommitTimer) {
+                      clearTimeout(pendingFileCommitTimer);
+                      pendingFileCommitTimer = null;
+                    }
+                    matchResults.value = [...allResults];
+                    lastFileCommitTime = now;
+                  } else if (!pendingFileCommitTimer) {
+                    pendingFileCommitTimer = setTimeout(() => {
+                      pendingFileCommitTimer = null;
+                      matchResults.value = [...allResults];
+                      lastFileCommitTime = performance.now();
+                    }, Math.max(50, 1200 - (now - lastFileCommitTime)));
+                  }
+                };
 
                 // Preflight check before starting batch matching
                 currentStatusText.value = '正在执行 Apple Music 连通性与授权预检...';
@@ -1607,21 +1728,20 @@
                       const matchData = await matchRes.json();
                       if (matchData.success && matchData.results) {
                         chunkSuccess = true;
-                        const formatted = matchData.results.map(r => {
+                        matchData.results.forEach((r, idx) => {
                           if (r.search_status === 'rate_limited') {
                             chunkHasRateLimit = true;
                             if (r.retry_after_seconds && r.retry_after_seconds > chunkMaxRetryAfter) {
                               chunkMaxRetryAfter = r.retry_after_seconds;
                             }
                           }
-                          return {
+                          allResults[i + idx] = {
                             ...r,
                             selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
                             bilibili_downloaded: false,
                             bilibili_downloading: false,
                           };
                         });
-                        matchResults.value.push(...formatted);
                       }
                     }
                   } catch (batchErr) {
@@ -1629,35 +1749,39 @@
                   }
 
                   if (!chunkSuccess) {
-                    const fallback = chunk.map(t => ({
-                      source_track: t,
-                      candidates: [],
-                      selected_candidate: null,
-                      status: 'not_found',
-                      search_status: 'network_error',
-                      decision: 'error',
-                      decision_reasons: ['检索服务异常或网络中断，尚未判断是否收录'],
-                      selected: false,
-                      bilibili_downloaded: false,
-                      bilibili_downloading: false,
-                    }));
-                    matchResults.value.push(...fallback);
+                    chunk.forEach((t, idx) => {
+                      allResults[i + idx] = {
+                        source_track: t,
+                        candidates: [],
+                        selected_candidate: null,
+                        status: 'not_found',
+                        search_status: 'network_error',
+                        decision: 'error',
+                        decision_reasons: ['检索服务异常或网络中断，尚未判断是否收录'],
+                        selected: false,
+                        bilibili_downloaded: false,
+                        bilibili_downloading: false,
+                      };
+                    });
                   }
 
                   completed += chunk.length;
                   const finalPct = Math.min(100, Math.round((completed / totalTracks) * 100));
                   matchProgressPercent.value = finalPct;
                   currentStatusText.value = `正在检索 Apple Music 曲库 (${Math.min(completed, totalTracks)}/${totalTracks} 首 · ${finalPct}%)...`;
+                  commitFileResults(false);
 
                   // Adaptive rate limit cooldown or healthy pacing between chunks
                   if (chunkHasRateLimit) {
                     const coolTime = Math.min(15, Math.max(3.0, chunkMaxRetryAfter || 4.0));
                     currentStatusText.value = `Apple Music 频控保护生效中，智能避让冷却 ${Math.ceil(coolTime)} 秒后自动继续...`;
+                    commitFileResults(true);
                     await new Promise(r => setTimeout(r, coolTime * 1000));
                   } else {
                     await new Promise(r => setTimeout(r, 600));
                   }
                 }
+                commitFileResults(true);
               } else {
                 alert('解析文件失败: ' + data.detail);
               }
@@ -1755,14 +1879,85 @@
           return matchResults.value;
         });
 
-        const highConfidenceCount = computed(() => matchResults.value.filter(r => (r.status === 'exact' || r.status === 'high' || r.decision === 'auto_accept') && r.status !== 'user_confirmed').length);
-        const userConfirmedCount = computed(() => matchResults.value.filter(r => r.status === 'user_confirmed').length);
-        const mediumConfidenceCount = computed(() => matchResults.value.filter(r => (r.status === 'medium' || r.decision === 'review') && r.status !== 'user_confirmed').length);
-        const noMatchCount = computed(() => matchResults.value.filter(r => (r.search_status === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded).length);
-        const retryableCount = computed(() => matchResults.value.filter(r => ['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed'].includes(r.search_status || r.decision) && !r.selected_candidate && !r.bilibili_downloaded).length);
-        const unmatchedCount = computed(() => matchResults.value.filter(r => !r.selected_candidate && !r.bilibili_downloaded).length);
-        const matchedCount = computed(() => matchResults.value.filter(r => r.selected_candidate || r.bilibili_downloaded).length);
-        const selectedTracksCount = computed(() => matchResults.value.filter(r => r.selected && (r.selected_candidate || r.bilibili_downloaded)).length);
+        // Pagination computed slicing & controls
+        const totalPages = computed(() => {
+          if (pageSize.value <= 0) return 1;
+          return Math.max(1, Math.ceil(filteredResults.value.length / pageSize.value));
+        });
+
+        const paginatedResults = computed(() => {
+          if (pageSize.value <= 0) return filteredResults.value;
+          const start = (currentPage.value - 1) * pageSize.value;
+          return filteredResults.value.slice(start, start + pageSize.value);
+        });
+
+        const goToPage = (page) => {
+          const target = Math.max(1, Math.min(totalPages.value, page));
+          currentPage.value = target;
+          pageJumpInput.value = target;
+        };
+
+        const handlePageJump = () => {
+          let p = parseInt(pageJumpInput.value, 10);
+          if (isNaN(p) || p < 1) p = 1;
+          goToPage(p);
+        };
+
+        const setFilter = (f) => {
+          filter.value = f;
+          currentPage.value = 1;
+          pageJumpInput.value = 1;
+        };
+
+        watch(totalPages, (newTotal) => {
+          if (currentPage.value > newTotal) {
+            currentPage.value = Math.max(1, newTotal);
+            pageJumpInput.value = currentPage.value;
+          }
+        });
+
+        // Single-pass stats computation for maximum performance across 2k+ songs
+        const resultStats = computed(() => {
+          let high = 0, confirmed = 0, medium = 0, noMatch = 0, retryable = 0, unmatched = 0, matched = 0, selected = 0;
+          const retrySet = new Set(['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed']);
+          const list = matchResults.value;
+          for (let i = 0; i < list.length; i++) {
+            const r = list[i];
+            const hasMatch = Boolean(r.selected_candidate || r.bilibili_downloaded);
+            if (hasMatch) matched++;
+            else unmatched++;
+
+            if (r.selected && hasMatch) selected++;
+
+            if (r.status === 'user_confirmed') {
+              confirmed++;
+            } else if (r.status === 'exact' || r.status === 'high' || r.decision === 'auto_accept') {
+              high++;
+            } else if (r.status === 'medium' || r.decision === 'review') {
+              medium++;
+            }
+
+            if (!hasMatch) {
+              const sStatus = r.search_status;
+              if (sStatus === 'no_match' || (r.status === 'not_found' && !sStatus)) {
+                noMatch++;
+              }
+              if (retrySet.has(sStatus || r.decision)) {
+                retryable++;
+              }
+            }
+          }
+          return { high, confirmed, medium, noMatch, retryable, unmatched, matched, selected };
+        });
+
+        const highConfidenceCount = computed(() => resultStats.value.high);
+        const userConfirmedCount = computed(() => resultStats.value.confirmed);
+        const mediumConfidenceCount = computed(() => resultStats.value.medium);
+        const noMatchCount = computed(() => resultStats.value.noMatch);
+        const retryableCount = computed(() => resultStats.value.retryable);
+        const unmatchedCount = computed(() => resultStats.value.unmatched);
+        const matchedCount = computed(() => resultStats.value.matched);
+        const selectedTracksCount = computed(() => resultStats.value.selected);
 
         // Diagnostics State & Methods
         const showDiagnosticsModal = ref(false);
@@ -2354,6 +2549,14 @@
           extractedPlaylist,
           matchResults,
           filteredResults,
+          paginatedResults,
+          currentPage,
+          pageSize,
+          totalPages,
+          pageJumpInput,
+          goToPage,
+          handlePageJump,
+          setFilter,
           showAuthModal,
           tokenInput,
           testingToken,
