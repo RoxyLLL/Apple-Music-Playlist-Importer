@@ -289,9 +289,16 @@ class TestLocalManager(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(dest_dir, "song1.mp3")))
 
 
+try:
+    from fastapi.testclient import TestClient
+    HAS_TESTCLIENT = True
+except Exception:
+    HAS_TESTCLIENT = False
+
+
+@unittest.skipUnless(HAS_TESTCLIENT, "Requires httpx for FastAPI TestClient")
 class TestLibraryApi(unittest.TestCase):
     def setUp(self):
-        from fastapi.testclient import TestClient
         from applemusic.web.app import app, SESSION_API_TOKEN
         self.client = TestClient(app)
         self.headers = {"X-App-Token": SESSION_API_TOKEN}
