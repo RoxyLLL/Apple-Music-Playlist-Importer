@@ -1463,17 +1463,25 @@
                 const pfData = await pfRes.json();
                 if (!pfData.can_proceed) {
                   if (pfData.kind === 'rate_limited') {
-                    const waitSec = Math.round(pfData.retry_after_seconds || 15);
-                    alert(`【频控保护】Apple Music 当前正处于访问限制冷却中 (预计剩余 ${waitSec} 秒)，请稍后再试，避免连续请求导致更长时间限制。`);
+                    let waitSec = Math.max(1, Math.round(pfData.retry_after_seconds || 8));
+                    while (waitSec > 0) {
+                      currentStatusText.value = `Apple Music 频控保护生效中，智能调步队列，预计 ${waitSec} 秒后自动开始...`;
+                      await new Promise(r => setTimeout(r, 1000));
+                      waitSec--;
+                    }
+                    currentStatusText.value = '冷却完毕，正在继续执行...';
                   } else if (pfData.kind === 'auth_failed') {
                     alert(`【授权失效】Apple Music 授权异常: ${pfData.reason}。请重新连接 Apple ID。`);
                     showAuthModal.value = true;
+                    loading.value = false;
+                    currentStatusText.value = '';
+                    return;
                   } else {
                     alert(`【服务异常】无法连接 Apple Music 曲库: ${pfData.reason}。`);
+                    loading.value = false;
+                    currentStatusText.value = '';
+                    return;
                   }
-                  loading.value = false;
-                  currentStatusText.value = '';
-                  return;
                 }
               }
             } catch (pfErr) {
@@ -1543,7 +1551,7 @@
                 let chunkHasRateLimit = false;
                 let chunkMaxRetryAfter = 0;
                 let chunkAttempts = 0;
-                const MAX_CHUNK_RETRIES = 2;
+                const MAX_CHUNK_RETRIES = 3;
 
                 while (chunkAttempts <= MAX_CHUNK_RETRIES) {
                   chunkAttempts++;
@@ -1582,10 +1590,17 @@
                     console.warn('Batch match error:', batchErr);
                   }
 
-                  // If this chunk had rate-limited tracks, wait out cooldown and retry this chunk!
+                  // If this chunk had rate-limited tracks, wait out Apple's 32s lockout window and auto-retry!
                   if (chunkHasRateLimit && chunkAttempts <= MAX_CHUNK_RETRIES) {
-                    const coolTime = Math.min(18, Math.max(5.0, chunkMaxRetryAfter || 6.0));
+                    const coolTime = Math.min(45, Math.max(30.0, chunkMaxRetryAfter || 32.0));
                     currentStatusText.value = `Apple Music 频控保护生效中，避让冷却 ${Math.ceil(coolTime)} 秒后自动重试本批 (${chunkAttempts}/${MAX_CHUNK_RETRIES})...`;
+                    // Keep tracks in 'matching' state in the UI so the user does not see a premature 429 badge
+                    tracks.forEach((_, idx) => {
+                      if (allResults[offset + idx]) {
+                        allResults[offset + idx].status = 'matching';
+                        allResults[offset + idx].search_status = 'matching';
+                      }
+                    });
                     commitResults(true);
                     await new Promise(r => setTimeout(r, coolTime * 1000));
                     continue;
@@ -1717,17 +1732,25 @@
                     const pfData = await pfRes.json();
                     if (!pfData.can_proceed) {
                       if (pfData.kind === 'rate_limited') {
-                        const waitSec = Math.round(pfData.retry_after_seconds || 15);
-                        alert(`【频控保护】Apple Music 当前正处于访问限制冷却中 (预计剩余 ${waitSec} 秒)，请稍后再试。`);
+                        let waitSec = Math.max(1, Math.round(pfData.retry_after_seconds || 8));
+                        while (waitSec > 0) {
+                          currentStatusText.value = `Apple Music 频控保护生效中，智能调步队列，预计 ${waitSec} 秒后自动开始...`;
+                          await new Promise(r => setTimeout(r, 1000));
+                          waitSec--;
+                        }
+                        currentStatusText.value = '冷却完毕，正在继续执行...';
                       } else if (pfData.kind === 'auth_failed') {
                         alert(`【授权失效】Apple Music 授权异常: ${pfData.reason}。请重新连接 Apple ID。`);
                         showAuthModal.value = true;
+                        loading.value = false;
+                        currentStatusText.value = '';
+                        return;
                       } else {
                         alert(`【服务异常】无法连接 Apple Music 曲库: ${pfData.reason}。`);
+                        loading.value = false;
+                        currentStatusText.value = '';
+                        return;
                       }
-                      loading.value = false;
-                      currentStatusText.value = '';
-                      return;
                     }
                   }
                 } catch (pfErr) {
@@ -1743,37 +1766,61 @@
                   let chunkSuccess = false;
                   let chunkHasRateLimit = false;
                   let chunkMaxRetryAfter = 0;
-                  try {
-                    const matchRes = await fetch('/api/match', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        tracks: chunk,
-                        storefront: config.value.storefront
-                      })
-                    });
-                    if (matchRes.ok) {
-                      const matchData = await matchRes.json();
-                      if (matchData.success && matchData.results) {
-                        chunkSuccess = true;
-                        matchData.results.forEach((r, idx) => {
-                          if (r.search_status === 'rate_limited') {
-                            chunkHasRateLimit = true;
-                            if (r.retry_after_seconds && r.retry_after_seconds > chunkMaxRetryAfter) {
-                              chunkMaxRetryAfter = r.retry_after_seconds;
+                  let chunkAttempts = 0;
+                  const MAX_CHUNK_RETRIES = 3;
+
+                  while (chunkAttempts <= MAX_CHUNK_RETRIES) {
+                    chunkAttempts++;
+                    chunkHasRateLimit = false;
+                    chunkMaxRetryAfter = 0;
+                    try {
+                      const matchRes = await fetch('/api/match', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          tracks: chunk,
+                          storefront: config.value.storefront
+                        })
+                      });
+                      if (matchRes.ok) {
+                        const matchData = await matchRes.json();
+                        if (matchData.success && matchData.results) {
+                          chunkSuccess = true;
+                          matchData.results.forEach((r, idx) => {
+                            if (r.search_status === 'rate_limited') {
+                              chunkHasRateLimit = true;
+                              if (r.retry_after_seconds && r.retry_after_seconds > chunkMaxRetryAfter) {
+                                chunkMaxRetryAfter = r.retry_after_seconds;
+                              }
                             }
-                          }
-                          allResults[i + idx] = {
-                            ...r,
-                            selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
-                            bilibili_downloaded: false,
-                            bilibili_downloading: false,
-                          };
-                        });
+                            allResults[i + idx] = {
+                              ...r,
+                              selected: r.selected_candidate && (r.decision === 'auto_accept' || r.decision === 'user_confirmed'),
+                              bilibili_downloaded: false,
+                              bilibili_downloading: false,
+                            };
+                          });
+                        }
                       }
+                    } catch (batchErr) {
+                      console.warn('Batch match error:', batchErr);
                     }
-                  } catch (batchErr) {
-                    console.warn('Batch match error:', batchErr);
+
+                    // If rate-limited, wait out Apple's 32s lockout window and retry seamlessly!
+                    if (chunkHasRateLimit && chunkAttempts <= MAX_CHUNK_RETRIES) {
+                      const coolTime = Math.min(45, Math.max(30.0, chunkMaxRetryAfter || 32.0));
+                      currentStatusText.value = `Apple Music 频控保护生效中，避让冷却 ${Math.ceil(coolTime)} 秒后自动重试本批 (${chunkAttempts}/${MAX_CHUNK_RETRIES})...`;
+                      chunk.forEach((_, idx) => {
+                        if (allResults[i + idx]) {
+                          allResults[i + idx].status = 'matching';
+                          allResults[i + idx].search_status = 'matching';
+                        }
+                      });
+                      matchResults.value = [...allResults];
+                      await new Promise(r => setTimeout(r, coolTime * 1000));
+                      continue;
+                    }
+                    break;
                   }
 
                   if (!chunkSuccess) {
@@ -1798,16 +1845,7 @@
                   matchProgressPercent.value = finalPct;
                   currentStatusText.value = `正在检索 Apple Music 曲库 (${Math.min(completed, totalTracks)}/${totalTracks} 首 · ${finalPct}%)...`;
                   commitFileResults(false);
-
-                  // Adaptive rate limit cooldown or healthy pacing between chunks
-                  if (chunkHasRateLimit) {
-                    const coolTime = Math.min(15, Math.max(3.0, chunkMaxRetryAfter || 4.0));
-                    currentStatusText.value = `Apple Music 频控保护生效中，智能避让冷却 ${Math.ceil(coolTime)} 秒后自动继续...`;
-                    commitFileResults(true);
-                    await new Promise(r => setTimeout(r, coolTime * 1000));
-                  } else {
-                    await new Promise(r => setTimeout(r, 600));
-                  }
+                  await new Promise(r => setTimeout(r, 800));
                 }
                 commitFileResults(true);
               } else {

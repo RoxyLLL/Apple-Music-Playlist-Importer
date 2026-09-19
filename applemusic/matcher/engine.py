@@ -233,7 +233,12 @@ class MatchingEngine:
                 search_incomplete=False,
             )
 
-    def match_track(self, source: Track, storefront: Optional[str] = None) -> SongMatchResult:
+    def match_track(
+        self,
+        source: Track,
+        storefront: Optional[str] = None,
+        single_query_budget: bool = True,
+    ) -> SongMatchResult:
         """Search and match a single source track against Apple Music Catalog."""
         sf = storefront or self.config.storefront or "cn"
 
@@ -337,8 +342,7 @@ class MatchingEngine:
                     # Candidates found but not auto-accepted: schedule 1 refined fallback if available
                     raw_title = source.title.strip()
                     if best is None or best.score < self.config.min_review_score:
-                        # None of the candidates scored high enough; try core title alone as fallback
-                        if primary_artist and core_title:
+                        if not single_query_budget and primary_artist and core_title:
                             queries_to_run.append(core_title)
                     elif version_tags and primary_artist:
                         queries_to_run.append(f"{core_title} {primary_artist} {version_tags[0]}")
@@ -350,12 +354,11 @@ class MatchingEngine:
                         queries_to_run.append(f"{raw_title} {primary_artist}")
             elif outcome.kind == "no_hits":
                 # Primary query returned 0 hits.
-                # If raw title differs from core title, schedule fallback query with raw title;
-                # Otherwise, fallback to core_title alone so the scorer can evaluate potential artist aliases.
+                # Only expand in rematch mode or if raw title has substantial extra keywords
                 raw_title = source.title.strip()
                 if raw_title and raw_title.lower() != core_title.lower() and primary_artist:
                     queries_to_run.append(f"{raw_title} {primary_artist}")
-                elif primary_artist and core_title:
+                elif not single_query_budget and primary_artist and core_title:
                     queries_to_run.append(core_title)
                 elif not primary_artist and raw_title and raw_title.lower() != core_title.lower():
                     queries_to_run.append(raw_title)
@@ -432,7 +435,7 @@ class MatchingEngine:
         unique_keys = list(unique_tracks.keys())
         completed_count = 0
 
-        # Batch early-abort coordinator
+        # Batch early-abort coordinator (only aborts entire batch on unrecoverable auth failure or persistent circuit break)
         batch_abort_lock = threading.Lock()
         init_status = None
         init_reason = None
@@ -471,10 +474,6 @@ class MatchingEngine:
                     if res.search_status == "auth_required":
                         abort_state["status"] = "auth_required"
                         abort_state["reason"] = "批次已中止：Apple Music 授权已失效，请重新连接 Apple ID"
-                    elif res.search_status == "rate_limited" and getattr(self.client.limiter, "circuit_broken", False):
-                        abort_state["status"] = "rate_limited"
-                        abort_state["reason"] = "批次已暂停：触发 Apple Music 频控保护熔断，等待重试"
-                        abort_state["retry_after"] = res.retry_after_seconds
 
             return res
 
@@ -756,7 +755,7 @@ class MatchingEngine:
         results: List[Optional[SongMatchResult]] = [None] * total
         completed_count = 0
 
-        # Batch early-abort coordinator
+        # Batch early-abort coordinator (only aborts entire batch on unrecoverable auth failure or persistent circuit break)
         batch_abort_lock = threading.Lock()
         init_status = None
         init_reason = None
@@ -795,10 +794,6 @@ class MatchingEngine:
                     if res.search_status == "auth_required":
                         abort_state["status"] = "auth_required"
                         abort_state["reason"] = "批次已中止：Apple Music 授权已失效，请重新连接 Apple ID"
-                    elif res.search_status == "rate_limited" and getattr(self.client.limiter, "circuit_broken", False):
-                        abort_state["status"] = "rate_limited"
-                        abort_state["reason"] = "批次已暂停：触发 Apple Music 频控保护熔断，等待重试"
-                        abort_state["retry_after"] = res.retry_after_seconds
 
             return res
 

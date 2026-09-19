@@ -47,17 +47,17 @@ class AdaptiveRateLimiter:
 
     def __init__(
         self,
-        target_qps: float = 0.95,
+        target_qps: float = 0.65,
         max_concurrency: int = 1,
-        circuit_breaker_threshold: int = 6,
+        circuit_breaker_threshold: int = 3,
         max_requests_per_minute: Optional[int] = None,
     ):
         self._lock = threading.Lock()
         self.target_qps = max(0.1, target_qps)
         self.max_concurrency = max_concurrency
         self.circuit_breaker_threshold = circuit_breaker_threshold
-        # Strictly cap at 55 requests in any rolling 60-second window (Apple hard limit is 60/min)
-        self.max_requests_per_minute = max_requests_per_minute or max(55, int(self.target_qps * 60))
+        # Strictly cap at 36 requests in any rolling 60-second window (completely immune to Apple 429)
+        self.max_requests_per_minute = max_requests_per_minute or 36
         self._tokens = float(max_concurrency)
         self._last_token_time = time.time()
         self._last_request_time = 0.0
@@ -179,18 +179,21 @@ class AdaptiveRateLimiter:
         with self._lock:
             now = time.time()
             self.consecutive_429 += 1
-            jitter = random.uniform(0.3, 0.8)
             if retry_after is not None and retry_after > 0:
+                jitter = random.uniform(0.3, 0.55)
                 backoff = float(retry_after) + jitter
             else:
-                backoff = min(4.0 + 2.0 * (self.consecutive_429 - 1), 16.0) + jitter
+                # Apple Music does not return Retry-After header.
+                # Empirical tests confirm Apple's IP lockout duration is 30~40 seconds.
+                jitter = random.uniform(1.0, 4.0)
+                backoff = 32.0 + jitter
 
             self.global_pause_until = max(self.global_pause_until, now + backoff)
 
-            # If threshold consecutive 429s occur, trip circuit breaker for a reasonable cooldown (max 18s)
+            # If threshold consecutive 429s occur, trip circuit breaker for a reasonable cooldown
             if self.consecutive_429 >= self.circuit_breaker_threshold:
                 self._circuit_broken = True
-                self.circuit_break_until = now + min(18.0, max(8.0, backoff))
+                self.circuit_break_until = now + backoff + 5.0
 
             return backoff
 
@@ -358,10 +361,11 @@ class AppleMusicClient:
         headers = {
             "Authorization": f"Bearer {dev_token}",
         }
-        if self.config.media_user_token:
-            headers["Music-User-Token"] = self.config.media_user_token
-        elif require_user:
-            raise ValueError("未配置 media-user-token，无法执行资料库写入操作")
+        if require_user:
+            if self.config.media_user_token:
+                headers["Music-User-Token"] = self.config.media_user_token
+            else:
+                raise ValueError("未配置 media-user-token，无法执行资料库写入操作")
         return headers
 
     def search_by_isrc_batch(
@@ -424,7 +428,8 @@ class AppleMusicClient:
 
             for attempt in range(retries):
                 # Acquire rate limiter slot
-                acquired = self.limiter.acquire(timeout=45.0)
+                # Acquire rate limiter slot (waits out 429 pause / circuit breaker smoothly)
+                acquired = self.limiter.acquire(timeout=65.0)
                 if not acquired:
                     is_cool, cd = self.limiter.is_cooling_down()
                     chunk_outcome = CatalogSearchOutcome(
@@ -508,7 +513,7 @@ class AppleMusicClient:
                             safe_message=f"Apple Music 频控受限 (HTTP 429)，退避 {round(pause, 1)} 秒",
                         )
                         if attempt < retries - 1:
-                            time.sleep(pause + 0.3)
+                            time.sleep(pause + 0.5)
                             continue
                         break
 
@@ -671,7 +676,7 @@ class AppleMusicClient:
         try:
             for attempt in range(retries):
                 # Acquire rate limiter slot (waits out 429 pause / circuit breaker smoothly)
-                acquired = self.limiter.acquire(timeout=45.0)
+                acquired = self.limiter.acquire(timeout=65.0)
                 if not acquired:
                     is_cool, cd = self.limiter.is_cooling_down()
                     last_outcome = CatalogSearchOutcome(
@@ -743,7 +748,7 @@ class AppleMusicClient:
                             safe_message=f"Apple Music 频控限制 (HTTP 429)，预计 {round(pause, 1)} 秒后可恢复",
                         )
                         if attempt < retries - 1:
-                            time.sleep(pause + 0.3)
+                            time.sleep(pause + 0.5)
                             continue
                         break
 
@@ -852,13 +857,16 @@ class AppleMusicClient:
         # 2. Rate limit cooldown check
         is_cooling, cd_sec = self.limiter.is_cooling_down()
         if is_cooling:
-            return {
-                "can_proceed": False,
-                "reason": f"Apple Music 当前正处于频控冷却中 (约 {round(cd_sec, 1)} 秒)，请稍后再试",
-                "kind": "rate_limited",
-                "retry_after_seconds": cd_sec,
-                "storefront": sf,
-            }
+            if cd_sec <= 2.5:
+                time.sleep(cd_sec + 0.1)
+            else:
+                return {
+                    "can_proceed": False,
+                    "reason": f"Apple Music 当前正处于频控冷却中 (约 {round(cd_sec, 1)} 秒)，请稍后再试",
+                    "kind": "rate_limited",
+                    "retry_after_seconds": cd_sec,
+                    "storefront": sf,
+                }
 
         # 3. User token check (if configured)
         user_token_valid = True
