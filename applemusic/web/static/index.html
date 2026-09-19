@@ -54,51 +54,159 @@
     ::-webkit-scrollbar-thumb:hover { background: #8e8e93; }
   </style>
 </head>
-<body class="h-full flex flex-col overflow-y-auto bg-[#f5f5f7]">
-  <div id="app" v-cloak class="min-h-full flex flex-col">
+<body class="h-full overflow-hidden bg-[#f5f5f7]">
+  <div id="app" v-cloak class="h-screen flex overflow-hidden">
 
     <!-- Audio Player for 30s Track Preview -->
     <audio ref="audioPlayer" @ended="onAudioEnded" @pause="isPlaying = false" @play="isPlaying = true" @timeupdate="onTimeUpdate"></audio>
 
-    <!-- TOP NAVIGATION BAR (Authentic Apple Clean Bar) -->
-    <header class="h-16 bg-white/90 backdrop-blur-md border-b border-[#e5e5ea] sticky top-0 z-40 px-6 sm:px-10 flex items-center justify-between">
+    <!-- LEFT SIDEBAR (可折叠侧边栏：默认单图标宽度，带弹出按钮，底部放置曲库与Apple ID) -->
+    <aside :class="sidebarExpanded ? 'w-64 p-5' : 'w-[72px] px-2 py-5'"
+      class="bg-white border-r border-[#e5e5ea] flex flex-col justify-between h-screen flex-shrink-0 z-30 select-none shadow-[2px_0_12px_rgba(0,0,0,0.02)] transition-all duration-300 ease-in-out">
       
-      <!-- Brand & Title -->
-      <div class="flex items-center space-x-3.5">
-        <img src="/static/app_icon.png" class="w-10 h-10 rounded-2xl shadow-sm shadow-applered/25 object-cover" alt="Logo">
-        <div class="flex items-center space-x-2.5">
-          <span class="font-extrabold text-lg text-appledark tracking-tight">Apple Music</span>
-          <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-neutral-100 text-neutral-600 border border-neutral-200">Playlist Importer</span>
+      <!-- Top Brand & Navigation -->
+      <div class="space-y-6">
+        
+        <!-- Header: Logo, Title, and Collapse/Expand Toggle Button -->
+        <div class="flex items-center justify-between" :class="sidebarExpanded ? 'px-1' : 'flex-col space-y-3 items-center'">
+          <!-- Logo & Title -->
+          <div class="flex items-center space-x-3 overflow-hidden">
+            <img src="/static/app_icon.png" class="w-9 h-9 rounded-2xl shadow-sm shadow-applered/25 object-cover flex-shrink-0" alt="Logo" :title="sidebarExpanded ? '' : 'Apple Music v2.0'">
+            <div v-if="sidebarExpanded" class="min-w-0 transition-opacity duration-200">
+              <div class="flex items-center space-x-1.5">
+                <span class="font-extrabold text-base text-appledark tracking-tight truncate">Apple Music</span>
+                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200">v2.0</span>
+              </div>
+              <div class="text-[11px] text-neutral-400 font-medium truncate">曲库导入与管理</div>
+            </div>
+          </div>
+
+          <!-- Toggle Button (弹出/收起按钮) -->
+          <button @click="sidebarExpanded = !sidebarExpanded"
+            class="w-7 h-7 rounded-xl hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700 transition cursor-pointer flex items-center justify-center flex-shrink-0"
+            :title="sidebarExpanded ? '收起侧边栏' : '展开侧边栏'">
+            <i :class="sidebarExpanded ? 'fa-solid fa-angles-left' : 'fa-solid fa-angles-right'" class="text-xs"></i>
+          </button>
         </div>
+
+        <!-- 3 Vertical Navigation Buttons (竖列排放) -->
+        <nav class="flex flex-col space-y-2">
+          <!-- Button 1: 歌单导入 -->
+          <button @click="switchAppTab('importer')"
+            :class="currentAppTab === 'importer' ? 'bg-rose-50 text-applered font-bold border border-rose-200/80 shadow-xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 font-medium border border-transparent'"
+            :title="sidebarExpanded ? '' : '歌单导入'"
+            class="w-full rounded-xl transition flex items-center cursor-pointer text-xs"
+            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px;' : 'padding: 10px 0; justify-content: center;'">
+            <span class="w-7 h-7 rounded-lg flex items-center justify-center transition flex-shrink-0" :class="currentAppTab === 'importer' ? 'bg-applered text-white shadow-2xs' : 'bg-neutral-100 text-neutral-500'">
+              <i class="fa-solid fa-cloud-arrow-up text-xs"></i>
+            </span>
+            <span v-if="sidebarExpanded" class="text-xs font-semibold truncate">歌单导入</span>
+          </button>
+
+          <!-- Button 2: Apple Music 资料库 -->
+          <button @click="switchAppTab('cloud')"
+            :class="currentAppTab === 'cloud' ? 'bg-rose-50 text-applered font-bold border border-rose-200/80 shadow-xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 font-medium border border-transparent'"
+            :title="sidebarExpanded ? '' : 'Apple Music 资料库'"
+            class="w-full rounded-xl transition flex items-center cursor-pointer text-xs"
+            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px;' : 'padding: 10px 0; justify-content: center;'">
+            <span class="w-7 h-7 rounded-lg flex items-center justify-center transition flex-shrink-0" :class="currentAppTab === 'cloud' ? 'bg-applered text-white shadow-2xs' : 'bg-neutral-100 text-neutral-500'">
+              <i class="fa-solid fa-compact-disc text-xs"></i>
+            </span>
+            <span v-if="sidebarExpanded" class="text-xs font-semibold truncate">Apple Music 资料库</span>
+          </button>
+
+          <!-- Button 3: 本地 Apple Music 资料库 -->
+          <button @click="switchAppTab('local_lib')"
+            :class="currentAppTab === 'local_lib' ? 'bg-rose-50 text-applered font-bold border border-rose-200/80 shadow-xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 font-medium border border-transparent'"
+            :title="sidebarExpanded ? '' : '本地 Apple Music 资料库'"
+            class="w-full rounded-xl transition flex items-center cursor-pointer text-xs"
+            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px;' : 'padding: 10px 0; justify-content: center;'">
+            <span class="w-7 h-7 rounded-lg flex items-center justify-center transition flex-shrink-0" :class="currentAppTab === 'local_lib' ? 'bg-applered text-white shadow-2xs' : 'bg-neutral-100 text-neutral-500'">
+              <i class="fa-solid fa-folder-music text-xs"></i>
+            </span>
+            <span v-if="sidebarExpanded" class="text-xs font-semibold truncate">本地 Apple Music 资料库</span>
+          </button>
+        </nav>
       </div>
 
-      <!-- Right Controls: Storefront & Auth Status -->
-      <div class="flex items-center space-x-3">
-        <!-- Storefront Selector -->
-        <div class="flex items-center space-x-1.5 px-3 py-1.5 bg-neutral-100/90 rounded-xl text-xs font-medium text-neutral-700 border border-neutral-200/80 hover:bg-neutral-200/50 transition">
-          <i class="fa-solid fa-globe text-neutral-400"></i>
-          <span class="text-neutral-500">曲库:</span>
-          <select v-model="config.storefront" @change="saveConfig" class="bg-transparent font-bold text-applered focus:outline-none cursor-pointer">
-            <option value="cn">中国区 (CN)</option>
-            <option value="us">美区 (US)</option>
-            <option value="hk">香港区 (HK)</option>
-            <option value="tw">台湾区 (TW)</option>
-            <option value="jp">日本区 (JP)</option>
-          </select>
+      <!-- Bottom-Left Corner: 图一的两个按钮移到左下角，顶替应用状态运行正常 -->
+      <div class="pt-4 border-t border-neutral-100 space-y-2.5">
+        
+        <!-- Expanded State (展开状态：完整显示曲库选择与登录按钮) -->
+        <div v-if="sidebarExpanded" class="space-y-2 animate-in fade-in duration-150">
+          <!-- Storefront Selector -->
+          <div class="flex items-center space-x-2 px-3 py-2 bg-neutral-100/90 rounded-xl text-xs font-medium text-neutral-700 border border-neutral-200/80">
+            <i class="fa-solid fa-globe text-neutral-400 text-xs flex-shrink-0"></i>
+            <span class="text-neutral-500 flex-shrink-0">曲库:</span>
+            <select v-model="config.storefront" @change="saveConfig" class="bg-transparent font-bold text-applered focus:outline-none cursor-pointer text-xs w-full">
+              <option value="cn">中国区 (CN)</option>
+              <option value="us">美区 (US)</option>
+              <option value="hk">香港区 (HK)</option>
+              <option value="tw">台湾区 (TW)</option>
+              <option value="jp">日本区 (JP)</option>
+            </select>
+          </div>
+
+          <!-- Apple ID Authorization Status / Action -->
+          <button @click="showAuthModal = true"
+            :class="config.is_authorized ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/70' : 'bg-applered text-white hover:bg-applepink shadow-sm shadow-applered/25'"
+            class="w-full flex items-center justify-center space-x-2 px-3 py-2.5 rounded-xl text-xs font-semibold border transition cursor-pointer">
+            <span class="w-2 h-2 rounded-full" :class="config.is_authorized ? 'bg-emerald-500' : 'bg-white animate-pulse'"></span>
+            <span class="truncate">{{ config.is_authorized ? 'Apple ID 已连接' : '连接 Apple ID' }}</span>
+          </button>
         </div>
 
-        <!-- Apple ID Authorization Status / Action -->
-        <button @click="showAuthModal = true"
-          :class="config.is_authorized ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/70' : 'bg-applered text-white hover:bg-applepink shadow-sm shadow-applered/25'"
-          class="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition">
-          <span class="w-2 h-2 rounded-full" :class="config.is_authorized ? 'bg-emerald-500' : 'bg-white animate-pulse'"></span>
-          <span>{{ config.is_authorized ? 'Apple ID 已连接' : '连接 Apple ID' }}</span>
-        </button>
-      </div>
-    </header>
+        <!-- Collapsed State (收起状态：仅一个图标宽度) -->
+        <div v-else class="flex flex-col items-center space-y-2.5 animate-in fade-in duration-150">
+          <!-- Storefront Selector (Icon + Country Code Badge) -->
+          <div class="relative group">
+            <select v-model="config.storefront" @change="saveConfig"
+              class="opacity-0 absolute inset-0 w-full h-full cursor-pointer z-10"
+              title="点击切换曲库地区">
+              <option value="cn">中国区 (CN)</option>
+              <option value="us">美区 (US)</option>
+              <option value="hk">香港区 (HK)</option>
+              <option value="tw">台湾区 (TW)</option>
+              <option value="jp">日本区 (JP)</option>
+            </select>
+            <div class="w-10 h-10 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 border border-neutral-200 flex flex-col items-center justify-center cursor-pointer transition"
+              :title="`当前曲库: ${config.storefront ? config.storefront.toUpperCase() : 'CN'} (点击切换)`">
+              <i class="fa-solid fa-globe text-neutral-600 text-xs"></i>
+              <span class="text-[9px] font-bold text-applered font-mono uppercase leading-tight">{{ config.storefront || 'CN' }}</span>
+            </div>
+          </div>
 
-    <!-- MAIN BODY CONTAINER -->
-    <main class="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-8 space-y-7">
+          <!-- Apple ID Status / Action (Compact Icon) -->
+          <button @click="showAuthModal = true"
+            :class="config.is_authorized ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-rose-50 text-applered border-rose-200 hover:bg-rose-100'"
+            class="w-10 h-10 rounded-xl border flex items-center justify-center relative transition cursor-pointer"
+            :title="config.is_authorized ? 'Apple ID 已连接 (点击管理)' : '连接 Apple ID'">
+            <i class="fa-brands fa-apple text-base"></i>
+            <span class="w-2 h-2 rounded-full absolute top-1.5 right-1.5 border border-white" :class="config.is_authorized ? 'bg-emerald-500' : 'bg-applered animate-pulse'"></span>
+          </button>
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- RIGHT CONTENT AREA (Scrollable) -->
+    <div class="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
+      
+      <!-- Top clean bar -->
+      <header class="h-14 bg-white/90 backdrop-blur-md border-b border-[#e5e5ea] sticky top-0 z-20 px-6 sm:px-8 flex items-center justify-between flex-shrink-0">
+        <div class="text-xs font-bold text-neutral-700 flex items-center space-x-2">
+          <span class="text-neutral-400 font-normal">当前模块 /</span>
+          <span class="text-appledark font-bold">
+            {{ currentAppTab === 'importer' ? '歌单导入与匹配' : (currentAppTab === 'cloud' ? 'Apple Music 云端资料库与歌单管理' : '本地 Apple Music 资料库管理') }}
+          </span>
+        </div>
+      </header>
+
+      <!-- MAIN BODY CONTAINER -->
+      <main class="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-8 space-y-7">
+
+      <!-- ==================== TAB 1: IMPORTER ==================== -->
+      <div v-if="currentAppTab === 'importer'" class="space-y-7">
 
       <!-- ==================== CARD 1: SOURCE SELECTOR & PARSER ==================== -->
       <section class="bg-white rounded-2xl border border-appleborder p-7 shadow-[0_2px_12px_rgba(0,0,0,0.03)] space-y-6">
@@ -748,8 +856,368 @@
         </div>
 
       </section>
+      </div>
+
+      <!-- ==================== TAB 2: APPLE MUSIC CLOUD LIBRARY ==================== -->
+      <section v-if="currentAppTab === 'cloud'" class="space-y-6">
+
+        <!-- Unauthorized Prompt Card -->
+        <div v-if="!config.is_authorized" class="bg-white rounded-2xl border border-appleborder p-12 shadow-[0_2px_12px_rgba(0,0,0,0.03)] text-center space-y-4">
+          <div class="w-16 h-16 rounded-3xl bg-applered/10 text-applered flex items-center justify-center mx-auto text-2xl shadow-sm">
+            <i class="fa-brands fa-apple"></i>
+          </div>
+          <div class="space-y-1 max-w-md mx-auto">
+            <h3 class="text-lg font-extrabold text-appledark">尚未连接 Apple ID</h3>
+            <p class="text-xs text-applegray leading-relaxed">
+              批量管理 Apple Music 个人歌单与资料库歌曲需要 Apple 账号写入凭证（media-user-token）。
+            </p>
+          </div>
+          <button @click="showAuthModal = true"
+            class="px-6 py-2.5 rounded-xl bg-applered text-white text-xs font-bold hover:bg-applepink transition shadow-sm shadow-applered/25 cursor-pointer">
+            立即连接 Apple ID
+          </button>
+        </div>
+
+        <!-- Authorized Cloud Management View -->
+        <div v-else class="space-y-6">
+
+          <!-- Cloud Sub-tabs: Playlists vs Songs -->
+          <div class="bg-white rounded-2xl border border-appleborder p-6 shadow-[0_2px_12px_rgba(0,0,0,0.03)] space-y-5">
+            
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-4">
+              <!-- Sub-tab buttons -->
+              <div class="bg-neutral-100/90 p-1 rounded-xl flex space-x-1 max-w-md">
+                <button @click="cloudSubTab = 'playlists'"
+                  :class="cloudSubTab === 'playlists' ? 'bg-white text-applered font-bold shadow-xs' : 'text-neutral-600 hover:text-neutral-900 font-medium'"
+                  class="px-4 py-2 rounded-lg text-xs transition flex items-center space-x-1.5 cursor-pointer">
+                  <i class="fa-solid fa-list-ul"></i>
+                  <span>我的个人歌单 ({{ userPlaylists.length }})</span>
+                </button>
+                <button @click="cloudSubTab = 'songs'; if(userLibrarySongs.length === 0) fetchUserLibrarySongs();"
+                  :class="cloudSubTab === 'songs' ? 'bg-white text-applered font-bold shadow-xs' : 'text-neutral-600 hover:text-neutral-900 font-medium'"
+                  class="px-4 py-2 rounded-lg text-xs transition flex items-center space-x-1.5 cursor-pointer">
+                  <i class="fa-solid fa-music"></i>
+                  <span>资料库歌曲 ({{ userLibrarySongs.length }})</span>
+                </button>
+              </div>
+
+              <!-- Action & Search Toolbar -->
+              <div class="flex items-center space-x-2.5 flex-wrap gap-y-2">
+                <!-- Search Box -->
+                <div class="relative w-56 sm:w-72 flex items-center">
+                  <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400"></i>
+                  <input v-if="cloudSubTab === 'playlists'" v-model="cloudPlaylistSearch" type="text" placeholder="搜索歌单名称..."
+                    class="w-full pl-8 pr-3 py-1.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:border-applered transition">
+                  <input v-else v-model="cloudSongSearch" @keyup.enter="searchCloudSongsServer" @input="onCloudSongSearchInput" type="text" placeholder="搜索歌曲、歌手、专辑 (回车深搜)..."
+                    class="w-full pl-8 pr-7 py-1.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:border-applered transition">
+                  <button v-if="cloudSubTab === 'songs' && cloudSongSearch" @click="clearServerSearch"
+                    class="absolute right-2 text-neutral-400 hover:text-neutral-700 text-xs">
+                    <i class="fa-solid fa-xmark"></i>
+                  </button>
+                </div>
+
+                <!-- Server Search Button for Songs -->
+                <button v-if="cloudSubTab === 'songs' && cloudSongSearch.trim()" @click="searchCloudSongsServer"
+                  :disabled="searchingCloudSongs"
+                  class="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl text-xs font-bold transition flex items-center space-x-1 cursor-pointer" title="向 Apple Music 服务器发送全量资料库检索">
+                  <i :class="searchingCloudSongs ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-cloud-bolt'" class="text-[11px]"></i>
+                  <span>{{ searchingCloudSongs ? '检索中' : '全库深搜' }}</span>
+                </button>
+
+                <!-- Refresh Button -->
+                <button @click="cloudSubTab === 'playlists' ? fetchUserPlaylists() : fetchUserLibrarySongs(true)"
+                  :disabled="loadingPlaylists || loadingCloudSongs"
+                  class="p-2 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 text-neutral-600 hover:text-neutral-900 text-xs transition cursor-pointer" title="全量刷新">
+                  <i :class="(loadingPlaylists || loadingCloudSongs) ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-rotate-right'"></i>
+                </button>
+
+                <!-- Batch Delete Button -->
+                <button v-if="cloudSubTab === 'playlists'" @click="batchDeleteCloudPlaylists"
+                  :disabled="selectedCloudPlaylists.length === 0 || deletingPlaylists"
+                  class="px-3.5 py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-xs font-bold transition flex items-center space-x-1.5 disabled:opacity-40 disabled:pointer-events-none cursor-pointer">
+                  <i v-if="deletingPlaylists" class="fa-solid fa-circle-notch fa-spin"></i>
+                  <i v-else class="fa-regular fa-trash-can"></i>
+                  <span>批量删除歌单 ({{ selectedCloudPlaylists.length }})</span>
+                </button>
+                <button v-else @click="batchDeleteCloudSongs"
+                  :disabled="selectedCloudSongs.length === 0 || deletingCloudSongs"
+                  class="px-3.5 py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-xs font-bold transition flex items-center space-x-1.5 disabled:opacity-40 disabled:pointer-events-none cursor-pointer">
+                  <i v-if="deletingCloudSongs" class="fa-solid fa-circle-notch fa-spin"></i>
+                  <i v-else class="fa-regular fa-trash-can"></i>
+                  <span>从资料库批量移除 ({{ selectedCloudSongs.length }})</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- VIEW 1: PLAYLISTS TABLE -->
+            <div v-if="cloudSubTab === 'playlists'">
+              <!-- Loading -->
+              <div v-if="loadingPlaylists" class="py-16 text-center space-y-2">
+                <i class="fa-solid fa-circle-notch fa-spin text-2xl text-applered"></i>
+                <div class="text-xs text-applegray">正在从 Apple Music 获取个人歌单...</div>
+              </div>
+
+              <!-- Playlists List -->
+              <div v-else-if="filteredUserPlaylists.length > 0" class="divide-y divide-neutral-100 border border-neutral-200/70 rounded-xl overflow-hidden text-xs">
+                <!-- Table Header -->
+                <div class="bg-neutral-50 px-4 py-2.5 flex items-center font-bold text-neutral-500 text-[11px] select-none">
+                  <div class="w-8 flex items-center">
+                    <input type="checkbox" :checked="isAllPlaylistsSelected" @change="toggleSelectAllPlaylists"
+                      class="rounded text-applered focus:ring-applered cursor-pointer">
+                  </div>
+                  <div class="w-12 text-center">封面</div>
+                  <div class="flex-1 ml-3">歌单信息</div>
+                  <div class="w-48 text-right pr-2">操作</div>
+                </div>
+
+                <!-- Table Rows -->
+                <div v-for="pl in filteredUserPlaylists" :key="pl.id"
+                  class="px-4 py-3 flex items-center hover:bg-neutral-50/80 transition">
+                  <div class="w-8 flex items-center">
+                    <input type="checkbox" :value="pl.id" v-model="selectedCloudPlaylists"
+                      class="rounded text-applered focus:ring-applered cursor-pointer">
+                  </div>
+                  <div class="w-12 h-12 rounded-xl bg-neutral-100 border border-neutral-200/80 overflow-hidden flex-shrink-0 relative shadow-2xs">
+                    <img v-if="pl.artwork_url" :src="pl.artwork_url.replace('{w}x{h}', '200x200')" loading="lazy" class="w-full h-full object-cover">
+                    <i v-else class="fa-solid fa-compact-disc text-neutral-300 text-lg absolute inset-0 m-auto flex items-center justify-center"></i>
+                  </div>
+                  <div class="flex-1 ml-3 min-w-0">
+                    <div class="font-bold text-neutral-900 truncate text-sm">{{ pl.name }}</div>
+                    <div class="text-neutral-500 truncate mt-0.5 text-xs">
+                      {{ pl.description || '暂无描述' }}
+                    </div>
+                  </div>
+                  <div class="w-48 flex items-center justify-end space-x-1.5 flex-shrink-0">
+                    <button @click="openPlaylistTracksModal(pl)"
+                      class="px-2.5 py-1.5 rounded-lg bg-neutral-100 hover:bg-neutral-200/80 text-neutral-700 font-semibold transition text-xs flex items-center space-x-1 cursor-pointer">
+                      <i class="fa-solid fa-list-ol text-[11px]"></i>
+                      <span>曲目</span>
+                    </button>
+                    <button @click="openEditPlaylistModal(pl)"
+                      class="px-2.5 py-1.5 rounded-lg bg-neutral-100 hover:bg-neutral-200/80 text-neutral-700 font-semibold transition text-xs flex items-center space-x-1 cursor-pointer">
+                      <i class="fa-regular fa-pen-to-square text-[11px]"></i>
+                      <span>编辑</span>
+                    </button>
+                    <button @click="deleteSingleCloudPlaylist(pl)"
+                      class="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 font-semibold transition text-xs flex items-center space-x-1 cursor-pointer">
+                      <i class="fa-regular fa-trash-can text-[11px]"></i>
+                      <span>删除</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Empty Playlists -->
+              <div v-else class="py-16 text-center text-xs text-neutral-400 space-y-2">
+                <i class="fa-solid fa-compact-disc text-3xl text-neutral-300"></i>
+                <div>暂无歌单或未搜索到匹配歌单</div>
+              </div>
+            </div>
+
+            <!-- VIEW 2: LIBRARY SONGS TABLE -->
+            <div v-else>
+              <!-- Server Search Status Bar -->
+              <div v-if="serverSearchResults !== null" class="mb-3 flex items-center justify-between px-3.5 py-2 bg-sky-50 border border-sky-200 rounded-xl text-xs text-sky-800">
+                <span class="flex items-center gap-1.5">
+                  <i class="fa-solid fa-circle-check text-sky-600"></i>
+                  <span>云端全量检索「<b>{{ cloudSongSearch }}</b>」：找到 <b>{{ serverSearchResults.length }}</b> 首歌曲</span>
+                </span>
+                <button @click="clearServerSearch" class="text-sky-600 hover:text-sky-900 underline text-xs cursor-pointer">
+                  清除搜索显示全部
+                </button>
+              </div>
+
+              <!-- Loading -->
+              <div v-if="loadingCloudSongs || searchingCloudSongs" class="py-16 text-center space-y-2">
+                <i class="fa-solid fa-circle-notch fa-spin text-2xl text-applered"></i>
+                <div class="text-xs text-applegray">{{ searchingCloudSongs ? '正在云端全量检索 Apple Music 资料库...' : '正在从 Apple Music 同步个人资料库歌曲 (全量)...' }}</div>
+              </div>
+
+              <!-- Songs List -->
+              <div v-else-if="displayedLibrarySongs.length > 0" class="divide-y divide-neutral-100 border border-neutral-200/70 rounded-xl overflow-hidden text-xs">
+                <!-- Table Header -->
+                <div class="bg-neutral-50 px-4 py-2.5 flex items-center font-bold text-neutral-500 text-[11px] select-none">
+                  <div class="w-8 flex items-center">
+                    <input type="checkbox" :checked="isAllCloudSongsSelected" @change="toggleSelectAllCloudSongs"
+                      class="rounded text-applered focus:ring-applered cursor-pointer">
+                  </div>
+                  <div class="w-10 text-center">封面</div>
+                  <div class="flex-1 ml-3">歌曲信息 (共 {{ displayedLibrarySongs.length }} 首)</div>
+                  <div class="w-36 hidden sm:block">专辑</div>
+                  <div class="w-20 text-center">时长</div>
+                  <div class="w-24 text-right pr-2">操作</div>
+                </div>
+
+                <!-- Table Rows -->
+                <div v-for="song in displayedLibrarySongs" :key="song.id"
+                  class="px-4 py-2.5 flex items-center hover:bg-neutral-50/80 transition">
+                  <div class="w-8 flex items-center">
+                    <input type="checkbox" :value="song.id" v-model="selectedCloudSongs"
+                      class="rounded text-applered focus:ring-applered cursor-pointer">
+                  </div>
+                  <div class="w-10 h-10 rounded-lg bg-neutral-100 border border-neutral-200/80 overflow-hidden flex-shrink-0 relative shadow-2xs">
+                    <img v-if="song.artwork_url" :src="song.artwork_url.replace('{w}x{h}', '150x150')" loading="lazy" class="w-full h-full object-cover">
+                    <i v-else class="fa-solid fa-music text-neutral-300 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
+                  </div>
+                  <div class="flex-1 ml-3 min-w-0">
+                    <div class="font-bold text-neutral-900 truncate">{{ song.title }}</div>
+                    <div class="text-neutral-500 truncate text-[11px] mt-0.5">{{ song.artist }}</div>
+                  </div>
+                  <div class="w-36 hidden sm:block text-neutral-500 truncate text-xs">
+                    {{ song.album }}
+                  </div>
+                  <div class="w-20 text-center text-neutral-400 font-mono text-[11px]">
+                    {{ formatDuration(song.duration_ms) }}
+                  </div>
+                  <div class="w-24 flex items-center justify-end">
+                    <button @click="deleteSingleCloudSong(song)"
+                      class="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 font-semibold transition text-xs flex items-center space-x-1 cursor-pointer">
+                      <i class="fa-regular fa-trash-can text-[11px]"></i>
+                      <span>移除</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Empty Songs -->
+              <div v-else class="py-16 text-center text-xs text-neutral-400 space-y-2">
+                <i class="fa-solid fa-music text-3xl text-neutral-300"></i>
+                <div>暂无资料库歌曲或未搜索到匹配歌曲</div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- ==================== TAB 3: LOCAL APPLE MUSIC LIBRARY ==================== -->
+      <section v-if="currentAppTab === 'local_lib'" class="space-y-6">
+        
+        <div class="bg-white rounded-2xl border border-appleborder p-6 shadow-[0_2px_12px_rgba(0,0,0,0.03)] space-y-5">
+          
+          <!-- Header & Toolbar -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-4">
+            <div class="flex items-center space-x-3">
+              <span class="w-9 h-9 rounded-xl bg-applered/10 text-applered text-sm font-bold flex items-center justify-center shadow-xs">
+                <i class="fa-solid fa-compact-disc"></i>
+              </span>
+              <div>
+                <div class="flex items-center space-x-2">
+                  <h2 class="text-base font-bold text-appledark">本地 Apple Music 资料库</h2>
+                  <span class="text-[11px] font-bold px-2 py-0.5 rounded-md bg-rose-50 text-applered border border-rose-200/80">Windows 本地库</span>
+                </div>
+                <p class="text-xs text-applegray mt-0.5 truncate max-w-xl" :title="localDirectory">
+                  管理 Windows 本地 Apple Music 客户端资料库媒体文件:
+                  <span v-if="localDirectory" class="font-mono text-neutral-600 font-semibold ml-1">{{ localDirectory }}</span>
+                </p>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+              <!-- Search -->
+              <div class="relative w-52 sm:w-60">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400"></i>
+                <input v-model="localSongSearch" type="text" placeholder="搜索本地库歌曲..."
+                  class="w-full pl-8 pr-3 py-1.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:border-applered transition">
+              </div>
+
+              <!-- Refresh -->
+              <button @click="fetchLocalSongs" :disabled="loadingLocalSongs"
+                class="p-2 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 text-neutral-600 hover:text-neutral-900 text-xs transition cursor-pointer" title="刷新本地资料库扫描">
+                <i :class="loadingLocalSongs ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-rotate-right'"></i>
+              </button>
+
+              <!-- Open Folder -->
+              <button @click="openLocalMusicFolder"
+                class="px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 text-neutral-700 text-xs font-semibold transition flex items-center space-x-1.5 cursor-pointer" title="在 Windows 资源管理器中打开 Apple Music 资料库目录">
+                <i class="fa-regular fa-folder-open"></i>
+                <span>打开资料库目录</span>
+              </button>
+
+              <!-- Batch Delete Local Files -->
+              <button @click="batchDeleteLocalSongs"
+                :disabled="selectedLocalSongs.length === 0 || deletingLocalSongs"
+                class="px-3.5 py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-xs font-bold transition flex items-center space-x-1.5 disabled:opacity-40 disabled:pointer-events-none cursor-pointer">
+                <i v-if="deletingLocalSongs" class="fa-solid fa-circle-notch fa-spin"></i>
+                <i v-else class="fa-regular fa-trash-can"></i>
+                <span>从本地库删除 ({{ selectedLocalSongs.length }})</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Loading -->
+          <div v-if="loadingLocalSongs" class="py-16 text-center space-y-2">
+            <i class="fa-solid fa-circle-notch fa-spin text-2xl text-applered"></i>
+            <div class="text-xs text-applegray">正在扫描本地音乐目录...</div>
+          </div>
+
+          <!-- Local Songs List -->
+          <div v-else-if="filteredLocalSongs.length > 0" class="divide-y divide-neutral-100 border border-neutral-200/70 rounded-xl overflow-hidden text-xs">
+            <!-- Table Header -->
+            <div class="bg-neutral-50 px-4 py-2.5 flex items-center font-bold text-neutral-500 text-[11px] select-none">
+              <div class="w-8 flex items-center">
+                <input type="checkbox" :checked="isAllLocalSongsSelected" @change="toggleSelectAllLocalSongs"
+                  class="rounded text-applered focus:ring-applered cursor-pointer">
+              </div>
+              <div class="flex-1">曲目 / 歌手</div>
+              <div class="w-36 hidden md:block">专辑</div>
+              <div class="w-20 text-center">格式</div>
+              <div class="w-20 text-center">大小</div>
+              <div class="w-48 text-right pr-2">操作</div>
+            </div>
+
+            <!-- Table Rows -->
+            <div v-for="song in filteredLocalSongs" :key="song.file_path"
+              class="px-4 py-2.5 flex items-center hover:bg-neutral-50/80 transition">
+              <div class="w-8 flex items-center">
+                <input type="checkbox" :value="song.file_path" v-model="selectedLocalSongs"
+                  class="rounded text-applered focus:ring-applered cursor-pointer">
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="font-bold text-neutral-900 truncate" :title="song.title">{{ song.title }}</div>
+                <div class="text-neutral-500 truncate text-[11px] mt-0.5" :title="song.artist">{{ song.artist }}</div>
+              </div>
+              <div class="w-36 hidden md:block text-neutral-500 truncate text-xs" :title="song.album">
+                {{ song.album }}
+              </div>
+              <div class="w-20 text-center">
+                <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-100 text-neutral-700 border border-neutral-200 uppercase">
+                  {{ song.extension.replace('.', '') }}
+                </span>
+              </div>
+              <div class="w-20 text-center text-neutral-400 font-mono text-[11px]">
+                {{ formatFileSize(song.file_size) }}
+              </div>
+              <div class="w-36 flex items-center justify-end space-x-1.5 flex-shrink-0">
+                <button @click="openEditLocalMetadataModal(song)"
+                  class="px-2.5 py-1.5 rounded-lg bg-neutral-100 hover:bg-neutral-200/80 text-neutral-700 font-semibold transition text-xs flex items-center space-x-1 cursor-pointer">
+                  <i class="fa-regular fa-pen-to-square text-[11px]"></i>
+                  <span>元数据</span>
+                </button>
+                <button @click="deleteSingleLocalSong(song)"
+                  class="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 font-semibold transition text-xs flex items-center space-x-1 cursor-pointer">
+                  <i class="fa-regular fa-trash-can text-[11px]"></i>
+                  <span>删除</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Empty Local Songs -->
+          <div v-else class="py-16 text-center text-xs text-neutral-400 space-y-2">
+            <i class="fa-solid fa-compact-disc text-3xl text-neutral-300"></i>
+            <div>本地 Apple Music 资料库目录暂无音频文件，或未搜索到匹配项</div>
+          </div>
+
+        </div>
+
+      </section>
 
     </main>
+    </div>
 
 
     <!-- ==================== MODAL 1: AUTH & TOKEN SETTINGS ==================== -->
@@ -1153,6 +1621,408 @@
               关闭
             </button>
           </div>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- ==================== MODAL 6: PLAYLIST TRACKS VIEWER & MANAGER ==================== -->
+    <div v-if="viewingPlaylist" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-appleborder space-y-4 animate-in fade-in zoom-in duration-200">
+        
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div class="flex items-center space-x-3">
+            <div class="w-12 h-12 rounded-xl bg-neutral-100 border border-neutral-200/80 overflow-hidden flex-shrink-0 relative shadow-2xs">
+              <img v-if="viewingPlaylist.artwork_url" :src="viewingPlaylist.artwork_url.replace('{w}x{h}', '120x120')" class="w-full h-full object-cover">
+              <i v-else class="fa-solid fa-compact-disc text-neutral-300 absolute inset-0 m-auto flex items-center justify-center"></i>
+            </div>
+            <div>
+              <div class="flex items-center space-x-2">
+                <h3 class="text-base font-bold text-appledark">{{ viewingPlaylist.name }}</h3>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-applered border border-rose-200/80">歌单曲目管理</span>
+              </div>
+              <p class="text-xs text-applegray mt-0.5">
+                共 {{ playlistTracks.length }} 首曲目
+                <span v-if="selectedPlaylistTracks.length > 0" class="text-applered font-semibold ml-1.5">(已选 {{ selectedPlaylistTracks.length }} 首)</span>
+              </p>
+            </div>
+          </div>
+          <button @click="viewingPlaylist = null" class="w-7 h-7 rounded-full flex items-center justify-center text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition cursor-pointer">
+            <i class="fa-solid fa-xmark text-sm"></i>
+          </button>
+        </div>
+
+        <!-- Action Toolbar: Select All, Add Song, Batch Delete -->
+        <div class="flex items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+          <div class="flex items-center space-x-2">
+            <label class="flex items-center space-x-2 text-xs font-semibold text-neutral-700 cursor-pointer select-none">
+              <input type="checkbox" :checked="isAllPlaylistTracksSelected" @change="toggleSelectAllPlaylistTracks"
+                class="rounded text-applered focus:ring-applered cursor-pointer">
+              <span>全选</span>
+            </label>
+            <span class="text-neutral-300 text-xs">|</span>
+            <span class="text-xs text-neutral-500 font-mono">{{ selectedPlaylistTracks.length }}/{{ playlistTracks.length }}</span>
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <!-- Toggle Add Song Panel -->
+            <button @click="showAddTracksPanel = !showAddTracksPanel"
+              :class="showAddTracksPanel ? 'bg-neutral-900 text-white' : 'bg-rose-50 text-applered hover:bg-rose-100 border border-rose-200'"
+              class="px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer shadow-2xs">
+              <i :class="showAddTracksPanel ? 'fa-solid fa-chevron-up' : 'fa-solid fa-plus'" class="text-[10px]"></i>
+              <span>{{ showAddTracksPanel ? '收起添加' : '添加歌曲' }}</span>
+            </button>
+
+            <!-- Batch Delete Button -->
+            <button @click="batchDeletePlaylistTracks"
+              :disabled="selectedPlaylistTracks.length === 0 || deletingPlaylistTracks"
+              class="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-xs font-bold transition flex items-center space-x-1.5 disabled:opacity-40 disabled:pointer-events-none cursor-pointer">
+              <i v-if="deletingPlaylistTracks" class="fa-solid fa-circle-notch fa-spin"></i>
+              <i v-else class="fa-regular fa-trash-can"></i>
+              <span>从歌单批量删除 ({{ selectedPlaylistTracks.length }})</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Collapsible Add Tracks Panel with 3 Tabs -->
+        <div v-if="showAddTracksPanel" class="bg-neutral-50 p-4 rounded-xl border border-neutral-200/80 space-y-3 animate-in fade-in slide-in-from-top-2 duration-150">
+          <!-- 3-Tab Header -->
+          <div class="flex items-center justify-between border-b border-neutral-200/70 pb-2.5">
+            <div class="flex items-center space-x-1 sm:space-x-2">
+              <span class="text-xs font-bold text-neutral-800 flex items-center gap-1.5 mr-2">
+                <i class="fa-solid fa-plus text-applered"></i>
+                <span>添加歌曲</span>
+              </span>
+              <button @click="switchPlaylistAddTab('cloud')"
+                :class="playlistAddTab === 'cloud' ? 'bg-white text-applered shadow-xs font-bold border border-neutral-200' : 'text-neutral-500 hover:text-neutral-900 font-medium'"
+                class="px-2.5 py-1 rounded-lg text-xs transition cursor-pointer flex items-center space-x-1">
+                <i class="fa-solid fa-cloud text-[11px]"></i>
+                <span>从资料库添加</span>
+              </button>
+              <button @click="switchPlaylistAddTab('local')"
+                :class="playlistAddTab === 'local' ? 'bg-white text-applered shadow-xs font-bold border border-neutral-200' : 'text-neutral-500 hover:text-neutral-900 font-medium'"
+                class="px-2.5 py-1 rounded-lg text-xs transition cursor-pointer flex items-center space-x-1">
+                <i class="fa-solid fa-hard-drive text-[11px]"></i>
+                <span>从本地资料库添加</span>
+              </button>
+              <button @click="switchPlaylistAddTab('search')"
+                :class="playlistAddTab === 'search' ? 'bg-white text-applered shadow-xs font-bold border border-neutral-200' : 'text-neutral-500 hover:text-neutral-900 font-medium'"
+                class="px-2.5 py-1 rounded-lg text-xs transition cursor-pointer flex items-center space-x-1">
+                <i class="fa-solid fa-magnifying-glass text-[11px]"></i>
+                <span>在线曲库检索</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- TAB 1: FROM CLOUD LIBRARY -->
+          <div v-if="playlistAddTab === 'cloud'" class="space-y-2.5">
+            <div class="flex items-center space-x-2">
+              <div class="relative flex-1">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400"></i>
+                <input v-model="cloudAddSearchQuery" type="text"
+                  placeholder="在个人资料库中快速筛选 (歌名、歌手、专辑)..."
+                  class="w-full pl-8 pr-3 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered focus:ring-1 focus:ring-applered transition" />
+              </div>
+              <button v-if="userLibrarySongs.length === 0" @click="fetchUserLibrarySongs(true)" :disabled="loadingCloudSongs"
+                class="px-3 py-1.5 bg-neutral-900 hover:bg-black text-white rounded-xl text-xs font-bold transition flex items-center space-x-1 cursor-pointer">
+                <i v-if="loadingCloudSongs" class="fa-solid fa-circle-notch fa-spin"></i>
+                <i v-else class="fa-solid fa-arrows-rotate"></i>
+                <span>载入资料库</span>
+              </button>
+              <button @click="batchAddCloudSongsToPlaylist" :disabled="selectedCloudAddSongs.length === 0 || addingTracksBatch"
+                class="px-3 py-1.5 bg-rose-50 text-applered hover:bg-rose-100 border border-rose-200 rounded-xl text-xs font-bold transition flex items-center space-x-1 disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex-shrink-0">
+                <i v-if="addingTracksBatch" class="fa-solid fa-circle-notch fa-spin"></i>
+                <i v-else class="fa-solid fa-plus"></i>
+                <span>批量添加已选 ({{ selectedCloudAddSongs.length }})</span>
+              </button>
+            </div>
+
+            <!-- List of Cloud Library Songs -->
+            <div v-if="loadingCloudSongs" class="py-6 text-center text-xs text-neutral-400">
+              <i class="fa-solid fa-circle-notch fa-spin text-base text-applered mb-1"></i>
+              <div>正在载入个人资料库曲目...</div>
+            </div>
+            <div v-else-if="filteredCloudAddSongs.length > 0" class="max-h-52 overflow-y-auto divide-y divide-neutral-100 bg-white border border-neutral-200/70 rounded-xl text-xs">
+              <div v-for="cs in filteredCloudAddSongs" :key="cs.id"
+                class="p-2 hover:bg-neutral-50 flex items-center justify-between space-x-2 transition">
+                <input type="checkbox" :value="cs.id" v-model="selectedCloudAddSongs"
+                  class="rounded text-applered focus:ring-applered cursor-pointer">
+                <div class="w-8 h-8 rounded-lg bg-neutral-100 border border-neutral-200/70 overflow-hidden flex-shrink-0 relative">
+                  <img v-if="cs.artwork_url" :src="cs.artwork_url.replace('{w}x{h}', '80x80')" class="w-full h-full object-cover">
+                  <i v-else class="fa-solid fa-music text-neutral-300 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-bold text-neutral-900 truncate">{{ cs.title }}</div>
+                  <div class="text-neutral-500 truncate text-[11px]">{{ cs.artist }} · {{ cs.album }}</div>
+                </div>
+                <button @click="addSingleTrackToPlaylist(cs)" :disabled="addingTrackId === cs.id"
+                  class="px-2.5 py-1 bg-neutral-50 hover:bg-rose-50 text-neutral-700 hover:text-applered border border-neutral-200/80 rounded-lg text-[11px] font-bold transition flex items-center space-x-1 cursor-pointer disabled:opacity-50 flex-shrink-0">
+                  <i v-if="addingTrackId === cs.id" class="fa-solid fa-circle-notch fa-spin"></i>
+                  <i v-else class="fa-solid fa-plus text-[10px]"></i>
+                  <span>添加</span>
+                </button>
+              </div>
+            </div>
+            <div v-else class="py-4 text-center text-xs text-neutral-400">
+              <span v-if="userLibrarySongs.length === 0">尚未载入个人资料库，请点击上方「载入资料库」</span>
+              <span v-else>无匹配歌曲</span>
+            </div>
+          </div>
+
+          <!-- TAB 2: FROM LOCAL MEDIA LIBRARY -->
+          <div v-if="playlistAddTab === 'local'" class="space-y-2.5">
+            <div class="flex items-center space-x-2">
+              <div class="relative flex-1">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400"></i>
+                <input v-model="localAddSearchQuery" type="text"
+                  placeholder="在本地资料库中快速筛选 (歌名、歌手、文件名)..."
+                  class="w-full pl-8 pr-3 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered focus:ring-1 focus:ring-applered transition" />
+              </div>
+              <button v-if="localSongs.length === 0" @click="fetchLocalSongs" :disabled="loadingLocalSongs"
+                class="px-3 py-1.5 bg-neutral-900 hover:bg-black text-white rounded-xl text-xs font-bold transition flex items-center space-x-1 cursor-pointer">
+                <i v-if="loadingLocalSongs" class="fa-solid fa-circle-notch fa-spin"></i>
+                <i v-else class="fa-solid fa-arrows-rotate"></i>
+                <span>扫描本地</span>
+              </button>
+              <button @click="batchAddLocalSongsToPlaylist" :disabled="selectedLocalAddSongs.length === 0 || addingLocalBatch"
+                class="px-3 py-1.5 bg-rose-50 text-applered hover:bg-rose-100 border border-rose-200 rounded-xl text-xs font-bold transition flex items-center space-x-1 disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex-shrink-0">
+                <i v-if="addingLocalBatch" class="fa-solid fa-circle-notch fa-spin"></i>
+                <i v-else class="fa-solid fa-plus"></i>
+                <span>批量添加已选 ({{ selectedLocalAddSongs.length }})</span>
+              </button>
+            </div>
+
+            <!-- List of Local Library Songs -->
+            <div v-if="loadingLocalSongs" class="py-6 text-center text-xs text-neutral-400">
+              <i class="fa-solid fa-circle-notch fa-spin text-base text-applered mb-1"></i>
+              <div>正在扫描本地 Apple Music 资料库...</div>
+            </div>
+            <div v-else-if="filteredLocalAddSongs.length > 0" class="max-h-52 overflow-y-auto divide-y divide-neutral-100 bg-white border border-neutral-200/70 rounded-xl text-xs">
+              <div v-for="ls in filteredLocalAddSongs" :key="ls.file_path"
+                class="p-2 hover:bg-neutral-50 flex items-center justify-between space-x-2 transition">
+                <input type="checkbox" :value="ls.file_path" v-model="selectedLocalAddSongs"
+                  class="rounded text-applered focus:ring-applered cursor-pointer">
+                <div class="w-8 h-8 rounded-lg bg-neutral-100 border border-neutral-200/70 overflow-hidden flex-shrink-0 relative">
+                  <i class="fa-solid fa-file-audio text-amber-500 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-bold text-neutral-900 truncate">{{ ls.title || ls.file_name }}</div>
+                  <div class="text-neutral-500 truncate text-[11px]">{{ ls.artist || '未知歌手' }} · {{ ls.album || '未知专辑' }}</div>
+                </div>
+                <button @click="addSingleLocalSongToPlaylist(ls)" :disabled="addingTrackId === ls.file_path"
+                  class="px-2.5 py-1 bg-neutral-50 hover:bg-rose-50 text-neutral-700 hover:text-applered border border-neutral-200/80 rounded-lg text-[11px] font-bold transition flex items-center space-x-1 cursor-pointer disabled:opacity-50 flex-shrink-0">
+                  <i v-if="addingTrackId === ls.file_path" class="fa-solid fa-circle-notch fa-spin"></i>
+                  <i v-else class="fa-solid fa-plus text-[10px]"></i>
+                  <span>添加</span>
+                </button>
+              </div>
+            </div>
+            <div v-else class="py-4 text-center text-xs text-neutral-400">
+              <span v-if="localSongs.length === 0">尚未扫描本地资料库，请点击上方「扫描本地」</span>
+              <span v-else>无匹配本地歌曲</span>
+            </div>
+          </div>
+
+          <!-- TAB 3: ONLINE CATALOG SEARCH -->
+          <div v-if="playlistAddTab === 'search'" class="space-y-2.5">
+            <div class="flex space-x-2">
+              <div class="relative flex-1">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400"></i>
+                <input v-model="playlistAddSearchQuery" @keyup.enter="searchTracksForPlaylist" type="text"
+                  placeholder="输入歌曲名、歌手检索 (如: 晴天 周杰伦)..."
+                  class="w-full pl-8 pr-3 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered focus:ring-1 focus:ring-applered transition" />
+              </div>
+              <button @click="searchTracksForPlaylist" :disabled="playlistAddSearching || !playlistAddSearchQuery.trim()"
+                class="px-4 py-1.5 bg-neutral-900 text-white rounded-xl text-xs font-bold hover:bg-black transition disabled:opacity-50 cursor-pointer flex items-center space-x-1">
+                <i v-if="playlistAddSearching" class="fa-solid fa-circle-notch fa-spin text-xs"></i>
+                <span>{{ playlistAddSearching ? '检索中' : '搜索' }}</span>
+              </button>
+            </div>
+
+            <!-- Add Search Results -->
+            <div v-if="playlistAddSearching" class="py-6 text-center text-xs text-neutral-400">
+              <i class="fa-solid fa-circle-notch fa-spin text-base text-applered mb-1"></i>
+              <div>正在检索 Apple Music 曲目...</div>
+            </div>
+            <div v-else-if="playlistAddSearchResults.length > 0" class="max-h-52 overflow-y-auto divide-y divide-neutral-100 bg-white border border-neutral-200/70 rounded-xl text-xs">
+              <div v-for="st in playlistAddSearchResults" :key="st.id"
+                class="p-2 hover:bg-neutral-50 flex items-center justify-between space-x-2 transition">
+                <div class="w-8 h-8 rounded-lg bg-neutral-100 border border-neutral-200/70 overflow-hidden flex-shrink-0 relative">
+                  <img v-if="st.artwork_url" :src="st.artwork_url.replace('{w}x{h}', '80x80')" class="w-full h-full object-cover">
+                  <i v-else class="fa-solid fa-music text-neutral-300 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-bold text-neutral-900 truncate">{{ st.title }}</div>
+                  <div class="text-neutral-500 truncate text-[11px]">{{ (st.artists || [st.artist]).join('/') }} · {{ st.album }}</div>
+                </div>
+                <button @click="addSingleTrackToPlaylist(st)" :disabled="addingTrackId === st.id"
+                  class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-applered border border-rose-200/80 rounded-lg text-[11px] font-bold transition flex items-center space-x-1 cursor-pointer disabled:opacity-50 flex-shrink-0">
+                  <i v-if="addingTrackId === st.id" class="fa-solid fa-circle-notch fa-spin"></i>
+                  <i v-else class="fa-solid fa-plus text-[10px]"></i>
+                  <span>添加</span>
+                </button>
+              </div>
+            </div>
+            <div v-else-if="playlistAddSearchQuery && !playlistAddSearching" class="py-3 text-center text-xs text-neutral-400">
+              未检索到相关曲目，请尝试更换关键词
+            </div>
+          </div>
+        </div>
+
+        <!-- Tracks Loading -->
+        <div v-if="loadingPlaylistTracks" class="py-12 text-center space-y-2">
+          <i class="fa-solid fa-circle-notch fa-spin text-2xl text-applered"></i>
+          <div class="text-xs text-applegray">正在载入歌单歌曲...</div>
+        </div>
+
+        <!-- Tracks List -->
+        <div v-else-if="playlistTracks.length > 0" class="max-h-80 overflow-y-auto divide-y divide-neutral-100 border border-neutral-200/70 rounded-xl text-xs">
+          <div v-for="(t, idx) in playlistTracks" :key="t.id || idx"
+            class="p-2.5 hover:bg-neutral-50/80 flex items-center justify-between space-x-2 transition">
+            <!-- Row Checkbox -->
+            <div class="w-7 flex items-center">
+              <input type="checkbox" :value="t.id" v-model="selectedPlaylistTracks"
+                class="rounded text-applered focus:ring-applered cursor-pointer">
+            </div>
+            <!-- Index -->
+            <div class="w-6 text-center text-neutral-400 font-mono text-[11px]">{{ idx + 1 }}</div>
+            <!-- Artwork -->
+            <div class="w-8 h-8 rounded-lg bg-neutral-100 border border-neutral-200/70 overflow-hidden flex-shrink-0 relative shadow-2xs">
+              <img v-if="t.artwork_url" :src="t.artwork_url.replace('{w}x{h}', '80x80')" class="w-full h-full object-cover">
+              <i v-else class="fa-solid fa-music text-neutral-300 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
+            </div>
+            <!-- Info -->
+            <div class="flex-1 min-w-0 ml-1">
+              <div class="font-bold text-neutral-900 truncate">{{ t.title }}</div>
+              <div class="text-neutral-500 truncate text-[11px] mt-0.5">{{ t.artist }} · {{ t.album }}</div>
+            </div>
+            <!-- Duration -->
+            <div class="text-neutral-400 font-mono text-[11px] w-14 text-right">
+              {{ formatDuration(t.duration_ms) }}
+            </div>
+            <!-- Single Delete Button -->
+            <div class="w-16 text-right">
+              <button @click="deleteSinglePlaylistTrack(t)"
+                class="px-2 py-1 rounded-lg bg-neutral-50 hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition text-[11px] font-semibold cursor-pointer" title="从歌单中移除">
+                <i class="fa-regular fa-trash-can mr-0.5"></i>
+                <span>移除</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="py-8 text-center text-xs text-neutral-400 space-y-2">
+          <i class="fa-solid fa-music text-2xl text-neutral-300"></i>
+          <div>此歌单中暂无曲目，可点击上方「添加歌曲」向歌单添加歌曲</div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="flex items-center justify-between pt-2 border-t border-neutral-100">
+          <div class="text-xs text-neutral-400">
+            <span v-if="selectedPlaylistTracks.length > 0">已选中 {{ selectedPlaylistTracks.length }} 首曲目</span>
+          </div>
+          <button @click="viewingPlaylist = null" class="px-5 py-2 bg-neutral-900 hover:bg-black text-white rounded-xl text-xs font-bold transition cursor-pointer">
+            完成
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ==================== MODAL 7: EDIT CLOUD PLAYLIST ==================== -->
+    <div v-if="editingPlaylist" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-appleborder space-y-4 animate-in fade-in zoom-in duration-200">
+        
+        <div class="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div class="flex items-center space-x-2">
+            <i class="fa-regular fa-pen-to-square text-applered text-base"></i>
+            <h3 class="text-base font-bold text-appledark">编辑 Apple Music 歌单</h3>
+          </div>
+          <button @click="editingPlaylist = null" class="w-7 h-7 rounded-full flex items-center justify-center text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition cursor-pointer">
+            <i class="fa-solid fa-xmark text-sm"></i>
+          </button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-neutral-700 mb-1">歌单名称</label>
+            <input v-model="editPlaylistName" type="text" placeholder="输入歌单名称"
+              class="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered transition font-bold">
+          </div>
+          <div>
+            <label class="block font-semibold text-neutral-700 mb-1">歌单描述</label>
+            <textarea v-model="editPlaylistDesc" rows="3" placeholder="输入歌单描述（选填）"
+              class="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered transition resize-none"></textarea>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-neutral-100 text-xs">
+          <button @click="editingPlaylist = null" class="px-4 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-semibold transition cursor-pointer">
+            取消
+          </button>
+          <button @click="savePlaylistEdit" :disabled="savingPlaylist || !editPlaylistName.trim()"
+            class="px-5 py-2 rounded-xl bg-applered hover:bg-applepink text-white font-bold transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm shadow-applered/25 cursor-pointer">
+            <i v-if="savingPlaylist" class="fa-solid fa-circle-notch fa-spin"></i>
+            <span>{{ savingPlaylist ? '正在保存...' : '保存修改' }}</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ==================== MODAL 8: EDIT LOCAL TRACK METADATA ==================== -->
+    <div v-if="editingLocalSong" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-appleborder space-y-4 animate-in fade-in zoom-in duration-200">
+        
+        <div class="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-sliders text-applered text-base"></i>
+            <h3 class="text-base font-bold text-appledark">编辑本地音乐元数据</h3>
+          </div>
+          <button @click="editingLocalSong = null" class="w-7 h-7 rounded-full flex items-center justify-center text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition cursor-pointer">
+            <i class="fa-solid fa-xmark text-sm"></i>
+          </button>
+        </div>
+
+        <div class="text-[11px] text-neutral-400 truncate bg-neutral-50 p-2 rounded-lg font-mono">
+          文件: {{ editingLocalSong.file_name }}
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-neutral-700 mb-1">歌曲标题 (Title)</label>
+            <input v-model="editLocalTitle" type="text" placeholder="输入歌曲名"
+              class="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered transition font-bold">
+          </div>
+          <div>
+            <label class="block font-semibold text-neutral-700 mb-1">艺术家 (Artist)</label>
+            <input v-model="editLocalArtist" type="text" placeholder="输入歌手名"
+              class="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered transition">
+          </div>
+          <div>
+            <label class="block font-semibold text-neutral-700 mb-1">专辑名称 (Album)</label>
+            <input v-model="editLocalAlbum" type="text" placeholder="输入专辑名"
+              class="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered transition">
+          </div>
+          <div class="flex items-center space-x-2 pt-1">
+            <input type="checkbox" id="renameFileChk" v-model="editLocalRename" class="rounded text-applered focus:ring-applered cursor-pointer">
+            <label for="renameFileChk" class="text-xs text-neutral-700 cursor-pointer select-none">
+              同步重命名本地文件为 <span class="font-mono text-applered font-semibold">[歌手 - 歌名.后缀]</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-neutral-100 text-xs">
+          <button @click="editingLocalSong = null" class="px-4 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-semibold transition cursor-pointer">
+            取消
+          </button>
+          <button @click="saveLocalMetadataEdit" :disabled="savingLocalMetadata || !editLocalTitle.trim()"
+            class="px-5 py-2 rounded-xl bg-applered hover:bg-applepink text-white font-bold transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm shadow-applered/25 cursor-pointer">
+            <i v-if="savingLocalMetadata" class="fa-solid fa-circle-notch fa-spin"></i>
+            <span>{{ savingLocalMetadata ? '正在保存...' : '保存并应用' }}</span>
+          </button>
         </div>
 
       </div>
@@ -2623,6 +3493,808 @@
           }
         };
 
+        // ---------------------------------------------------------------------
+        // App Tab Navigation & Sidebar
+        // ---------------------------------------------------------------------
+        const sidebarExpanded = ref(false); // Collapsed by default (single icon width)
+        const currentAppTab = ref('importer'); // 'importer' | 'cloud' | 'local_lib'
+        const cloudSubTab = ref('playlists'); // 'playlists' | 'songs'
+
+        const switchAppTab = (tab) => {
+          currentAppTab.value = tab;
+          if (tab === 'cloud') {
+            if (config.value.is_authorized) {
+              if (cloudSubTab.value === 'playlists' && userPlaylists.value.length === 0) {
+                fetchUserPlaylists();
+              } else if (cloudSubTab.value === 'songs' && userLibrarySongs.value.length === 0) {
+                fetchUserLibrarySongs();
+              }
+            }
+          } else if (tab === 'local_lib') {
+            if (localSongs.value.length === 0) {
+              fetchLocalSongs();
+            }
+          }
+        };
+
+        // ---------------------------------------------------------------------
+        // Cloud Library: Playlists & Songs Batch Management
+        // ---------------------------------------------------------------------
+        const userPlaylists = ref([]);
+        const loadingPlaylists = ref(false);
+        const cloudPlaylistSearch = ref('');
+        const selectedCloudPlaylists = ref([]);
+        const deletingPlaylists = ref(false);
+
+        const filteredUserPlaylists = computed(() => {
+          const q = cloudPlaylistSearch.value.trim().toLowerCase();
+          if (!q) return userPlaylists.value;
+          return userPlaylists.value.filter(pl => {
+            const name = (pl.name || '').toLowerCase();
+            const desc = (pl.description || '').toLowerCase();
+            return name.includes(q) || desc.includes(q);
+          });
+        });
+
+        const isAllPlaylistsSelected = computed(() => {
+          return filteredUserPlaylists.value.length > 0 &&
+            filteredUserPlaylists.value.every(pl => selectedCloudPlaylists.value.includes(pl.id));
+        });
+
+        const toggleSelectAllPlaylists = () => {
+          if (isAllPlaylistsSelected.value) {
+            selectedCloudPlaylists.value = [];
+          } else {
+            selectedCloudPlaylists.value = filteredUserPlaylists.value.map(pl => pl.id);
+          }
+        };
+
+        const fetchUserPlaylists = async () => {
+          loadingPlaylists.value = true;
+          try {
+            const res = await fetch('/api/user/playlists?limit=100');
+            const data = await res.json();
+            if (data.success) {
+              userPlaylists.value = data.playlists || [];
+            } else {
+              alert('获取歌单失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('请求歌单异常: ' + e.message);
+          } finally {
+            loadingPlaylists.value = false;
+          }
+        };
+
+        const deleteSingleCloudPlaylist = async (pl) => {
+          if (!confirm(`确定要从 Apple Music 资料库中删除歌单「${pl.name}」吗？\n此操作不可撤销！`)) return;
+          try {
+            const res = await fetch(`/api/user/playlists/${pl.id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              userPlaylists.value = userPlaylists.value.filter(p => p.id !== pl.id);
+              selectedCloudPlaylists.value = selectedCloudPlaylists.value.filter(id => id !== pl.id);
+            } else {
+              alert('删除歌单失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('删除歌单异常: ' + e.message);
+          }
+        };
+
+        const batchDeleteCloudPlaylists = async () => {
+          const count = selectedCloudPlaylists.value.length;
+          if (count === 0) return;
+          if (!confirm(`确定要批量删除选中的 ${count} 个 Apple Music 歌单吗？\n此操作不可撤销！`)) return;
+          deletingPlaylists.value = true;
+          try {
+            const res = await fetch('/api/user/playlists/batch-delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ playlist_ids: selectedCloudPlaylists.value })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert(`成功删除 ${data.deleted_count} 个歌单！` + (data.failed_ids && data.failed_ids.length ? `\n${data.failed_ids.length} 个删除失败` : ''));
+              fetchUserPlaylists();
+              selectedCloudPlaylists.value = [];
+            } else {
+              alert('批量删除失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('批量删除异常: ' + e.message);
+          } finally {
+            deletingPlaylists.value = false;
+          }
+        };
+
+        // Viewing & Managing playlist tracks
+        const viewingPlaylist = ref(null);
+        const playlistTracks = ref([]);
+        const loadingPlaylistTracks = ref(false);
+        const selectedPlaylistTracks = ref([]);
+        const deletingPlaylistTracks = ref(false);
+        const showAddTracksPanel = ref(false);
+        const playlistAddTab = ref('cloud'); // 'cloud' | 'local' | 'search'
+
+        // Tab 1: Cloud Library Add State
+        const cloudAddSearchQuery = ref('');
+        const selectedCloudAddSongs = ref([]);
+        const addingTracksBatch = ref(false);
+
+        // Tab 2: Local Library Add State
+        const localAddSearchQuery = ref('');
+        const selectedLocalAddSongs = ref([]);
+        const addingLocalBatch = ref(false);
+
+        // Tab 3: Online Search Add State
+        const playlistAddSearchQuery = ref('');
+        const playlistAddSearching = ref(false);
+        const playlistAddSearchResults = ref([]);
+        const addingTrackId = ref(null);
+
+        const switchPlaylistAddTab = (tab) => {
+          playlistAddTab.value = tab;
+          if (tab === 'cloud' && userLibrarySongs.value.length === 0) {
+            fetchUserLibrarySongs(true);
+          } else if (tab === 'local' && localSongs.value.length === 0) {
+            fetchLocalSongs();
+          }
+        };
+
+        const openPlaylistTracksModal = async (pl) => {
+          viewingPlaylist.value = pl;
+          playlistTracks.value = [];
+          selectedPlaylistTracks.value = [];
+          showAddTracksPanel.value = false;
+          playlistAddTab.value = 'cloud';
+          cloudAddSearchQuery.value = '';
+          selectedCloudAddSongs.value = [];
+          localAddSearchQuery.value = '';
+          selectedLocalAddSongs.value = [];
+          playlistAddSearchResults.value = [];
+          playlistAddSearchQuery.value = '';
+          loadingPlaylistTracks.value = true;
+          try {
+            const res = await fetch(`/api/user/playlists/${pl.id}/tracks?limit=100&fetch_all=true`);
+            const data = await res.json();
+            if (data.success) {
+              playlistTracks.value = data.tracks || [];
+            } else {
+              alert('获取歌单歌曲失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('请求歌单歌曲异常: ' + e.message);
+          } finally {
+            loadingPlaylistTracks.value = false;
+          }
+        };
+
+        const isAllPlaylistTracksSelected = computed(() => {
+          return playlistTracks.value.length > 0 &&
+            playlistTracks.value.every(t => selectedPlaylistTracks.value.includes(t.id));
+        });
+
+        const toggleSelectAllPlaylistTracks = () => {
+          if (isAllPlaylistTracksSelected.value) {
+            selectedPlaylistTracks.value = [];
+          } else {
+            selectedPlaylistTracks.value = playlistTracks.value.map(t => t.id).filter(Boolean);
+          }
+        };
+
+        const deleteSinglePlaylistTrack = async (track) => {
+          if (!viewingPlaylist.value) return;
+          if (!confirm(`确定要从歌单「${viewingPlaylist.value.name}」中移除歌曲「${track.title}」吗？`)) return;
+          try {
+            const res = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ track_ids: [track.id] })
+            });
+            const data = await res.json();
+            if (data.success && data.deleted_count > 0) {
+              playlistTracks.value = playlistTracks.value.filter(t => t.id !== track.id);
+              selectedPlaylistTracks.value = selectedPlaylistTracks.value.filter(id => id !== track.id);
+            } else {
+              alert('从歌单移除歌曲失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('移除异常: ' + e.message);
+          }
+        };
+
+        const batchDeletePlaylistTracks = async () => {
+          if (!viewingPlaylist.value) return;
+          const count = selectedPlaylistTracks.value.length;
+          if (count === 0) return;
+          if (!confirm(`确定要从歌单「${viewingPlaylist.value.name}」中批量移除选中的 ${count} 首歌曲吗？`)) return;
+          deletingPlaylistTracks.value = true;
+          try {
+            const res = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ track_ids: selectedPlaylistTracks.value })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert(`成功从歌单移除 ${data.deleted_count} 首歌曲！`);
+              const deletedSet = new Set(selectedPlaylistTracks.value);
+              playlistTracks.value = playlistTracks.value.filter(t => !deletedSet.has(t.id));
+              selectedPlaylistTracks.value = [];
+            } else {
+              alert('批量移除失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('批量移除异常: ' + e.message);
+          } finally {
+            deletingPlaylistTracks.value = false;
+          }
+        };
+
+        // Tab 1: Cloud Library Add Logic
+        const filteredCloudAddSongs = computed(() => {
+          const q = cloudAddSearchQuery.value.trim().toLowerCase();
+          if (!q) return userLibrarySongs.value.slice(0, 100);
+          return userLibrarySongs.value.filter(s => {
+            const title = (s.title || '').toLowerCase();
+            const artist = (s.artist || '').toLowerCase();
+            const album = (s.album || '').toLowerCase();
+            return title.includes(q) || artist.includes(q) || album.includes(q);
+          }).slice(0, 100);
+        });
+
+        const batchAddCloudSongsToPlaylist = async () => {
+          if (!viewingPlaylist.value || selectedCloudAddSongs.value.length === 0) return;
+          addingTracksBatch.value = true;
+          try {
+            const res = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ track_ids: selectedCloudAddSongs.value })
+            });
+            const data = await res.json();
+            if (data.success && data.added_count > 0) {
+              alert(`已成功将 ${data.added_count} 首歌曲添加至歌单「${viewingPlaylist.value.name}」！`);
+              selectedCloudAddSongs.value = [];
+              const reloadRes = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks?limit=100&fetch_all=true`);
+              const reloadData = await reloadRes.json();
+              if (reloadData.success) {
+                playlistTracks.value = reloadData.tracks || [];
+              }
+            } else {
+              alert('批量添加歌曲至歌单失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('批量添加异常: ' + e.message);
+          } finally {
+            addingTracksBatch.value = false;
+          }
+        };
+
+        // Tab 2: Local Library Add Logic
+        const filteredLocalAddSongs = computed(() => {
+          const q = localAddSearchQuery.value.trim().toLowerCase();
+          if (!q) return localSongs.value.slice(0, 100);
+          return localSongs.value.filter(s => {
+            const title = (s.title || '').toLowerCase();
+            const artist = (s.artist || '').toLowerCase();
+            const album = (s.album || '').toLowerCase();
+            const fn = (s.file_name || '').toLowerCase();
+            return title.includes(q) || artist.includes(q) || album.includes(q) || fn.includes(q);
+          }).slice(0, 100);
+        });
+
+        const addSingleLocalSongToPlaylist = async (song) => {
+          if (!viewingPlaylist.value || !song) return;
+          addingTrackId.value = song.file_path;
+          try {
+            const res = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/add-local-tracks`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tracks: [{
+                  title: song.title || song.file_name,
+                  artist: song.artist || '',
+                  file_path: song.file_path
+                }]
+              })
+            });
+            const data = await res.json();
+            if (data.success && data.added_count > 0) {
+              alert(`已成功将本地歌曲「${song.title || song.file_name}」添加至歌单「${viewingPlaylist.value.name}」！`);
+              const reloadRes = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks?limit=100&fetch_all=true`);
+              const reloadData = await reloadRes.json();
+              if (reloadData.success) {
+                playlistTracks.value = reloadData.tracks || [];
+              }
+            } else {
+              alert('添加本地歌曲失败: 无法在 Apple Music 资料库或曲库中匹配到对应歌曲。');
+            }
+          } catch (e) {
+            alert('添加本地歌曲异常: ' + e.message);
+          } finally {
+            addingTrackId.value = null;
+          }
+        };
+
+        const batchAddLocalSongsToPlaylist = async () => {
+          if (!viewingPlaylist.value || selectedLocalAddSongs.value.length === 0) return;
+          addingLocalBatch.value = true;
+          const tracksPayload = selectedLocalAddSongs.value.map(fp => {
+            const s = localSongs.value.find(item => item.file_path === fp);
+            return {
+              title: s ? (s.title || s.file_name) : '',
+              artist: s ? (s.artist || '') : '',
+              file_path: fp
+            };
+          });
+          try {
+            const res = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/add-local-tracks`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tracks: tracksPayload })
+            });
+            const data = await res.json();
+            if (data.success) {
+              let msg = `成功添加 ${data.added_count} 首本地歌曲至歌单！`;
+              if (data.failed_titles && data.failed_titles.length > 0) {
+                msg += `\n${data.failed_titles.length} 首未能在 Apple Music 匹配到对应曲目。`;
+              }
+              alert(msg);
+              selectedLocalAddSongs.value = [];
+              const reloadRes = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks?limit=100&fetch_all=true`);
+              const reloadData = await reloadRes.json();
+              if (reloadData.success) {
+                playlistTracks.value = reloadData.tracks || [];
+              }
+            } else {
+              alert('批量添加失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('批量添加本地歌曲异常: ' + e.message);
+          } finally {
+            addingLocalBatch.value = false;
+          }
+        };
+
+        // Tab 3: Online Catalog Search Logic
+        const searchTracksForPlaylist = async () => {
+          const q = playlistAddSearchQuery.value.trim();
+          if (!q) return;
+          playlistAddSearching.value = true;
+          try {
+            const res = await fetch(`/api/search-track`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: q, limit: 12 })
+            });
+            const data = await res.json();
+            if (data.success && data.results) {
+              playlistAddSearchResults.value = data.results.map(r => r.track);
+            } else {
+              playlistAddSearchResults.value = [];
+            }
+          } catch (e) {
+            alert('检索异常: ' + e.message);
+          } finally {
+            playlistAddSearching.value = false;
+          }
+        };
+
+        const addSingleTrackToPlaylist = async (track) => {
+          if (!viewingPlaylist.value || !track || !track.id) return;
+          addingTrackId.value = track.id;
+          try {
+            const res = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ track_ids: [track.id] })
+            });
+            const data = await res.json();
+            if (data.success && data.added_count > 0) {
+              const reloadRes = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks?limit=100&fetch_all=true`);
+              const reloadData = await reloadRes.json();
+              if (reloadData.success) {
+                playlistTracks.value = reloadData.tracks || [];
+              }
+              alert(`已成功将「${track.title}」添加至歌单「${viewingPlaylist.value.name}」！`);
+            } else {
+              alert('添加歌曲至歌单失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('添加异常: ' + e.message);
+          } finally {
+            addingTrackId.value = null;
+          }
+        };
+
+        // Editing playlist
+        const editingPlaylist = ref(null);
+        const editPlaylistName = ref('');
+        const editPlaylistDesc = ref('');
+        const savingPlaylist = ref(false);
+
+        const openEditPlaylistModal = (pl) => {
+          editingPlaylist.value = pl;
+          editPlaylistName.value = pl.name || '';
+          editPlaylistDesc.value = pl.description || '';
+        };
+
+        const savePlaylistEdit = async () => {
+          if (!editingPlaylist.value || !editPlaylistName.value.trim()) return;
+          savingPlaylist.value = true;
+          try {
+            const res = await fetch(`/api/user/playlists/${editingPlaylist.value.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: editPlaylistName.value.trim(),
+                description: editPlaylistDesc.value.trim()
+              })
+            });
+            const data = await res.json();
+            if (data.success) {
+              editingPlaylist.value.name = editPlaylistName.value.trim();
+              editingPlaylist.value.description = editPlaylistDesc.value.trim();
+              editingPlaylist.value = null;
+            } else {
+              alert('修改歌单失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('修改歌单异常: ' + e.message);
+          } finally {
+            savingPlaylist.value = false;
+          }
+        };
+
+        // Cloud Library Songs
+        const userLibrarySongs = ref([]);
+        const loadingCloudSongs = ref(false);
+        const cloudSongSearch = ref('');
+        const selectedCloudSongs = ref([]);
+        const deletingCloudSongs = ref(false);
+        const searchingCloudSongs = ref(false);
+        const serverSearchResults = ref(null);
+
+        const displayedLibrarySongs = computed(() => {
+          if (serverSearchResults.value !== null) {
+            return serverSearchResults.value;
+          }
+          const q = cloudSongSearch.value.trim().toLowerCase();
+          if (!q) return userLibrarySongs.value;
+          return userLibrarySongs.value.filter(s => {
+            const title = (s.title || '').toLowerCase();
+            const artist = (s.artist || '').toLowerCase();
+            const album = (s.album || '').toLowerCase();
+            return title.includes(q) || artist.includes(q) || album.includes(q);
+          });
+        });
+
+        const isAllCloudSongsSelected = computed(() => {
+          return displayedLibrarySongs.value.length > 0 &&
+            displayedLibrarySongs.value.every(s => selectedCloudSongs.value.includes(s.id));
+        });
+
+        const toggleSelectAllCloudSongs = () => {
+          if (isAllCloudSongsSelected.value) {
+            selectedCloudSongs.value = [];
+          } else {
+            selectedCloudSongs.value = displayedLibrarySongs.value.map(s => s.id);
+          }
+        };
+
+        const onCloudSongSearchInput = () => {
+          if (!cloudSongSearch.value.trim()) {
+            serverSearchResults.value = null;
+          }
+        };
+
+        const clearServerSearch = () => {
+          cloudSongSearch.value = '';
+          serverSearchResults.value = null;
+        };
+
+        const searchCloudSongsServer = async () => {
+          const term = cloudSongSearch.value.trim();
+          if (!term) {
+            serverSearchResults.value = null;
+            return;
+          }
+          searchingCloudSongs.value = true;
+          try {
+            const res = await fetch(`/api/user/library/search?term=${encodeURIComponent(term)}&limit=100`);
+            const data = await res.json();
+            if (data.success) {
+              serverSearchResults.value = data.songs || [];
+            } else {
+              alert('云端全量检索失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('云端检索异常: ' + e.message);
+          } finally {
+            searchingCloudSongs.value = false;
+          }
+        };
+
+        const fetchUserLibrarySongs = async (fetchAll = true) => {
+          loadingCloudSongs.value = true;
+          serverSearchResults.value = null;
+          try {
+            const res = await fetch(`/api/user/library/songs?limit=100&fetch_all=${fetchAll}`);
+            const data = await res.json();
+            if (data.success) {
+              userLibrarySongs.value = data.songs || [];
+            } else {
+              alert('获取资料库歌曲失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('请求资料库歌曲异常: ' + e.message);
+          } finally {
+            loadingCloudSongs.value = false;
+          }
+        };
+
+        const deleteSingleCloudSong = async (song) => {
+          if (!confirm(`确定要从 Apple Music 个人资料库中删除歌曲「${song.title}」吗？\n此操作不可撤销！`)) return;
+          try {
+            const res = await fetch(`/api/user/library/songs/${song.id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              userLibrarySongs.value = userLibrarySongs.value.filter(s => s.id !== song.id);
+              if (serverSearchResults.value) {
+                serverSearchResults.value = serverSearchResults.value.filter(s => s.id !== song.id);
+              }
+              selectedCloudSongs.value = selectedCloudSongs.value.filter(id => id !== song.id);
+            } else {
+              alert('删除歌曲失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('删除歌曲异常: ' + e.message);
+          }
+        };
+
+        const batchDeleteCloudSongs = async () => {
+          const count = selectedCloudSongs.value.length;
+          if (count === 0) return;
+          if (!confirm(`确定要从个人资料库中批量删除选中的 ${count} 首歌曲吗？\n此操作不可撤销！`)) return;
+          deletingCloudSongs.value = true;
+          try {
+            const res = await fetch('/api/user/library/songs/batch-delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ song_ids: selectedCloudSongs.value })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert(`成功删除 ${data.deleted_count} 首资料库歌曲！` + (data.failed_ids && data.failed_ids.length ? `\n${data.failed_ids.length} 首删除失败` : ''));
+              fetchUserLibrarySongs(true);
+              selectedCloudSongs.value = [];
+            } else {
+              alert('批量删除失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('批量删除异常: ' + e.message);
+          } finally {
+            deletingCloudSongs.value = false;
+          }
+        };
+
+        // ---------------------------------------------------------------------
+        // Local Music Management (Windows Apple Music Local Media Library)
+        // ---------------------------------------------------------------------
+        const localSongs = ref([]);
+        const localDirectory = ref('');
+        const loadingLocalSongs = ref(false);
+        const localSongSearch = ref('');
+        const selectedLocalSongs = ref([]);
+        const deletingLocalSongs = ref(false);
+        const importingLocalSongs = ref(false);
+
+        const filteredLocalSongs = computed(() => {
+          const q = localSongSearch.value.trim().toLowerCase();
+          if (!q) return localSongs.value;
+          return localSongs.value.filter(s => {
+            const title = (s.title || '').toLowerCase();
+            const artist = (s.artist || '').toLowerCase();
+            const album = (s.album || '').toLowerCase();
+            const fn = (s.file_name || '').toLowerCase();
+            return title.includes(q) || artist.includes(q) || album.includes(q) || fn.includes(q);
+          });
+        });
+
+        const isAllLocalSongsSelected = computed(() => {
+          return filteredLocalSongs.value.length > 0 &&
+            filteredLocalSongs.value.every(s => selectedLocalSongs.value.includes(s.file_path));
+        });
+
+        const toggleSelectAllLocalSongs = () => {
+          if (isAllLocalSongsSelected.value) {
+            selectedLocalSongs.value = [];
+          } else {
+            selectedLocalSongs.value = filteredLocalSongs.value.map(s => s.file_path);
+          }
+        };
+
+        const fetchLocalSongs = async () => {
+          loadingLocalSongs.value = true;
+          try {
+            const res = await fetch('/api/local/songs');
+            const data = await res.json();
+            if (data.success) {
+              localSongs.value = data.songs || [];
+              localDirectory.value = data.directory || '';
+            } else {
+              alert('扫描本地音乐失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('扫描本地音乐异常: ' + e.message);
+          } finally {
+            loadingLocalSongs.value = false;
+          }
+        };
+
+        const openLocalMusicFolder = async () => {
+          try {
+            const res = await fetch('/api/local/open-folder', { method: 'POST' });
+            const data = await res.json();
+            if (!data.success) {
+              alert('打开目录失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('打开目录异常: ' + e.message);
+          }
+        };
+
+        const deleteSingleLocalSong = async (song) => {
+          if (!confirm(`确定要从磁盘永久删除本地音频文件「${song.file_name}」吗？\n文件路径: ${song.file_path}`)) return;
+          try {
+            const res = await fetch('/api/local/songs/batch-delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ file_paths: [song.file_path] })
+            });
+            const data = await res.json();
+            if (data.success && data.deleted_count > 0) {
+              localSongs.value = localSongs.value.filter(s => s.file_path !== song.file_path);
+              selectedLocalSongs.value = selectedLocalSongs.value.filter(p => p !== song.file_path);
+            } else {
+              alert('删除文件失败');
+            }
+          } catch (e) {
+            alert('删除文件异常: ' + e.message);
+          }
+        };
+
+        const batchDeleteLocalSongs = async () => {
+          const count = selectedLocalSongs.value.length;
+          if (count === 0) return;
+          if (!confirm(`确定要从磁盘永久删除选中的 ${count} 个本地音频文件吗？\n此操作不可撤销！`)) return;
+          deletingLocalSongs.value = true;
+          try {
+            const res = await fetch('/api/local/songs/batch-delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ file_paths: selectedLocalSongs.value })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert(`成功删除 ${data.deleted_count} 个本地音频文件！` + (data.failed_paths && data.failed_paths.length ? `\n${data.failed_paths.length} 个文件删除失败` : ''));
+              fetchLocalSongs();
+              selectedLocalSongs.value = [];
+            } else {
+              alert('批量删除失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('批量删除异常: ' + e.message);
+          } finally {
+            deletingLocalSongs.value = false;
+          }
+        };
+
+        const importSingleLocalSong = async (song) => {
+          try {
+            const res = await fetch('/api/local/songs/import-to-applemusic', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ file_paths: [song.file_path] })
+            });
+            const data = await res.json();
+            if (data.success && data.imported_count > 0) {
+              alert(`已将「${song.file_name}」放入 Apple Music 自动导入目录！\n打开各端 Apple Music 即可自动识别加入资料库。`);
+            } else {
+              alert('导入失败: ' + (data.failed_paths ? data.failed_paths.join(', ') : '未知错误'));
+            }
+          } catch (e) {
+            alert('导入异常: ' + e.message);
+          }
+        };
+
+        const batchImportLocalSongs = async () => {
+          const count = selectedLocalSongs.value.length;
+          if (count === 0) return;
+          importingLocalSongs.value = true;
+          try {
+            const res = await fetch('/api/local/songs/import-to-applemusic', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ file_paths: selectedLocalSongs.value })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert(`已成功将 ${data.imported_count} 个文件放入 Apple Music 自动导入目录！\n打开各端 Apple Music 客户端即可自动识别入库。`);
+              selectedLocalSongs.value = [];
+            } else {
+              alert('批量导入失败');
+            }
+          } catch (e) {
+            alert('批量导入异常: ' + e.message);
+          } finally {
+            importingLocalSongs.value = false;
+          }
+        };
+
+        // Editing Local Song Metadata
+        const editingLocalSong = ref(null);
+        const editLocalTitle = ref('');
+        const editLocalArtist = ref('');
+        const editLocalAlbum = ref('');
+        const editLocalRename = ref(true);
+        const savingLocalMetadata = ref(false);
+
+        const openEditLocalMetadataModal = (song) => {
+          editingLocalSong.value = song;
+          editLocalTitle.value = song.title || '';
+          editLocalArtist.value = song.artist || '';
+          editLocalAlbum.value = song.album || '';
+          editLocalRename.value = true;
+        };
+
+        const saveLocalMetadataEdit = async () => {
+          if (!editingLocalSong.value || !editLocalTitle.value.trim()) return;
+          savingLocalMetadata.value = true;
+          try {
+            const res = await fetch('/api/local/songs/update-metadata', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                file_path: editingLocalSong.value.file_path,
+                title: editLocalTitle.value.trim(),
+                artist: editLocalArtist.value.trim(),
+                album: editLocalAlbum.value.trim(),
+                rename_file: editLocalRename.value
+              })
+            });
+            const data = await res.json();
+            if (data.success) {
+              editingLocalSong.value = null;
+              fetchLocalSongs();
+            } else {
+              alert('修改元数据失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('修改元数据异常: ' + e.message);
+          } finally {
+            savingLocalMetadata.value = false;
+          }
+        };
+
+        // Helper formatting functions
+        const formatFileSize = (bytes) => {
+          if (!bytes || bytes <= 0) return '0 B';
+          const units = ['B', 'KB', 'MB', 'GB'];
+          const i = Math.floor(Math.log(bytes) / Math.log(1024));
+          return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+        };
+
+        const formatDuration = (ms) => {
+          if (!ms || isNaN(ms)) return '--:--';
+          const totalSeconds = Math.floor(ms / 1000);
+          const minutes = Math.floor(totalSeconds / 60);
+          const seconds = totalSeconds % 60;
+          return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        };
+
         onMounted(() => {
           fetchConfig();
         });
@@ -2727,6 +4399,99 @@
           getArtwork,
           executeSync,
           exportCSV,
+          sidebarExpanded,
+          currentAppTab,
+          cloudSubTab,
+          switchAppTab,
+          userPlaylists,
+          loadingPlaylists,
+          cloudPlaylistSearch,
+          selectedCloudPlaylists,
+          deletingPlaylists,
+          filteredUserPlaylists,
+          isAllPlaylistsSelected,
+          toggleSelectAllPlaylists,
+          fetchUserPlaylists,
+          deleteSingleCloudPlaylist,
+          batchDeleteCloudPlaylists,
+          viewingPlaylist,
+          playlistTracks,
+          loadingPlaylistTracks,
+          openPlaylistTracksModal,
+          selectedPlaylistTracks,
+          deletingPlaylistTracks,
+          showAddTracksPanel,
+          playlistAddTab,
+          switchPlaylistAddTab,
+          cloudAddSearchQuery,
+          selectedCloudAddSongs,
+          addingTracksBatch,
+          filteredCloudAddSongs,
+          batchAddCloudSongsToPlaylist,
+          localAddSearchQuery,
+          selectedLocalAddSongs,
+          addingLocalBatch,
+          filteredLocalAddSongs,
+          addSingleLocalSongToPlaylist,
+          batchAddLocalSongsToPlaylist,
+          playlistAddSearchQuery,
+          playlistAddSearching,
+          playlistAddSearchResults,
+          addingTrackId,
+          isAllPlaylistTracksSelected,
+          toggleSelectAllPlaylistTracks,
+          deleteSinglePlaylistTrack,
+          batchDeletePlaylistTracks,
+          searchTracksForPlaylist,
+          addSingleTrackToPlaylist,
+          editingPlaylist,
+          editPlaylistName,
+          editPlaylistDesc,
+          savingPlaylist,
+          openEditPlaylistModal,
+          savePlaylistEdit,
+          userLibrarySongs,
+          loadingCloudSongs,
+          cloudSongSearch,
+          selectedCloudSongs,
+          deletingCloudSongs,
+          searchingCloudSongs,
+          serverSearchResults,
+          displayedLibrarySongs,
+          onCloudSongSearchInput,
+          searchCloudSongsServer,
+          clearServerSearch,
+          isAllCloudSongsSelected,
+          toggleSelectAllCloudSongs,
+          fetchUserLibrarySongs,
+          deleteSingleCloudSong,
+          batchDeleteCloudSongs,
+          localSongs,
+          localDirectory,
+          loadingLocalSongs,
+          localSongSearch,
+          selectedLocalSongs,
+          deletingLocalSongs,
+          importingLocalSongs,
+          filteredLocalSongs,
+          isAllLocalSongsSelected,
+          toggleSelectAllLocalSongs,
+          fetchLocalSongs,
+          openLocalMusicFolder,
+          deleteSingleLocalSong,
+          batchDeleteLocalSongs,
+          importSingleLocalSong,
+          batchImportLocalSongs,
+          editingLocalSong,
+          editLocalTitle,
+          editLocalArtist,
+          editLocalAlbum,
+          editLocalRename,
+          savingLocalMetadata,
+          openEditLocalMetadataModal,
+          saveLocalMetadataEdit,
+          formatFileSize,
+          formatDuration,
         };
       }
     }).mount('#app');

@@ -46,6 +46,9 @@ pyinstaller_args = [
     "--hidden-import=typer",
     "--hidden-import=mutagen",
     "--hidden-import=mutagen.mp4",
+    "--hidden-import=mutagen.id3",
+    "--hidden-import=mutagen.flac",
+    "--hidden-import=mutagen.easyid3",
     "--hidden-import=av",
     str(ROOT_DIR / "exe_entry.py"),
 ]

@@ -11,7 +11,7 @@ import hmac
 import secrets
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -784,4 +784,252 @@ async def api_bilibili_open_folder():
     except Exception:
         pass
     return {"success": True, "path": norm_path}
+
+
+# -----------------------------------------------------------------------------
+# Apple Music User Library & Playlists Batch Management
+# -----------------------------------------------------------------------------
+class UpdatePlaylistRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class BatchDeletePlaylistsRequest(BaseModel):
+    playlist_ids: List[str]
+
+
+class BatchDeleteSongsRequest(BaseModel):
+    song_ids: List[str]
+
+
+@app.get("/api/user/playlists")
+async def api_get_user_playlists(limit: int = 100, offset: int = 0):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    playlists = await asyncio.to_thread(client.get_user_playlists, limit, offset)
+    return {"success": True, "playlists": playlists}
+
+
+class PlaylistTracksActionRequest(BaseModel):
+    track_ids: List[str]
+
+
+@app.get("/api/user/playlists/{playlist_id}/tracks")
+async def api_get_playlist_tracks(playlist_id: str, limit: int = 100, fetch_all: bool = True):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    tracks = await asyncio.to_thread(client.get_playlist_tracks, playlist_id, limit, fetch_all)
+    return {"success": True, "tracks": tracks, "total": len(tracks)}
+
+
+@app.delete("/api/user/playlists/{playlist_id}/tracks")
+async def api_delete_playlist_tracks(playlist_id: str, req: PlaylistTracksActionRequest):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    deleted_cnt, failed = await asyncio.to_thread(
+        client.delete_playlist_tracks, playlist_id, req.track_ids
+    )
+    return {"success": True, "deleted_count": deleted_cnt, "failed_ids": failed}
+
+
+@app.post("/api/user/playlists/{playlist_id}/tracks")
+async def api_add_playlist_tracks(playlist_id: str, req: PlaylistTracksActionRequest):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    added_cnt, failed = await asyncio.to_thread(
+        client.add_playlist_tracks, playlist_id, req.track_ids
+    )
+    return {"success": True, "added_count": added_cnt, "failed_ids": failed}
+
+
+class AddLocalTracksToPlaylistRequest(BaseModel):
+    tracks: List[Dict[str, Any]]  # [{"title": str, "artist": str, "file_path": str}]
+
+
+@app.post("/api/user/playlists/{playlist_id}/add-local-tracks")
+async def api_add_local_tracks_to_playlist(playlist_id: str, req: AddLocalTracksToPlaylistRequest):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+
+    added_count = 0
+    failed_titles = []
+    track_ids_to_add = []
+
+    for t in req.tracks:
+        title = t.get("title") or ""
+        artist = t.get("artist") or ""
+        lib_id = await asyncio.to_thread(client.find_library_song_id, title, artist)
+        if not lib_id and title:
+            try:
+                cat_res = await asyncio.to_thread(
+                    client.search, f"{title} {artist}".strip(), types=["songs"], limit=1
+                )
+                if cat_res and cat_res.get("songs") and cat_res["songs"].get("data"):
+                    lib_id = cat_res["songs"]["data"][0]["id"]
+            except Exception:
+                pass
+        if lib_id:
+            track_ids_to_add.append(lib_id)
+        else:
+            failed_titles.append(title or "未知歌曲")
+
+    if track_ids_to_add:
+        success_cnt, failed = await asyncio.to_thread(
+            client.add_playlist_tracks, playlist_id, track_ids_to_add
+        )
+        added_count = success_cnt
+
+    return {"success": True, "added_count": added_count, "failed_titles": failed_titles}
+
+
+@app.patch("/api/user/playlists/{playlist_id}")
+async def api_update_playlist(playlist_id: str, req: UpdatePlaylistRequest):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    ok = await asyncio.to_thread(client.update_playlist, playlist_id, req.name, req.description)
+    if not ok:
+        raise HTTPException(status_code=500, detail="修改歌单失败")
+    return {"success": True}
+
+
+@app.delete("/api/user/playlists/{playlist_id}")
+async def api_delete_playlist(playlist_id: str):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    ok = await asyncio.to_thread(client.delete_playlist, playlist_id)
+    if not ok:
+        raise HTTPException(status_code=500, detail="删除歌单失败")
+    return {"success": True}
+
+
+@app.post("/api/user/playlists/batch-delete")
+async def api_batch_delete_playlists(req: BatchDeletePlaylistsRequest):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    success_cnt, failed = await asyncio.to_thread(client.batch_delete_playlists, req.playlist_ids)
+    return {"success": True, "deleted_count": success_cnt, "failed_ids": failed}
+
+
+@app.get("/api/user/library/songs")
+async def api_get_library_songs(limit: int = 100, offset: int = 0, fetch_all: bool = False):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    songs = await asyncio.to_thread(client.get_library_songs, limit, offset, fetch_all)
+    return {"success": True, "songs": songs, "total": len(songs)}
+
+
+@app.get("/api/user/library/search")
+async def api_search_library_songs(term: str, limit: int = 100):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    songs = await asyncio.to_thread(client.search_library_songs, term, limit)
+    return {"success": True, "songs": songs}
+
+
+@app.delete("/api/user/library/songs/{song_id}")
+async def api_delete_library_song(song_id: str):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    ok = await asyncio.to_thread(client.delete_library_song, song_id)
+    if not ok:
+        raise HTTPException(status_code=500, detail="从资料库删除歌曲失败")
+    return {"success": True}
+
+
+@app.post("/api/user/library/songs/batch-delete")
+async def api_batch_delete_library_songs(req: BatchDeleteSongsRequest):
+    client, _ = get_shared_engine()
+    if not client.config.is_authorized():
+        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    success_cnt, failed = await asyncio.to_thread(client.batch_delete_library_songs, req.song_ids)
+    return {"success": True, "deleted_count": success_cnt, "failed_ids": failed}
+
+
+# -----------------------------------------------------------------------------
+# Local Apple Music Library Batch Management
+# -----------------------------------------------------------------------------
+from applemusic.extractors.local_manager import (
+    list_local_tracks,
+    update_local_track_metadata,
+    batch_delete_local_tracks,
+    import_local_tracks_to_applemusic,
+    get_apple_music_library_media_dir,
+)
+
+
+class UpdateLocalMetadataRequest(BaseModel):
+    file_path: str
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    album: Optional[str] = None
+    rename_file: Optional[bool] = False
+
+
+class BatchLocalTracksRequest(BaseModel):
+    file_paths: List[str]
+
+
+@app.get("/api/local/songs")
+async def api_list_local_songs(directory: Optional[str] = None):
+    songs = await asyncio.to_thread(list_local_tracks, directory)
+    active_dir = directory or get_apple_music_library_media_dir() or ""
+    return {"success": True, "songs": songs, "directory": active_dir}
+
+
+@app.post("/api/local/open-folder")
+async def api_open_local_music_folder(directory: Optional[str] = None):
+    import subprocess
+    target_dir = directory or get_apple_music_library_media_dir()
+    if not target_dir or not os.path.isdir(target_dir):
+        userprofile = os.environ.get("USERPROFILE") or str(Path.home())
+        target_dir = os.path.join(userprofile, "Music", "Apple Music")
+    os.makedirs(target_dir, exist_ok=True)
+    norm_path = os.path.normpath(target_dir)
+    try:
+        subprocess.Popen(f'explorer.exe "{norm_path}"', shell=True)
+    except Exception:
+        pass
+    try:
+        os.startfile(norm_path)
+    except Exception:
+        pass
+    return {"success": True, "path": norm_path}
+
+
+@app.post("/api/local/songs/update-metadata")
+async def api_update_local_metadata(req: UpdateLocalMetadataRequest):
+    res = await asyncio.to_thread(
+        update_local_track_metadata,
+        req.file_path,
+        req.title,
+        req.artist,
+        req.album,
+        req.rename_file or False,
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "修改元数据失败"))
+    return res
+
+
+@app.post("/api/local/songs/batch-delete")
+async def api_batch_delete_local_songs(req: BatchLocalTracksRequest):
+    success_cnt, failed = await asyncio.to_thread(batch_delete_local_tracks, req.file_paths)
+    return {"success": True, "deleted_count": success_cnt, "failed_paths": failed}
+
+
+@app.post("/api/local/songs/import-to-applemusic")
+async def api_import_local_to_applemusic(req: BatchLocalTracksRequest):
+    success_cnt, failed = await asyncio.to_thread(import_local_tracks_to_applemusic, req.file_paths)
+    return {"success": True, "imported_count": success_cnt, "failed_paths": failed}
 

@@ -1108,3 +1108,359 @@ class AppleMusicClient:
             time.sleep(0.5)
 
         return added_count
+
+    # -------------------------------------------------------------------------
+    # Apple Music Cloud Library & Playlist Batch Management (via amp-api)
+    # -------------------------------------------------------------------------
+    AMP_API_URL = "https://amp-api.music.apple.com/v1"
+
+    def get_user_playlists(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Fetch user's library playlists.
+        Returns list of playlist objects with id, name, description, canEdit, trackCount, artwork.
+        """
+        url = f"{self.AMP_API_URL}/me/library/playlists"
+        headers = self._get_auth_headers(require_user=True)
+        params = {"limit": min(limit, 100), "offset": offset}
+
+        try:
+            resp = self.session.get(url, headers=headers, params=params, timeout=12)
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                results = []
+                for item in data:
+                    attrs = item.get("attributes", {})
+                    artwork = attrs.get("artwork") or {}
+                    results.append({
+                        "id": item.get("id"),
+                        "name": attrs.get("name", "未命名歌单"),
+                        "description": attrs.get("description", {}).get("standard") if isinstance(attrs.get("description"), dict) else (attrs.get("description") or ""),
+                        "can_edit": attrs.get("canEdit", False),
+                        "has_catalog": attrs.get("hasCatalog", False),
+                        "is_public": attrs.get("isPublic", False),
+                        "artwork_url": artwork.get("url"),
+                        "date_added": attrs.get("dateAdded"),
+                    })
+                return results
+            else:
+                logger.warning("获取用户歌单失败: HTTP %d - %s", resp.status_code, resp.text[:150])
+                return []
+        except Exception as e:
+            logger.error("获取用户歌单请求异常: %s", e)
+            return []
+
+    def get_playlist_tracks(
+        self,
+        playlist_id: str,
+        limit: int = 100,
+        fetch_all: bool = True,
+        max_tracks: int = 5000,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch tracks inside a user's library playlist.
+        If fetch_all is True, automatically iterates through pages using offset/next up to max_tracks.
+        """
+        url = f"{self.AMP_API_URL}/me/library/playlists/{playlist_id}/tracks"
+        headers = self._get_auth_headers(require_user=True)
+        all_tracks: List[Dict[str, Any]] = []
+        cur_offset = 0
+        batch_size = min(limit, 100)
+
+        while True:
+            params = {"limit": batch_size, "offset": cur_offset}
+            try:
+                resp = self.session.get(url, headers=headers, params=params, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
+                    for item in data:
+                        attrs = item.get("attributes", {})
+                        artwork = attrs.get("artwork") or {}
+                        all_tracks.append({
+                            "id": item.get("id"),
+                            "title": attrs.get("name", "未知歌曲"),
+                            "artist": attrs.get("artistName", "未知歌手"),
+                            "album": attrs.get("albumName", "未知专辑"),
+                            "duration_ms": attrs.get("durationInMillis"),
+                            "track_number": attrs.get("trackNumber"),
+                            "artwork_url": artwork.get("url"),
+                        })
+
+                    if not fetch_all or len(data) < batch_size or len(all_tracks) >= max_tracks:
+                        break
+
+                    cur_offset += len(data)
+                    time.sleep(0.1)
+                else:
+                    logger.warning("获取歌单歌曲失败 (%s): HTTP %d", playlist_id, resp.status_code)
+                    break
+            except Exception as e:
+                logger.error("获取歌单歌曲请求异常 (%s): %s", playlist_id, e)
+                break
+
+        return all_tracks
+
+    def delete_playlist_tracks(
+        self, playlist_id: str, track_ids: List[str], batch_size: int = 50
+    ) -> Tuple[int, List[str]]:
+        """
+        Delete tracks from a user library playlist via amp-api DELETE.
+        Endpoint: DELETE {AMP_API_URL}/me/library/playlists/{playlist_id}/tracks?mode=all&ids[songs]={id1},{id2}...
+        """
+        if not track_ids:
+            return 0, []
+
+        headers = self._get_auth_headers(require_user=True)
+        deleted_count = 0
+        failed_ids: List[str] = []
+
+        for i in range(0, len(track_ids), batch_size):
+            batch = track_ids[i : i + batch_size]
+            url = f"{self.AMP_API_URL}/me/library/playlists/{playlist_id}/tracks"
+            params = {"mode": "all", "ids[songs]": ",".join(batch)}
+            try:
+                resp = self.session.delete(url, headers=headers, params=params, timeout=15)
+                if resp.status_code in (200, 204):
+                    deleted_count += len(batch)
+                else:
+                    logger.warning(
+                        "删除歌单曲目失败 (批次 %d): HTTP %d - %s",
+                        i // batch_size + 1,
+                        resp.status_code,
+                        resp.text[:120],
+                    )
+                    failed_ids.extend(batch)
+            except Exception as e:
+                logger.error("删除歌单曲目异常: %s", e)
+                failed_ids.extend(batch)
+
+            if i + batch_size < len(track_ids):
+                time.sleep(0.3)
+
+        return deleted_count, failed_ids
+
+    def add_playlist_tracks(
+        self, playlist_id: str, track_ids: List[str], batch_size: int = 50
+    ) -> Tuple[int, List[str]]:
+        """
+        Add tracks to a user library playlist via amp-api POST.
+        Supports both library song IDs (e.g. 'i.xxx') and catalog song IDs.
+        """
+        if not track_ids:
+            return 0, []
+
+        headers = self._get_auth_headers(require_user=True)
+        added_count = 0
+        failed_ids: List[str] = []
+
+        # If there are catalog track IDs (not starting with 'i.'), add them to library first
+        catalog_ids = [tid for tid in track_ids if not str(tid).startswith("i.")]
+        if catalog_ids:
+            try:
+                self.add_tracks_to_library(catalog_ids)
+            except Exception as e:
+                logger.warning("添加目录歌曲到资料库失败: %s", e)
+
+        for i in range(0, len(track_ids), batch_size):
+            batch = track_ids[i : i + batch_size]
+            url = f"{self.AMP_API_URL}/me/library/playlists/{playlist_id}/tracks"
+            payload = {
+                "data": [
+                    {
+                        "id": str(tid),
+                        "type": "library-songs" if str(tid).startswith("i.") else "songs",
+                    }
+                    for tid in batch
+                ]
+            }
+            try:
+                resp = self.session.post(url, headers=headers, json=payload, timeout=15)
+                if resp.status_code in (200, 201, 204):
+                    added_count += len(batch)
+                else:
+                    logger.warning(
+                        "添加曲目至歌单失败 (批次 %d): HTTP %d - %s",
+                        i // batch_size + 1,
+                        resp.status_code,
+                        resp.text[:120],
+                    )
+                    failed_ids.extend(batch)
+            except Exception as e:
+                logger.error("添加曲目至歌单异常: %s", e)
+                failed_ids.extend(batch)
+
+            if i + batch_size < len(track_ids):
+                time.sleep(0.3)
+
+        return added_count, failed_ids
+
+    def update_playlist(
+        self,
+        playlist_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> bool:
+        """
+        Update user library playlist name and/or description via amp-api PATCH.
+        """
+        url = f"{self.AMP_API_URL}/me/library/playlists/{playlist_id}"
+        headers = self._get_auth_headers(require_user=True)
+        attrs = {}
+        if name is not None and name.strip():
+            attrs["name"] = name.strip()
+        if description is not None:
+            attrs["description"] = description.strip()
+
+        if not attrs:
+            return True
+
+        payload = {"attributes": attrs}
+        try:
+            resp = self.session.patch(url, headers=headers, json=payload, timeout=12)
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            logger.error("修改歌单异常 (%s): %s", playlist_id, e)
+            return False
+
+    def delete_playlist(self, playlist_id: str) -> bool:
+        """
+        Delete a library playlist via amp-api DELETE.
+        """
+        url = f"{self.AMP_API_URL}/me/library/playlists/{playlist_id}"
+        headers = self._get_auth_headers(require_user=True)
+        try:
+            resp = self.session.delete(url, headers=headers, timeout=12)
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            logger.error("删除歌单异常 (%s): %s", playlist_id, e)
+            return False
+
+    def batch_delete_playlists(self, playlist_ids: List[str]) -> Tuple[int, List[str]]:
+        """
+        Batch delete playlists. Returns (success_count, failed_ids).
+        """
+        success = 0
+        failed = []
+        for pid in playlist_ids:
+            if self.delete_playlist(pid):
+                success += 1
+            else:
+                failed.append(pid)
+            time.sleep(0.3)
+        return success, failed
+
+    def get_library_songs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        fetch_all: bool = False,
+        max_songs: int = 5000,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch songs from user's personal iCloud Music Library.
+        If fetch_all is True, automatically iterates through pages up to max_songs.
+        """
+        url = f"{self.AMP_API_URL}/me/library/songs"
+        headers = self._get_auth_headers(require_user=True)
+        all_songs: List[Dict[str, Any]] = []
+        cur_offset = offset
+        batch_size = min(limit, 100) if not fetch_all else 100
+
+        while True:
+            params = {"limit": batch_size, "offset": cur_offset}
+            try:
+                resp = self.session.get(url, headers=headers, params=params, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
+                    for item in data:
+                        attrs = item.get("attributes", {})
+                        artwork = attrs.get("artwork") or {}
+                        all_songs.append({
+                            "id": item.get("id"),
+                            "title": attrs.get("name", "未知歌曲"),
+                            "artist": attrs.get("artistName", "未知歌手"),
+                            "album": attrs.get("albumName", "未知专辑"),
+                            "duration_ms": attrs.get("durationInMillis"),
+                            "artwork_url": artwork.get("url"),
+                            "date_added": attrs.get("dateAdded"),
+                        })
+
+                    if not fetch_all or len(data) < batch_size or len(all_songs) >= max_songs:
+                        break
+
+                    cur_offset += len(data)
+                    time.sleep(0.1)
+                else:
+                    logger.warning("获取资料库歌曲失败: HTTP %d", resp.status_code)
+                    break
+            except Exception as e:
+                logger.error("获取资料库歌曲异常 (offset %d): %s", cur_offset, e)
+                break
+
+        return all_songs
+
+    def search_library_songs(self, term: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Search songs in user's personal iCloud Music Library via amp-api.
+        Searches across titles, artists, albums.
+        """
+        if not term or not term.strip():
+            return []
+        url = f"{self.AMP_API_URL}/me/library/search"
+        headers = self._get_auth_headers(require_user=True)
+        params = {
+            "term": term.strip(),
+            "types": "library-songs,library-albums,library-artists",
+            "limit": min(limit, 100),
+        }
+        try:
+            resp = self.session.get(url, headers=headers, params=params, timeout=15)
+            if resp.status_code == 200:
+                results = resp.json().get("results", {})
+                data = results.get("library-songs", {}).get("data", [])
+                songs = []
+                for item in data:
+                    attrs = item.get("attributes", {})
+                    artwork = attrs.get("artwork") or {}
+                    songs.append({
+                        "id": item.get("id"),
+                        "title": attrs.get("name", "未知歌曲"),
+                        "artist": attrs.get("artistName", "未知歌手"),
+                        "album": attrs.get("albumName", "未知专辑"),
+                        "duration_ms": attrs.get("durationInMillis"),
+                        "artwork_url": artwork.get("url"),
+                        "date_added": attrs.get("dateAdded"),
+                    })
+                return songs
+            else:
+                logger.warning("检索资料库歌曲失败: HTTP %d", resp.status_code)
+                return []
+        except Exception as e:
+            logger.error("检索资料库歌曲异常: %s", e)
+            return []
+
+    def delete_library_song(self, song_id: str) -> bool:
+        """
+        Delete a song from user's personal library via amp-api DELETE.
+        """
+        url = f"{self.AMP_API_URL}/me/library/songs/{song_id}"
+        headers = self._get_auth_headers(require_user=True)
+        try:
+            resp = self.session.delete(url, headers=headers, timeout=12)
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            logger.error("删除资料库歌曲异常 (%s): %s", song_id, e)
+            return False
+
+    def batch_delete_library_songs(self, song_ids: List[str]) -> Tuple[int, List[str]]:
+        """
+        Batch delete songs from user's personal library. Returns (success_count, failed_ids).
+        """
+        success = 0
+        failed = []
+        for sid in song_ids:
+            if self.delete_library_song(sid):
+                success += 1
+            else:
+                failed.append(sid)
+            time.sleep(0.3)
+        return success, failed
