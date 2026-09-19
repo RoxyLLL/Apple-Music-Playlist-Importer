@@ -62,51 +62,72 @@ class AppleMusicAuth:
             self.config.save()
             return token
 
-        # Fallback
-        if self.config.developer_token:
+        # Fallback to cached token if still valid
+        if self.config.developer_token and self.validate_developer_token(self.config.developer_token):
             return self.config.developer_token
+
+        # Test hardcoded fallback
+        if self.validate_developer_token(FALLBACK_DEVELOPER_TOKEN):
+            return FALLBACK_DEVELOPER_TOKEN
+
+        # Remote cloud fallback: check if community config on GitHub raw has fresh token
+        try:
+            cloud_resp = self.session.get(
+                "https://raw.githubusercontent.com/RoxyLLL/Apple-Music-Playlist-Importer/main/tokens.json",
+                timeout=5.0
+            )
+            if cloud_resp.status_code == 200:
+                cloud_data = cloud_resp.json()
+                cloud_tok = cloud_data.get("developer_token")
+                if cloud_tok and self.validate_developer_token(cloud_tok):
+                    self.config.developer_token = cloud_tok
+                    self.config.developer_token_exp = self._parse_jwt_exp(cloud_tok)
+                    self.config.save()
+                    return cloud_tok
+        except Exception:
+            pass
+
         return FALLBACK_DEVELOPER_TOKEN
 
     def _fetch_developer_token_from_web(self) -> Tuple[Optional[str], Optional[int]]:
-        """Scrape developer token from music.apple.com web client JS files."""
-        try:
-            r = self.session.get(f"{self.BASE_URL}/us/browse", timeout=12)
-            if r.status_code != 200:
-                return None, None
-            r.encoding = "utf-8"
-
-            # Look for index JS bundles
-            scripts = re.findall(r'<script[^>]*src=["\']([^"\']+)["\']', r.text)
-            index_scripts = [
-                s for s in scripts if "index" in s or "bundle" in s or "main" in s
-            ]
-            # Prioritize index scripts
-            candidate_urls = index_scripts + [s for s in scripts if s not in index_scripts]
-
-            for s in candidate_urls[:6]:
-                url = s if s.startswith("http") else (self.BASE_URL + s)
-                try:
-                    res = self.session.get(url, timeout=12)
-                    if res.status_code != 200:
-                        continue
-                    res.encoding = "utf-8"
-                    
-                    # Search for JWT format
-                    tokens = re.findall(
-                        r'\"(ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\"',
-                        res.text
-                    )
-                    for t in tokens:
-                        if len(t) > 100:
-                            # Quick test if this token works on Catalog API
-                            if self.validate_developer_token(t):
-                                # Try parse exp
-                                exp = self._parse_jwt_exp(t)
-                                return t, exp
-                except Exception:
+        """Scrape developer token from music.apple.com web client JS files across multiple storefronts."""
+        entry_paths = ["/us/browse", "/cn/browse", "/hk/browse", "/tw/browse"]
+        for entry in entry_paths:
+            try:
+                r = self.session.get(f"{self.BASE_URL}{entry}", timeout=10)
+                if r.status_code != 200:
                     continue
-        except Exception:
-            pass
+                r.encoding = "utf-8"
+
+                # Look for index/bundle JS bundles
+                scripts = re.findall(r'<script[^>]*src=["\']([^"\']+)["\']', r.text)
+                index_scripts = [
+                    s for s in scripts if any(k in s.lower() for k in ("index", "bundle", "main", "musickit", "app"))
+                ]
+                candidate_urls = index_scripts + [s for s in scripts if s not in index_scripts]
+
+                for s in candidate_urls[:8]:
+                    url = s if s.startswith("http") else (self.BASE_URL + s)
+                    try:
+                        res = self.session.get(url, timeout=10)
+                        if res.status_code != 200:
+                            continue
+                        res.encoding = "utf-8"
+
+                        # Search for JWT format with single or double quotes
+                        tokens = re.findall(
+                            r'[\"\'](ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})[\"\']',
+                            res.text
+                        )
+                        for t in tokens:
+                            if len(t) > 100:
+                                if self.validate_developer_token(t):
+                                    exp = self._parse_jwt_exp(t)
+                                    return t, exp
+                    except Exception:
+                        continue
+            except Exception:
+                continue
 
         return None, None
 

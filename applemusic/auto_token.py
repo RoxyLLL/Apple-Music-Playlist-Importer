@@ -6,6 +6,7 @@ without requiring manual DevTools (F12) inspection or copy-pasting.
 """
 
 import asyncio
+import atexit
 import json
 import os
 import shutil
@@ -49,14 +50,12 @@ def find_browser_executable() -> Optional[str]:
     return None
 
 
-DEFAULT_CDP_PORT = 19222
-
-
 class BrowserTokenCapturer:
     """Manages launching browser in CDP mode and extracting media-user-token."""
 
     def __init__(self, port: Optional[int] = None, config: Optional[Config] = None):
-        self.port = port or DEFAULT_CDP_PORT
+        # Dynamically allocate an ephemeral port by default to prevent port-sniffing/hijacking
+        self.port = port if port is not None else find_free_port()
         self.config = config or get_config()
         self.browser_exe = find_browser_executable()
         
@@ -101,6 +100,18 @@ class BrowserTokenCapturer:
         except Exception:
             return False
 
+    def _force_cleanup_proc(self):
+        """Forcefully terminate and clean up browser process if still running."""
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.proc.terminate()
+                self.proc.wait(timeout=1.5)
+            except Exception:
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
+
     def cancel(self):
         """Cancel and terminate browser session."""
         self._cancelled = True
@@ -120,11 +131,7 @@ class BrowserTokenCapturer:
                     asyncio.run(_send_close())
         except Exception:
             pass
-        if self.proc:
-            try:
-                self.proc.terminate()
-            except Exception:
-                pass
+        self._force_cleanup_proc()
 
     def _prepare_profile_dir(self):
         """Prepare profile directory and cleanly handle any lock conflicts."""
@@ -195,6 +202,7 @@ class BrowserTokenCapturer:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+                atexit.register(self._force_cleanup_proc)
             except Exception as e:
                 msg = f"启动浏览器失败: {e}"
                 self._update_state(msg, status="failed")
@@ -213,6 +221,7 @@ class BrowserTokenCapturer:
         finally:
             with self._lock:
                 self.state["active"] = False
+            self._force_cleanup_proc()
 
     async def _poll_for_token(
         self,
@@ -286,6 +295,11 @@ class BrowserTokenCapturer:
                             cookies = resp_data.get("result", {}).get("cookies", [])
                             
                             for c in cookies:
+                                domain = c.get("domain", "").strip().lower()
+                                # Strictly filter out cookies not belonging to apple.com
+                                if not (domain.endswith("apple.com") or "apple.com" in domain):
+                                    continue
+
                                 cname = c.get("name", "").strip()
                                 val = c.get("value", "").strip()
                                 val = urllib.parse.unquote(val).strip('"').strip("'")

@@ -28,6 +28,10 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
+      - name: Run Test Suite
+        run: |
+          python -m unittest discover -s tests
+
       - name: Build Single-File EXE
         run: |
           python build_exe.py

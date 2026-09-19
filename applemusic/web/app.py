@@ -7,13 +7,15 @@ import os
 import sys
 import threading
 import time
+import hmac
+import secrets
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -48,6 +50,8 @@ if getattr(sys, "frozen", False):
 else:
     STATIC_DIR = Path(__file__).parent / "static"
 
+SESSION_API_TOKEN = secrets.token_urlsafe(32)
+
 app = FastAPI(title="Apple Music Playlist Importer", version="1.0.0")
 
 app.add_middleware(
@@ -57,12 +61,22 @@ app.add_middleware(
         "http://localhost:8000",
         "http://127.0.0.1",
         "http://localhost",
-        "*"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def verify_local_app_token(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        token = request.headers.get("X-App-Token") or request.cookies.get("app_token")
+        if not token or not hmac.compare_digest(token, SESSION_API_TOKEN):
+            return JSONResponse(
+                status_code=403,
+                content={"success": False, "detail": "Forbidden: Invalid application token"}
+            )
+    return await call_next(request)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -114,7 +128,21 @@ async def serve_index():
     index_file = STATIC_DIR / "index.html"
     if not index_file.exists():
         return HTMLResponse("<h1>Web UI static files not found</h1>", status_code=404)
-    return FileResponse(index_file)
+    content = index_file.read_text(encoding="utf-8")
+    token_tag = f'<script>window.__APP_TOKEN__ = "{SESSION_API_TOKEN}";</script>'
+    if "<head>" in content:
+        content = content.replace("<head>", f"<head>\n  {token_tag}", 1)
+    else:
+        content = f"{token_tag}\n{content}"
+    response = HTMLResponse(content)
+    response.set_cookie(
+        key="app_token",
+        value=SESSION_API_TOKEN,
+        httponly=True,
+        samesite="strict",
+        path="/",
+    )
+    return response
 
 
 # In-memory auth validation cache (30s TTL to prevent event-loop choking)
@@ -434,10 +462,10 @@ async def search_single_track(req: SearchTrackRequest):
         "results": [
             {
                 "track": r.model_dump(),
-                "score": 0.85,
-                "confidence": "high",
-                "decision": "user_confirmed",
-                "decision_reasons": ["手动检索结果"],
+                "score": 0.0,
+                "confidence": "unknown",
+                "decision": "review",
+                "decision_reasons": ["手动检索结果（待用户选择）"],
             }
             for r in raw_results
         ],

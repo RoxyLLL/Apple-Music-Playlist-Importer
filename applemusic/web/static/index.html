@@ -977,6 +977,15 @@
           程序已在 B 站全站检索相关视频（MV/演唱会现场/纯享音频等）。选定后将自动下载视频缓存并提取/转码原音为 M4A 音乐格式、写入原歌曲名/歌手/封面元数据，并直接投放至 Apple Music 自动导入目录，全设备自动漫游！
         </p>
 
+        <!-- Legal & Usage Notice Banner -->
+        <div class="bg-amber-50/80 border border-amber-200/80 rounded-xl p-2.5 text-[11px] text-amber-800 flex items-start space-x-2">
+          <i class="fa-solid fa-shield-halved text-amber-600 mt-0.5 flex-shrink-0"></i>
+          <div class="leading-relaxed">
+            <span class="font-bold">自用合理使用提示：</span>
+            本功能系为补充个人曲库设计的第三方音源检索工具。音源仅供个人离线学习与合理使用，严禁用于商业分发，请支持正版音乐。
+          </div>
+        </div>
+
         <!-- Search input box in modal -->
         <div class="flex items-center space-x-2">
           <div class="relative flex-1">
@@ -1172,6 +1181,29 @@
 
   <!-- VUE 3 APPLICATION SCRIPT -->
   <script>
+    // Automatic local token interception for API CSRF defense
+    (function() {
+      const _origFetch = window.fetch;
+      window.fetch = function(url, options) {
+        options = options || {};
+        const urlStr = typeof url === 'string' ? url : (url && url.url ? url.url : '');
+        if (urlStr.startsWith('/api/') || urlStr.includes('/api/')) {
+          const token = window.__APP_TOKEN__;
+          if (token) {
+            if (options.headers instanceof Headers) {
+              options.headers.set('X-App-Token', token);
+            } else if (Array.isArray(options.headers)) {
+              options.headers.push(['X-App-Token', token]);
+            } else {
+              options.headers = options.headers || {};
+              options.headers['X-App-Token'] = token;
+            }
+          }
+        }
+        return _origFetch.call(this, url, options);
+      };
+    })();
+
     try {
       if (typeof Vue === 'undefined') {
         throw new Error('Vue 核心库未载入，请检查本地静态资源');
