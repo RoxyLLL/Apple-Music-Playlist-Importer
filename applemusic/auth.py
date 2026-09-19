@@ -4,20 +4,13 @@ Handles automatic Developer Token extraction and user token verification.
 """
 
 import json
+import os
 import re
 import time
 from typing import Optional, Tuple
 import requests
 
 from applemusic.config import Config, get_config
-
-# Fallback known valid developer token from Apple Music Web client
-FALLBACK_DEVELOPER_TOKEN = (
-    "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6IldlYlBsYXlLaWQifQ."
-    "eyJpc3MiOiJBTVBXZWJQbGF5IiwiaWF0IjoxNzg2NjMyOTI0LCJleHAiOjE3OTI2ODA5MjQs"
-    "InJvb3RfaHR0cHNfb3JpZ2luIjpbImFwcGxlLmNvbSJdfQ."
-    "hBgj61sZf-y7bmuvT-joXAUAcf7TVJ51732xnH5vFkLHOmsQHxVqGMYUuI4h8c0-RX3fRY3moylhLW8fewFJyw"
-)
 
 
 class AppleMusicAuth:
@@ -42,19 +35,26 @@ class AppleMusicAuth:
     def get_developer_token(self, force_refresh: bool = False) -> str:
         """
         Get a valid Developer Token.
-        Uses cached token if available and not expired, otherwise scrapes fresh one.
+        Priority:
+        1. Environment variable: APPLE_MUSIC_DEVELOPER_TOKEN
+        2. Cached token in config if valid and not expired
+        3. Dynamic scrape from music.apple.com web client JS
         """
+        # 1. Environment variable override
+        env_token = os.environ.get("APPLE_MUSIC_DEVELOPER_TOKEN", "").strip()
+        if env_token:
+            return env_token
+
         now = int(time.time())
-        # Check cache
+        # 2. Check cached token in config
         if (
             not force_refresh
             and self.config.developer_token
-            and self.config.developer_token_exp
-            and self.config.developer_token_exp > now + 3600
+            and (self.config.developer_token_exp is None or self.config.developer_token_exp > now + 3600)
         ):
             return self.config.developer_token
 
-        # Try to scrape fresh token from music.apple.com
+        # 3. Try to scrape fresh token from music.apple.com
         token, exp = self._fetch_developer_token_from_web()
         if token:
             self.config.developer_token = token
@@ -62,32 +62,11 @@ class AppleMusicAuth:
             self.config.save()
             return token
 
-        # Fallback to cached token if still valid
+        # 4. Fallback to cached token if still valid
         if self.config.developer_token and self.validate_developer_token(self.config.developer_token):
             return self.config.developer_token
 
-        # Test hardcoded fallback
-        if self.validate_developer_token(FALLBACK_DEVELOPER_TOKEN):
-            return FALLBACK_DEVELOPER_TOKEN
-
-        # Remote cloud fallback: check if community config on GitHub raw has fresh token
-        try:
-            cloud_resp = self.session.get(
-                "https://raw.githubusercontent.com/RoxyLLL/Apple-Music-Playlist-Importer/main/tokens.json",
-                timeout=5.0
-            )
-            if cloud_resp.status_code == 200:
-                cloud_data = cloud_resp.json()
-                cloud_tok = cloud_data.get("developer_token")
-                if cloud_tok and self.validate_developer_token(cloud_tok):
-                    self.config.developer_token = cloud_tok
-                    self.config.developer_token_exp = self._parse_jwt_exp(cloud_tok)
-                    self.config.save()
-                    return cloud_tok
-        except Exception:
-            pass
-
-        return FALLBACK_DEVELOPER_TOKEN
+        return ""
 
     def _fetch_developer_token_from_web(self) -> Tuple[Optional[str], Optional[int]]:
         """Scrape developer token from music.apple.com web client JS files across multiple storefronts."""
@@ -170,6 +149,8 @@ class AppleMusicAuth:
         Returns (is_valid, message_or_storefront).
         """
         dev_token = self.get_developer_token()
+        if not dev_token:
+            return False, "无法获取 Apple Music 开发者 Token，请检查网络连接或环境变量"
         user_token = media_user_token or self.config.media_user_token
 
         if not user_token:

@@ -27,6 +27,7 @@ downloads/
 *.token
 *.key
 *.log
+tokens.json
 unmatched.txt
 
 # Virtual environments

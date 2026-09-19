@@ -57,8 +57,13 @@ subprocess.run(pyinstaller_args, cwd=str(ROOT_DIR), check=True)
 dist_exe = ROOT_DIR / "dist" / "AppleMusicImporter.exe"
 if dist_exe.exists():
     target_exe = ROOT_DIR / "AppleMusicImporter.exe"
-    shutil.copy2(dist_exe, target_exe)
-    print(f"\n[SUCCESS] Standalone EXE generated successfully at: {target_exe}")
-    print(f"File size: {target_exe.stat().st_size / (1024*1024):.2f} MB")
+    try:
+        shutil.copy2(dist_exe, target_exe)
+        print(f"\n[SUCCESS] Standalone EXE generated successfully at: {target_exe}")
+        print(f"File size: {target_exe.stat().st_size / (1024*1024):.2f} MB")
+    except PermissionError:
+        print(f"\n[SUCCESS] Standalone EXE generated successfully at: {dist_exe}")
+        print(f"File size: {dist_exe.stat().st_size / (1024*1024):.2f} MB")
+        print("[Notice] Could not overwrite root AppleMusicImporter.exe because a running instance has it open.")
 else:
     print("[ERROR] Failed to locate generated EXE in dist/")

@@ -8,7 +8,7 @@ import ctypes
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 DEFAULT_CONFIG_DIR = Path.home() / ".applemusic_sync"
@@ -87,6 +87,7 @@ class Config(BaseModel):
     developer_token_exp: Optional[int] = None
     media_user_token: Optional[str] = None
     storefront: str = "cn"
+    fallback_storefronts: List[str] = Field(default_factory=lambda: ["hk", "tw", "us"])
     auto_confirm: bool = False
     min_score: float = 0.55
     auto_accept_threshold: float = 0.88

@@ -73,9 +73,11 @@ class QQMusicExtractor(BaseExtractor):
         raw_songs = cd.get("songlist", [])
         tracks = []
         for s in raw_songs:
-            singers = [a["name"].strip() for a in s.get("singer", []) if a.get("name")]
-            song_name = s.get("songname", "") or s.get("name", "")
-            album_name = s.get("albumname", "") or s.get("album", {}).get("name", "")
+            singers = [a["name"].strip() for a in s.get("singer", []) if isinstance(a, dict) and a.get("name")]
+            if not singers and s.get("singer_name"):
+                singers = [s.get("singer_name").strip()]
+            song_name = s.get("songname", "") or s.get("name", "") or s.get("title", "")
+            album_name = s.get("albumname", "") or s.get("album", {}).get("name", "") or s.get("album_name", "")
             interval = s.get("interval", 0)  # seconds
             duration_ms = interval * 1000 if interval else None
 

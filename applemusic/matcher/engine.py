@@ -619,6 +619,11 @@ class MatchingEngine:
         sf = storefront or self.config.storefront or "cn"
         # Always prioritize the user's active storefront for playable library imports
         storefronts_to_try = [sf]
+        fallbacks = fallback_storefronts if fallback_storefronts is not None else getattr(self.config, "fallback_storefronts", ["hk", "tw", "us"])
+        if fallbacks:
+            for f_sf in fallbacks:
+                if f_sf and f_sf.lower() != sf.lower() and f_sf.lower() not in [s.lower() for s in storefronts_to_try]:
+                    storefronts_to_try.append(f_sf.lower())
 
         core_title, version_tags = TextCleaner.parse_title(source.title)
         primary_artist, featured_artists = TextCleaner.parse_artists(source.artists)
@@ -716,8 +721,8 @@ class MatchingEngine:
                         min_review_score=0.45 if relaxed else self.config.min_review_score,
                         min_score_gap=self.config.min_score_gap,
                     )
-                    # Stop early if candidate is accepted or achieves high confidence
-                    if dec == DecisionStatus.AUTO_ACCEPT.value or (best and best.score >= 0.70):
+                    # Stop early only if candidate is auto accepted
+                    if dec == DecisionStatus.AUTO_ACCEPT.value:
                         stop_expansion = True
                         break
 

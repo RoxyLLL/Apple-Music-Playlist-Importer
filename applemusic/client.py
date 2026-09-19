@@ -353,6 +353,8 @@ class AppleMusicClient:
     def _get_auth_headers(self, require_user: bool = False) -> Dict[str, str]:
         """Generate headers with Developer Token and optionally Music-User-Token."""
         dev_token = self.auth.get_developer_token()
+        if not dev_token:
+            raise RuntimeError("无法获取 Apple Music Developer Token，请检查网络连接或设置环境变量 APPLE_MUSIC_DEVELOPER_TOKEN")
         headers = {
             "Authorization": f"Bearer {dev_token}",
         }

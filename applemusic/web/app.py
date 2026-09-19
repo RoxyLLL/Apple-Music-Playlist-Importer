@@ -193,7 +193,9 @@ async def update_config(req: ConfigUpdateRequest):
     _shared_engine = None
 
     auth = AppleMusicAuth(config)
-    is_valid, info = auth.validate_user_token()
+    is_valid, info = await asyncio.to_thread(auth.validate_user_token)
+    if config.media_user_token:
+        _auth_validation_cache[config.media_user_token[:24]] = (time.time(), is_valid, info)
     return {
         "success": True,
         "is_authorized": is_valid,

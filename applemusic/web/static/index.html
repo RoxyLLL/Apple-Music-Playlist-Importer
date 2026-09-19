@@ -1909,18 +1909,25 @@
           candidateModalItem.value = null;
         };
 
-        // Computed Filters & Stats
+        // Computed Filters & Stats helpers (mutually exclusive partitioning)
+        const isConfirmed = (r) => r.status === 'user_confirmed' || r.decision === 'user_confirmed';
+        const isAutoAccepted = (r) => !isConfirmed(r) && (r.decision === 'auto_accept' || (!r.decision && (r.status === 'exact' || r.status === 'high')));
+        const isReview = (r) => !isConfirmed(r) && !isAutoAccepted(r) && (r.decision === 'review' || (!r.decision && r.status === 'medium'));
+        const retrySet = new Set(['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed']);
+        const isNoMatch = (r) => !r.selected_candidate && !r.bilibili_downloaded && !isConfirmed(r) && (r.search_status === 'no_match' || r.decision === 'no_match' || (r.status === 'not_found' && !r.search_status));
+        const isFailed = (r) => !r.selected_candidate && !r.bilibili_downloaded && !isConfirmed(r) && retrySet.has(r.search_status || r.decision);
+
         const filteredResults = computed(() => {
           if (filter.value === 'matched') {
-            return matchResults.value.filter(r => (r.status === 'exact' || r.status === 'high' || r.decision === 'auto_accept') && r.status !== 'user_confirmed');
+            return matchResults.value.filter(isAutoAccepted);
           } else if (filter.value === 'confirmed') {
-            return matchResults.value.filter(r => r.status === 'user_confirmed');
+            return matchResults.value.filter(isConfirmed);
           } else if (filter.value === 'medium') {
-            return matchResults.value.filter(r => (r.status === 'medium' || r.decision === 'review') && r.status !== 'user_confirmed');
+            return matchResults.value.filter(isReview);
           } else if (filter.value === 'no_match') {
-            return matchResults.value.filter(r => (r.search_status === 'no_match' || r.decision === 'no_match' || (r.status === 'not_found' && !r.search_status)) && !r.selected_candidate && !r.bilibili_downloaded);
+            return matchResults.value.filter(isNoMatch);
           } else if (filter.value === 'failed') {
-            return matchResults.value.filter(r => ['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed'].includes(r.search_status || r.decision) && !r.selected_candidate && !r.bilibili_downloaded);
+            return matchResults.value.filter(isFailed);
           }
           return matchResults.value;
         });
@@ -1965,7 +1972,6 @@
         // Single-pass stats computation for maximum performance across 2k+ songs
         const resultStats = computed(() => {
           let high = 0, confirmed = 0, medium = 0, noMatch = 0, retryable = 0, unmatched = 0, matched = 0, selected = 0;
-          const retrySet = new Set(['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed']);
           const list = matchResults.value;
           for (let i = 0; i < list.length; i++) {
             const r = list[i];
@@ -1975,22 +1981,18 @@
 
             if (r.selected && hasMatch) selected++;
 
-            if (r.status === 'user_confirmed') {
+            if (isConfirmed(r)) {
               confirmed++;
-            } else if (r.status === 'exact' || r.status === 'high' || r.decision === 'auto_accept') {
+            } else if (isAutoAccepted(r)) {
               high++;
-            } else if (r.status === 'medium' || r.decision === 'review') {
+            } else if (isReview(r)) {
               medium++;
             }
 
-            if (!hasMatch) {
-              const sStatus = r.search_status;
-              if (sStatus === 'no_match' || r.decision === 'no_match' || (r.status === 'not_found' && !sStatus)) {
-                noMatch++;
-              }
-              if (retrySet.has(sStatus || r.decision)) {
-                retryable++;
-              }
+            if (isNoMatch(r)) {
+              noMatch++;
+            } else if (isFailed(r)) {
+              retryable++;
             }
           }
           return { high, confirmed, medium, noMatch, retryable, unmatched, matched, selected };
