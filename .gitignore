@@ -7,6 +7,7 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+*.spec
 
 # Compiled Executables (Releases should be published via GitHub Releases)
 *.exe

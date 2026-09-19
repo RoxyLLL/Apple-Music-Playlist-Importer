@@ -384,10 +384,18 @@ def start_web(
             if app_mode:
                 b_exe = find_browser_executable()
                 if b_exe:
-                    threading.Timer(
-                        1.0,
-                        lambda: subprocess.Popen([b_exe, f"--app={target_url}", "--window-size=1280,860"]),
-                    ).start()
+                    from pathlib import Path
+                    app_profile_dir = Path.home() / ".applemusic" / "app_profile"
+                    app_profile_dir.mkdir(parents=True, exist_ok=True)
+                    cmd = [
+                        b_exe,
+                        f"--app={target_url}",
+                        f"--user-data-dir={str(app_profile_dir)}",
+                        "--window-size=1280,860",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                    ]
+                    threading.Timer(1.0, lambda: subprocess.Popen(cmd)).start()
                 else:
                     threading.Timer(1.0, lambda: webbrowser.open(target_url)).start()
             else:

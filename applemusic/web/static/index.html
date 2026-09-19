@@ -3,9 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Apple Music Playlist Importer</title>
+  <title>Apple Music 歌单导入助手</title>
   <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
   <link rel="apple-touch-icon" href="/static/app_icon.png">
+  <link rel="manifest" href="/static/manifest.json">
+  <!-- Desktop Window Title Bar Styling (Apple Clean White Theme) -->
+  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1d1d1f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- Tailwind CSS: Local bundle with CDN fallback -->
   <script src="/static/tailwind.js"></script>
   <script>window.tailwind || document.write('<script src="https://cdn.tailwindcss.com"><\/script>')</script>
@@ -57,14 +64,11 @@
     <header class="h-16 bg-white/90 backdrop-blur-md border-b border-[#e5e5ea] sticky top-0 z-40 px-6 sm:px-10 flex items-center justify-between">
       
       <!-- Brand & Title -->
-      <div class="flex items-center space-x-3">
-        <img src="/static/app_icon.png" class="w-9 h-9 rounded-xl shadow-sm shadow-applered/30 object-cover" alt="Logo">
-        <div>
-          <div class="flex items-center space-x-2">
-            <span class="font-extrabold text-base text-appledark tracking-tight">Apple Music</span>
-            <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600 border border-neutral-200">Playlist Importer</span>
-          </div>
-          <p class="text-[11px] text-applegray leading-none mt-0.5">一键将外部音乐歌单智能匹配并同步到个人资料库</p>
+      <div class="flex items-center space-x-3.5">
+        <img src="/static/app_icon.png" class="w-10 h-10 rounded-2xl shadow-sm shadow-applered/25 object-cover" alt="Logo">
+        <div class="flex items-center space-x-2.5">
+          <span class="font-extrabold text-lg text-appledark tracking-tight">Apple Music</span>
+          <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-neutral-100 text-neutral-600 border border-neutral-200">Playlist Importer</span>
         </div>
       </div>
 
@@ -94,47 +98,46 @@
     </header>
 
     <!-- MAIN BODY CONTAINER -->
-    <main class="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-8 space-y-6">
+    <main class="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-8 space-y-7">
 
       <!-- ==================== CARD 1: SOURCE SELECTOR & PARSER ==================== -->
-      <section class="bg-white rounded-2xl border border-appleborder p-6 shadow-[0_2px_8px_rgba(0,0,0,0.03)] space-y-5">
+      <section class="bg-white rounded-2xl border border-appleborder p-7 shadow-[0_2px_12px_rgba(0,0,0,0.03)] space-y-6">
         
         <!-- Section Title & Step Indicator -->
         <div class="flex items-center justify-between">
-          <div class="flex items-center space-x-2.5">
-            <span class="w-6 h-6 rounded-full bg-applered/10 text-applered text-xs font-bold flex items-center justify-center">1</span>
+          <div class="flex items-center space-x-3">
+            <span class="w-7 h-7 rounded-full bg-applered/10 text-applered text-sm font-bold flex items-center justify-center">1</span>
             <h2 class="text-base font-bold text-appledark">选择来源平台并解析歌单</h2>
           </div>
-          <span class="text-xs text-applegray">支持公开歌单链接、分享口令或本地文件</span>
         </div>
 
         <!-- Apple Style Segmented Control -->
-        <div class="bg-neutral-100/90 p-1 rounded-xl flex space-x-1 max-w-xl">
+        <div class="bg-neutral-100/90 p-1.5 rounded-2xl flex space-x-1.5 max-w-2xl">
           <button @click="inputTab = 'netease'"
             :class="inputTab === 'netease' ? 'bg-white text-applered font-bold shadow-sm' : 'text-neutral-600 hover:text-neutral-900 font-medium'"
-            class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center space-x-1.5">
-            <i class="fa-solid fa-cloud"></i>
+            class="flex-1 py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center space-x-2">
+            <i class="fa-solid fa-cloud text-base"></i>
             <span>网易云音乐</span>
           </button>
 
           <button @click="inputTab = 'qqmusic'"
             :class="inputTab === 'qqmusic' ? 'bg-white text-emerald-600 font-bold shadow-sm' : 'text-neutral-600 hover:text-neutral-900 font-medium'"
-            class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center space-x-1.5">
-            <i class="fa-solid fa-compact-disc"></i>
+            class="flex-1 py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center space-x-2">
+            <i class="fa-solid fa-compact-disc text-base"></i>
             <span>QQ 音乐</span>
           </button>
 
           <button @click="inputTab = 'spotify'"
             :class="inputTab === 'spotify' ? 'bg-white text-[#1db954] font-bold shadow-sm' : 'text-neutral-600 hover:text-neutral-900 font-medium'"
-            class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center space-x-1.5">
-            <i class="fa-brands fa-spotify"></i>
+            class="flex-1 py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center space-x-2">
+            <i class="fa-brands fa-spotify text-base"></i>
             <span>Spotify</span>
           </button>
 
           <button @click="inputTab = 'local'"
             :class="inputTab === 'local' ? 'bg-white text-appledark font-bold shadow-sm' : 'text-neutral-600 hover:text-neutral-900 font-medium'"
-            class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center space-x-1.5">
-            <i class="fa-solid fa-file-lines"></i>
+            class="flex-1 py-2.5 px-3 rounded-xl text-sm transition flex items-center justify-center space-x-2">
+            <i class="fa-solid fa-file-lines text-base"></i>
             <span>本地文件 / 文本</span>
           </button>
         </div>
@@ -143,24 +146,19 @@
         <div v-if="inputTab !== 'local'" class="space-y-3">
           <div class="flex flex-col sm:flex-row items-stretch sm:items-center space-y-2 sm:space-y-0 sm:space-x-3">
             <div class="relative flex-1">
-              <i class="fa-solid fa-link absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-sm"></i>
+              <i class="fa-solid fa-link absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400 text-sm"></i>
               <input v-model="sourceInput" @keyup.enter="startExtractAndMatch"
                 type="text"
                 :placeholder="getPlaceholderForTab()"
-                class="w-full pl-10 pr-4 py-2.5 bg-[#fbfbfd] border border-[#d1d1d6] rounded-xl text-sm focus:outline-none focus:border-applered focus:ring-2 focus:ring-applered/15 transition placeholder:text-neutral-400" />
+                class="w-full pl-11 pr-4 py-3 bg-[#fbfbfd] border border-[#d1d1d6] rounded-xl text-sm focus:outline-none focus:border-applered focus:ring-2 focus:ring-applered/15 transition placeholder:text-neutral-400" />
             </div>
 
             <button @click="startExtractAndMatch" :disabled="loading || !sourceInput.trim()"
-              class="px-6 py-2.5 rounded-xl bg-applered text-white text-sm font-semibold hover:bg-applepink active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition flex items-center justify-center space-x-2 shadow-sm shadow-applered/25">
+              class="px-7 py-3 rounded-xl bg-applered text-white text-sm font-bold hover:bg-applepink active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition flex items-center justify-center space-x-2 shadow-sm shadow-applered/25">
               <i v-if="loading" class="fa-solid fa-circle-notch fa-spin text-sm"></i>
               <i v-else class="fa-solid fa-magnifying-glass text-sm"></i>
               <span>{{ loading ? '正在解析匹配...' : '开始解析歌单' }}</span>
             </button>
-          </div>
-          
-          <div class="text-[11px] text-neutral-400 flex items-center space-x-1.5">
-            <i class="fa-regular fa-lightbulb"></i>
-            <span>小提示：可直接粘贴手机端“分享”复制的完整文本或短链接，程序会自动提取歌单链接与 ID。</span>
           </div>
         </div>
 
@@ -171,26 +169,25 @@
             <!-- File Upload Dropzone -->
             <div @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="handleFileDrop"
               :class="dragOver ? 'border-applered bg-rose-50/50' : 'border-neutral-300 hover:border-neutral-400 bg-[#fbfbfd]'"
-              class="border-2 border-dashed rounded-xl p-6 text-center transition cursor-pointer flex flex-col items-center justify-center space-y-2">
-              <div class="w-10 h-10 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-600">
-                <i class="fa-solid fa-cloud-arrow-up text-lg"></i>
+              class="border-2 border-dashed rounded-2xl p-7 text-center transition cursor-pointer flex flex-col items-center justify-center space-y-2.5">
+              <div class="w-14 h-14 rounded-2xl bg-neutral-100 flex items-center justify-center text-neutral-600">
+                <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
               </div>
-              <div class="text-xs font-semibold text-appledark">拖拽 CSV 或 TXT 歌单文件到此处</div>
-              <div class="text-[11px] text-applegray">支持格式：歌名 - 歌手，或网易/QQ导出的 CSV 格式</div>
+              <div class="text-sm font-semibold text-appledark">拖拽 CSV 或 TXT 歌单文件到此处</div>
               <input type="file" ref="fileInput" @change="handleFileSelect" accept=".txt,.csv" class="hidden">
-              <button @click="$refs.fileInput.click()" class="mt-2 px-3 py-1 rounded-lg bg-neutral-200/80 hover:bg-neutral-200 text-xs font-medium text-neutral-700 transition">
-                选择文件
+              <button @click="$refs.fileInput.click()" class="mt-1 px-4 py-1.5 rounded-xl bg-neutral-200/80 hover:bg-neutral-200 text-xs font-semibold text-neutral-700 transition">
+                选择本地文件
               </button>
             </div>
 
             <!-- Direct Text Input Area -->
-            <div class="flex flex-col space-y-2">
+            <div class="flex flex-col space-y-2.5">
               <textarea v-model="rawTextInput"
                 rows="4"
-                placeholder="或直接在此粘贴歌单列表，每行一首，例如：&#10;晴天 - 周杰伦&#10;夜曲 - 周杰伦&#10;七里香 - 周杰伦"
-                class="flex-1 p-3 bg-[#fbfbfd] border border-[#d1d1d6] rounded-xl text-xs font-mono focus:outline-none focus:border-applered focus:ring-2 focus:ring-applered/15 transition resize-none"></textarea>
+                placeholder="直接粘贴歌单列表，每行一首，例如：&#10;晴天 - 周杰伦&#10;夜曲 - 周杰伦&#10;七里香 - 周杰伦"
+                class="flex-1 p-3.5 bg-[#fbfbfd] border border-[#d1d1d6] rounded-xl text-xs font-mono focus:outline-none focus:border-applered focus:ring-2 focus:ring-applered/15 transition resize-none"></textarea>
               <button @click="startExtractAndMatch" :disabled="loading || !rawTextInput.trim()"
-                class="py-2 px-4 rounded-xl bg-applered text-white text-xs font-semibold hover:bg-applepink disabled:opacity-50 transition flex items-center justify-center space-x-1.5 shadow-sm shadow-applered/25">
+                class="py-2.5 px-5 rounded-xl bg-applered text-white text-xs font-bold hover:bg-applepink disabled:opacity-50 transition flex items-center justify-center space-x-1.5 shadow-sm shadow-applered/25">
                 <i v-if="loading" class="fa-solid fa-circle-notch fa-spin"></i>
                 <span>{{ loading ? '正在解析匹配...' : '解析文本歌单' }}</span>
               </button>
@@ -203,7 +200,7 @@
           <div class="flex items-center justify-between text-xs text-applegray">
             <span class="flex items-center space-x-2 font-medium">
               <i class="fa-solid fa-spinner fa-spin text-applered"></i>
-              <span>{{ currentStatusText || '正在极速并发检索 Apple Music 曲库...' }}</span>
+              <span>{{ currentStatusText || '正在并发检索 Apple Music 曲库...' }}</span>
             </span>
             <span v-if="matchProgressPercent > 0" class="font-mono text-applered font-bold text-xs">{{ matchProgressPercent }}%</span>
           </div>
@@ -220,35 +217,35 @@
         <!-- Header: Stats and Controls -->
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-4">
           <div>
-            <div class="flex items-center space-x-2.5">
-              <span class="w-6 h-6 rounded-full bg-applered/10 text-applered text-xs font-bold flex items-center justify-center">2</span>
+            <div class="flex items-center space-x-3">
+              <span class="w-7 h-7 rounded-full bg-applered/10 text-applered text-sm font-bold flex items-center justify-center">2</span>
               <h2 class="text-base font-bold text-appledark">
                 {{ extractedPlaylist.name || '已匹配歌曲列表' }}
               </h2>
-              <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">
+              <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-neutral-100 text-neutral-600 border border-neutral-200/60">
                 共 {{ matchResults.length }} 首
               </span>
             </div>
-            <div class="flex items-center space-x-3 text-xs mt-1.5 flex-wrap gap-y-1">
-              <span class="text-emerald-600 font-medium flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            <div class="flex items-center space-x-3 text-xs mt-2 flex-wrap gap-y-1">
+              <span class="text-emerald-600 font-semibold flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
                 精确匹配 {{ highConfidenceCount }} 首
               </span>
-              <span v-if="userConfirmedCount > 0" class="text-indigo-600 font-medium flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+              <span v-if="userConfirmedCount > 0" class="text-indigo-600 font-semibold flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
                 人工确认 {{ userConfirmedCount }} 首
               </span>
-              <span v-if="mediumConfidenceCount > 0" class="text-amber-600 font-medium flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+              <span v-if="mediumConfidenceCount > 0" class="text-amber-600 font-semibold flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-amber-500"></span>
                 待复核 {{ mediumConfidenceCount }} 首
               </span>
-              <span v-if="noMatchCount > 0" class="text-neutral-600 font-medium flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-neutral-400"></span>
-                确认未收录 {{ noMatchCount }} 首
+              <span v-if="noMatchCount > 0" class="text-neutral-500 font-semibold flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-neutral-400"></span>
+                未收录 {{ noMatchCount }} 首
               </span>
-              <span v-if="retryableCount > 0" class="text-rose-600 font-medium flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                检索受限/失败 {{ retryableCount }} 首
+              <span v-if="retryableCount > 0" class="text-rose-600 font-semibold flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                检索受限 {{ retryableCount }} 首
               </span>
             </div>
           </div>
@@ -256,67 +253,64 @@
           <!-- Quick Filters & Actions -->
           <div class="flex items-center space-x-2 flex-wrap gap-y-1">
             <!-- Filter Pills -->
-            <div class="bg-neutral-100 p-0.5 rounded-lg flex text-xs flex-wrap">
-              <button @click="setFilter('all')" :class="filter === 'all' ? 'bg-white font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">全部</button>
-              <button @click="setFilter('matched')" :class="filter === 'matched' ? 'bg-white text-emerald-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">已匹配</button>
-              <button @click="setFilter('medium')" :class="filter === 'medium' ? 'bg-white text-amber-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">待复核</button>
-              <button @click="setFilter('no_match')" :class="filter === 'no_match' ? 'bg-white text-neutral-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">确认未收录</button>
-              <button @click="setFilter('failed')" :class="filter === 'failed' ? 'bg-white text-rose-700 font-bold shadow-xs' : 'text-neutral-500'" class="px-2.5 py-1 rounded-md transition">失败/重试</button>
+            <div class="bg-neutral-100/90 p-1 rounded-xl flex text-xs flex-wrap space-x-0.5">
+              <button @click="setFilter('all')" :class="filter === 'all' ? 'bg-white font-bold text-neutral-900 shadow-xs' : 'text-neutral-500 hover:text-neutral-800'" class="px-3 py-1 rounded-lg transition">全部</button>
+              <button @click="setFilter('matched')" :class="filter === 'matched' ? 'bg-white text-emerald-700 font-bold shadow-xs' : 'text-neutral-500 hover:text-neutral-800'" class="px-3 py-1 rounded-lg transition">已匹配</button>
+              <button @click="setFilter('medium')" :class="filter === 'medium' ? 'bg-white text-amber-700 font-bold shadow-xs' : 'text-neutral-500 hover:text-neutral-800'" class="px-3 py-1 rounded-lg transition">待复核</button>
+              <button @click="setFilter('no_match')" :class="filter === 'no_match' ? 'bg-white text-neutral-700 font-bold shadow-xs' : 'text-neutral-500 hover:text-neutral-800'" class="px-3 py-1 rounded-lg transition">未收录</button>
+              <button @click="setFilter('failed')" :class="filter === 'failed' ? 'bg-white text-rose-700 font-bold shadow-xs' : 'text-neutral-500 hover:text-neutral-800'" class="px-3 py-1 rounded-lg transition">失败重试</button>
             </div>
 
             <!-- Rematch Action Shortcut in toolbar -->
             <button v-if="unmatchedCount > 0" @click="triggerBatchRematch" :disabled="rematchLoading"
-              class="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-2xs disabled:opacity-50"
-              title="一键重新检索所有未匹配歌曲">
-              <i :class="rematchLoading ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-arrows-rotate'" class="text-[10px]"></i>
+              class="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs disabled:opacity-50">
+              <i :class="rematchLoading ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-arrows-rotate'" class="text-[11px]"></i>
               <span>重搜未匹配 ({{ unmatchedCount }})</span>
             </button>
 
             <!-- Diagnostics Summary Button -->
-            <button @click="openDiagnosticsModal" class="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200/80 rounded-lg text-xs font-medium text-neutral-600 transition" title="查看检索诊断统计">
+            <button @click="openDiagnosticsModal" class="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200/80 rounded-xl text-xs font-medium text-neutral-600 transition" title="查看检索诊断统计">
               <i class="fa-solid fa-chart-pie mr-1"></i>诊断
             </button>
 
             <!-- Export CSV -->
-            <button @click="exportCSV" class="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200/80 rounded-lg text-xs font-medium text-neutral-600 transition" title="导出匹配结果为 CSV 文件 (含诊断状态)">
+            <button @click="exportCSV" class="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200/80 rounded-xl text-xs font-medium text-neutral-600 transition" title="导出匹配结果为 CSV 文件">
               <i class="fa-solid fa-download mr-1"></i>导出
             </button>
           </div>
         </div>
 
-        <!-- Unmatched Songs Action Card -->
-        <div v-if="unmatchedCount > 0" class="bg-gradient-to-r from-sky-50/90 via-indigo-50/60 to-rose-50/70 border border-sky-200/80 rounded-2xl p-4 sm:p-5 shadow-xs transition-all space-y-3.5">
+        <!-- Unmatched Songs Action Card (Streamlined & Elegant) -->
+        <div v-if="unmatchedCount > 0" class="bg-gradient-to-r from-sky-50/90 via-indigo-50/50 to-rose-50/60 border border-sky-200/70 rounded-2xl p-5 shadow-xs transition-all space-y-4">
           
           <!-- Top Row: Status info & Actions -->
-          <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
+          <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3.5">
             
-            <div class="flex items-center space-x-3">
-              <div class="w-9 h-9 rounded-xl bg-sky-500/10 text-sky-600 flex items-center justify-center flex-shrink-0 text-base shadow-xs">
+            <div class="flex items-center space-x-3.5">
+              <div class="w-11 h-11 rounded-2xl bg-sky-500/15 text-sky-600 flex items-center justify-center flex-shrink-0 text-lg shadow-xs">
                 <i class="fa-solid fa-arrows-rotate" :class="{ 'fa-spin text-applered': rematchLoading }"></i>
               </div>
               <div>
-                <div class="text-xs font-bold text-appledark flex items-center gap-1.5 flex-wrap">
-                  <span v-if="retryableCount > 0">有 <span class="text-rose-600 font-extrabold text-sm">{{ retryableCount }}</span> 首检索受限/异常，另有 <span class="text-neutral-700 font-extrabold text-sm">{{ noMatchCount }}</span> 首确认未收录</span>
-                  <span v-else>初次检索有 <span class="text-neutral-700 font-extrabold text-sm">{{ noMatchCount }}</span> 首歌曲确认未在 Apple Music 收录</span>
-                  <span class="text-[10px] bg-sky-600 text-white px-2 py-0.5 rounded-full font-bold shadow-2xs">支持深度重新检索</span>
+                <div class="text-sm font-bold text-appledark flex items-center gap-2 flex-wrap">
+                  <span>未匹配曲目处理 (共 <span class="text-sky-700 font-extrabold">{{ unmatchedCount }}</span> 首)</span>
                 </div>
-                <div class="text-[11px] text-applegray mt-0.5">
-                  可使用深度去噪重新检索 Apple Music，或尝试跨区曲库探测；仅对确实未收录曲目支持从 B 站补全！
+                <div class="text-xs text-applegray mt-0.5">
+                  支持跨区探测与去噪重搜，或从 B 站补全至个人资料库
                 </div>
               </div>
             </div>
 
             <!-- Primary Action Buttons -->
-            <div class="flex items-center flex-wrap gap-2 self-stretch lg:self-auto flex-shrink-0">
+            <div class="flex items-center flex-wrap gap-2.5 self-stretch lg:self-auto flex-shrink-0">
               
               <!-- Rematch Apple Music Button -->
               <button @click="triggerBatchRematch" :disabled="rematchLoading || bilibiliBatchLoading"
                 class="px-4 py-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-sky-500/25 disabled:opacity-50">
                 <i :class="rematchLoading ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-arrows-rotate'"></i>
-                <span>{{ rematchLoading ? '正在重新检索 Apple Music...' : '重新检索 (' + unmatchedCount + ' 首)' }}</span>
+                <span>{{ rematchLoading ? '正在检索...' : '重新检索 (' + unmatchedCount + ')' }}</span>
               </button>
 
-              <!-- Bilibili fallback button (Protected: only feeds genuine no_match) -->
+              <!-- Bilibili fallback button -->
               <button @click="batchDownloadBilibili" :disabled="bilibiliBatchLoading || rematchLoading"
                 class="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-applered border border-rose-200 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-2xs disabled:opacity-50"
                 :title="noMatchCount > 0 ? '从 B 站批量补全确认未收录的歌曲' : '无确认未收录的歌曲'">
@@ -325,7 +319,7 @@
               </button>
 
               <!-- Open Folder Button -->
-              <button @click="openDownloadedFolder" :class="folderOpenedFeedback ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-white text-neutral-700 hover:bg-neutral-50 border-neutral-200'" class="px-3 py-2 border rounded-xl text-xs font-medium transition flex items-center space-x-1 shadow-2xs">
+              <button @click="openDownloadedFolder" :class="folderOpenedFeedback ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-white text-neutral-700 hover:bg-neutral-50 border-neutral-200'" class="px-3.5 py-2 border rounded-xl text-xs font-medium transition flex items-center space-x-1.5 shadow-2xs">
                 <i :class="folderOpenedFeedback ? 'fa-solid fa-check text-emerald-600' : 'fa-solid fa-folder-open text-neutral-500'"></i>
                 <span>{{ folderOpenedFeedback ? '已打开' : '导入目录' }}</span>
               </button>
@@ -335,14 +329,12 @@
           </div>
 
           <!-- Rematch Options Bar -->
-          <div class="pt-2 border-t border-sky-100/90 flex flex-wrap items-center justify-between text-xs text-neutral-600 gap-2">
-            <div class="flex items-center space-x-3 flex-wrap gap-y-1">
-              <span class="text-[11px] font-semibold text-neutral-500">重试选项:</span>
-              
+          <div class="pt-3 border-t border-sky-100/90 flex flex-wrap items-center justify-between text-xs text-neutral-600 gap-2.5">
+            <div class="flex items-center space-x-4 flex-wrap gap-y-1">
               <!-- Storefront Selector -->
-              <div class="flex items-center space-x-1">
-                <span class="text-[11px] text-neutral-400">检索区域:</span>
-                <select v-model="rematchStorefront" class="px-2 py-0.5 rounded-lg border border-neutral-300 bg-white text-[11px] font-medium focus:outline-none focus:border-sky-500">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-xs text-neutral-500 font-medium">检索区域:</span>
+                <select v-model="rematchStorefront" class="px-2.5 py-1 rounded-lg border border-neutral-300/80 bg-white text-xs font-medium focus:outline-none focus:border-sky-500 cursor-pointer">
                   <option value="">当前区域 ({{ (config.storefront || 'CN').toUpperCase() }})</option>
                   <option value="cn">中国大陆 (CN)</option>
                   <option value="hk">中国香港 (HK)</option>
@@ -353,20 +345,16 @@
               </div>
 
               <!-- Relaxed Checkbox -->
-              <label class="flex items-center space-x-1 cursor-pointer select-none">
-                <input type="checkbox" v-model="rematchRelaxed" class="rounded accent-sky-600">
-                <span class="text-[11px]">深度去噪 (影视/副标题放宽)</span>
+              <label class="flex items-center space-x-1.5 cursor-pointer select-none">
+                <input type="checkbox" v-model="rematchRelaxed" class="rounded accent-sky-600 w-3.5 h-3.5">
+                <span class="text-xs font-medium">深度去噪检索</span>
               </label>
 
               <!-- Fallback Storefronts Checkbox -->
-              <label class="flex items-center space-x-1 cursor-pointer select-none">
-                <input type="checkbox" v-model="rematchFallback" class="rounded accent-sky-600">
-                <span class="text-[11px]">自动跨区探测 (HK/TW/US)</span>
+              <label class="flex items-center space-x-1.5 cursor-pointer select-none">
+                <input type="checkbox" v-model="rematchFallback" class="rounded accent-sky-600 w-3.5 h-3.5">
+                <span class="text-xs font-medium">自动跨区探测 (HK/TW/US)</span>
               </label>
-            </div>
-
-            <div class="text-[11px] text-sky-700 font-medium">
-              💡 提示：若部分歌曲为小众翻唱或未上架，可在曲目行点击“手动搜索”或“B站补漏”
             </div>
           </div>
 
@@ -436,119 +424,116 @@
         </div>
 
         <!-- Bulk Selection Row -->
-        <div class="flex items-center justify-between text-xs text-neutral-500 bg-neutral-50/80 px-3 py-2 rounded-xl">
+        <div class="flex items-center justify-between text-xs text-neutral-500 bg-neutral-50/80 px-4 py-2.5 rounded-xl border border-neutral-200/50">
           <div class="flex items-center space-x-3">
-            <label class="flex items-center space-x-1.5 cursor-pointer font-medium text-neutral-700">
-              <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="rounded accent-applered cursor-pointer">
+            <label class="flex items-center space-x-2 cursor-pointer font-semibold text-neutral-700">
+              <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="rounded accent-applered cursor-pointer w-3.5 h-3.5">
               <span>全选 ({{ selectedTracksCount }}/{{ matchedCount }})</span>
             </label>
-            <span>|</span>
-            <button @click="selectExactAndHigh" class="text-applered hover:underline font-medium">仅勾选高匹配</button>
-            <button @click="selectAll" class="hover:text-neutral-900">全部勾选</button>
-            <button @click="unselectAll" class="hover:text-neutral-900">取消选择</button>
+            <span class="text-neutral-300">|</span>
+            <button @click="selectExactAndHigh" class="text-applered hover:underline font-semibold">仅勾选高匹配</button>
+            <button @click="selectAll" class="hover:text-neutral-900 font-medium">全部勾选</button>
+            <button @click="unselectAll" class="hover:text-neutral-900 font-medium">取消选择</button>
           </div>
 
-          <div class="flex items-center space-x-2 text-[11px] text-neutral-400">
-            <span v-if="pageSize > 0 && filteredResults.length > pageSize" class="bg-neutral-200/70 text-neutral-600 px-2 py-0.5 rounded font-mono font-medium">
-              显示第 {{ (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, filteredResults.length) }} 首 / 共 {{ filteredResults.length }} 首
-            </span>
-            <span>可点击试听核对音源，版本不对可点击“换版本”</span>
+          <div v-if="pageSize > 0 && filteredResults.length > pageSize" class="text-xs text-neutral-500 font-mono font-medium">
+            显示 {{ (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, filteredResults.length) }} 首 / 共 {{ filteredResults.length }} 首
           </div>
         </div>
 
         <!-- Matched Songs Table -->
-        <div class="border border-neutral-200/80 rounded-xl overflow-hidden">
-          <div class="max-h-[480px] overflow-y-auto divide-y divide-neutral-100">
+        <div class="border border-neutral-200/80 rounded-2xl overflow-hidden shadow-2xs">
+          <div class="max-h-[520px] overflow-y-auto divide-y divide-neutral-100">
             
             <div v-for="(item, idx) in paginatedResults" :key="item.source_track.id || ((currentPage - 1) * (pageSize > 0 ? pageSize : 0) + idx)"
-              class="flex items-center px-4 py-2.5 hover:bg-neutral-50/90 transition group text-xs">
+              class="flex items-center px-4 py-3 hover:bg-neutral-50/90 transition group text-xs">
               
               <!-- Checkbox -->
-              <div class="w-7 flex-shrink-0">
-                <input type="checkbox" v-if="item.selected_candidate || item.bilibili_downloaded" v-model="item.selected" class="rounded accent-applered cursor-pointer">
-                <span v-else class="text-neutral-300">-</span>
+              <div class="w-8 flex-shrink-0">
+                <input type="checkbox" v-if="item.selected_candidate || item.bilibili_downloaded" v-model="item.selected" class="rounded accent-applered cursor-pointer w-4 h-4">
+                <span v-else class="text-neutral-300 pl-1">-</span>
               </div>
 
               <!-- Index -->
-              <div class="w-10 text-neutral-400 flex-shrink-0 font-mono text-[11px]">
+              <div class="w-9 text-neutral-400 flex-shrink-0 font-mono text-xs">
                 {{ (currentPage - 1) * (pageSize > 0 ? pageSize : filteredResults.length) + idx + 1 }}
               </div>
 
               <!-- Source Song (Original) -->
               <div class="flex-1 min-w-0 pr-4">
-                <div class="font-medium text-appledark truncate flex items-center gap-1.5" :title="item.source_track.title">
+                <div class="font-semibold text-appledark truncate text-sm flex items-center gap-1.5" :title="item.source_track.title">
                   <span class="truncate">{{ item.source_track.title }}</span>
                   <span v-for="tag in (item.source_track.version_tags || [])" :key="tag"
-                    class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-neutral-100 text-neutral-600 uppercase border border-neutral-200/60 flex-shrink-0">
+                    class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-neutral-100 text-neutral-600 uppercase border border-neutral-200/60 flex-shrink-0">
                     {{ tag }}
                   </span>
                 </div>
-                <div class="text-[11px] text-applegray truncate" :title="item.source_track.artists.join(' / ')">
+                <div class="text-xs text-applegray truncate mt-0.5" :title="item.source_track.artists.join(' / ')">
                   {{ item.source_track.artists.join(' / ') || '未知歌手' }}
                 </div>
               </div>
 
               <!-- Arrow divider -->
-              <div class="w-6 text-neutral-300 text-center flex-shrink-0">
-                <i class="fa-solid fa-arrow-right text-[10px]"></i>
+              <div class="w-7 text-neutral-300 text-center flex-shrink-0">
+                <i class="fa-solid fa-arrow-right text-xs"></i>
               </div>
 
               <!-- Apple Music Matched Result -->
-              <div class="flex-[1.3] min-w-0 px-3 flex items-center space-x-2.5">
+              <div class="flex-[1.4] min-w-0 px-3 flex items-center space-x-3">
                 <template v-if="item.selected_candidate">
-                  <!-- Album artwork thumbnail -->
-                  <div class="w-8 h-8 rounded-md bg-neutral-100 border border-neutral-200 overflow-hidden flex-shrink-0 relative">
+                  <!-- Album artwork thumbnail (Enlarged to 48px / w-12 h-12) -->
+                  <div class="w-12 h-12 rounded-xl bg-neutral-100 border border-neutral-200/80 shadow-2xs overflow-hidden flex-shrink-0 relative">
                     <img v-if="getArtwork(item.selected_candidate.track)" :src="getArtwork(item.selected_candidate.track)" loading="lazy" decoding="async" class="w-full h-full object-cover">
-                    <i v-else class="fa-solid fa-music text-neutral-300 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
+                    <i v-else class="fa-solid fa-music text-neutral-300 text-sm absolute inset-0 m-auto flex items-center justify-center"></i>
                   </div>
                   <!-- Title & Artist -->
                   <div class="truncate leading-tight flex-1 min-w-0">
-                    <div class="font-semibold text-neutral-900 truncate flex items-center gap-1" :title="item.selected_candidate.track.title">
+                    <div class="font-bold text-neutral-900 truncate text-sm flex items-center gap-1" :title="item.selected_candidate.track.title">
                       <span class="truncate">{{ item.selected_candidate.track.title }}</span>
                     </div>
-                    <div class="text-[11px] text-neutral-500 truncate" :title="item.selected_candidate.track.artists.join(' / ') + ' · ' + (item.selected_candidate.track.album || '')">
+                    <div class="text-xs text-neutral-500 truncate mt-0.5" :title="item.selected_candidate.track.artists.join(' / ') + ' · ' + (item.selected_candidate.track.album || '')">
                       {{ item.selected_candidate.track.artists.join(' / ') }}
                       <span v-if="item.selected_candidate.track.album" class="text-neutral-400">· {{ item.selected_candidate.track.album }}</span>
                     </div>
                   </div>
                 </template>
                 <template v-else-if="item.status === 'matching'">
-                  <div class="flex items-center space-x-2 text-[11px] text-neutral-400">
-                    <i class="fa-solid fa-circle-notch fa-spin text-[10px] text-applered"></i>
+                  <div class="flex items-center space-x-2 text-xs text-neutral-400">
+                    <i class="fa-solid fa-circle-notch fa-spin text-xs text-applered"></i>
                     <span>正在检索曲库...</span>
                   </div>
                 </template>
                 <template v-else>
-                  <div class="flex items-center space-x-2 text-[11px] truncate">
+                  <div class="flex items-center space-x-2 text-xs truncate">
                     <span v-if="item.bilibili_downloaded" class="text-emerald-600 font-bold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                       <i class="fa-solid fa-circle-check"></i>
-                      <span>已从 B 站补全 (已入 Apple Music)</span>
+                      <span>已从 B 站补全 (已入资料库)</span>
                     </span>
                     <span v-else-if="item.bilibili_downloading" class="text-applered font-bold flex items-center gap-1.5 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200 animate-pulse">
                       <i class="fa-solid fa-circle-notch fa-spin text-[10px]"></i>
-                      <span>正在从 B 站下载视频并提取转码入库...</span>
+                      <span>正在从 B 站转码入库...</span>
                     </span>
                     <span v-else-if="item.bilibili_error" class="text-neutral-500 font-medium flex items-center gap-1">
-                      <i class="fa-solid fa-circle-exclamation text-[10px] text-amber-500"></i>
+                      <i class="fa-solid fa-circle-exclamation text-xs text-amber-500"></i>
                       <span>{{ item.bilibili_error }}</span>
                     </span>
                     <span v-else-if="item.search_status === 'auth_required'" class="text-purple-600 font-semibold flex items-center gap-1">
-                      <i class="fa-solid fa-lock text-[10px]"></i>
-                      <span>Apple ID 授权失效，请重新登录</span>
+                      <i class="fa-solid fa-lock text-xs"></i>
+                      <span>Apple ID 授权失效</span>
                     </span>
                     <span v-else-if="item.search_status === 'rate_limited'" class="text-amber-600 font-semibold flex items-center gap-1" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
-                      <i class="fa-solid fa-hourglass-half text-[10px]"></i>
-                      <span>频控受限 (429)，可等待片刻后重试</span>
+                      <i class="fa-solid fa-hourglass-half text-xs"></i>
+                      <span>频控受限 (429)</span>
                     </span>
                     <span v-else-if="['timeout', 'network_error', 'upstream_error', 'search_error'].includes(item.search_status)" class="text-rose-600 font-medium flex items-center gap-1" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
-                      <i class="fa-solid fa-circle-exclamation text-[10px]"></i>
-                      <span>检索服务暂不可用 (尚未判断是否收录)</span>
+                      <i class="fa-solid fa-circle-exclamation text-xs"></i>
+                      <span>检索受阻</span>
                     </span>
                     <span v-else-if="item.decision === 'unprocessed'" class="text-neutral-400 font-medium flex items-center gap-1">
-                      <i class="fa-solid fa-pause text-[10px]"></i>
-                      <span>未执行 (等待重试)</span>
+                      <i class="fa-solid fa-pause text-xs"></i>
+                      <span>等待重试</span>
                     </span>
-                    <span v-else class="text-neutral-500 italic">Apple Music 当前区域未找到匹配歌曲</span>
+                    <span v-else class="text-neutral-400 italic">Apple Music 当前曲库未收录</span>
                   </div>
                 </template>
               </div>
@@ -556,102 +541,102 @@
               <!-- Match Confidence Badge -->
               <div class="w-24 text-center flex-shrink-0">
                 <template v-if="item.selected_candidate">
-                  <span v-if="item.status === 'user_confirmed'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
+                  <span v-if="item.status === 'user_confirmed'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
                     人工确认
                   </span>
-                  <span v-else-if="item.status === 'exact'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span v-else-if="item.status === 'exact'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                     100% 精确
                   </span>
-                  <span v-else-if="item.decision === 'auto_accept' || item.status === 'high'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                  <span v-else-if="item.decision === 'auto_accept' || item.status === 'high'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
                     {{ Math.round(item.selected_candidate.score * 100) }}% 高可信
                   </span>
-                  <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 cursor-help" :title="item.decision_reasons ? item.decision_reasons.join('\n') : '建议复核'">
+                  <span v-else class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 cursor-help" :title="item.decision_reasons ? item.decision_reasons.join('\n') : '建议复核'">
                     {{ Math.round(item.selected_candidate.score * 100) }}% 待复核
                   </span>
                 </template>
                 <template v-else-if="item.status === 'matching'">
-                  <span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-500 inline-flex items-center justify-center gap-1">
+                  <span class="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-500 inline-flex items-center justify-center gap-1">
                     <span class="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-pulse"></span>
                     <span>匹配中</span>
                   </span>
                 </template>
                 <template v-else>
-                  <span v-if="item.bilibili_downloaded" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span v-if="item.bilibili_downloaded" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                     本地资料库
                   </span>
-                  <span v-else-if="item.bilibili_downloading" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-applered border border-rose-200 animate-pulse">
+                  <span v-else-if="item.bilibili_downloading" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-applered border border-rose-200 animate-pulse">
                     下载中...
                   </span>
-                  <span v-else-if="item.search_status === 'auth_required'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                  <span v-else-if="item.search_status === 'auth_required'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
                     需授权
                   </span>
-                  <span v-else-if="item.search_status === 'rate_limited'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                  <span v-else-if="item.search_status === 'rate_limited'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
                     频控限制
                   </span>
-                  <span v-else-if="['timeout', 'network_error', 'upstream_error', 'search_error'].includes(item.search_status)" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 cursor-help" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
+                  <span v-else-if="['timeout', 'network_error', 'upstream_error', 'search_error'].includes(item.search_status)" class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 cursor-help" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
                     检索失败
                   </span>
-                  <span v-else-if="item.decision === 'unprocessed'" class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-500 border border-neutral-200">
+                  <span v-else-if="item.decision === 'unprocessed'" class="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-500 border border-neutral-200">
                     待重试
                   </span>
-                  <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200">
+                  <span v-else class="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200">
                     未收录
                   </span>
                 </template>
               </div>
 
               <!-- Actions: Preview & Change Candidate OR Rematch / Search / Bilibili -->
-              <div class="w-56 flex items-center justify-end space-x-1.5 flex-shrink-0">
+              <div class="w-56 flex items-center justify-end space-x-2 flex-shrink-0">
                 <template v-if="item.status === 'matching'">
-                  <span class="text-[11px] text-neutral-300">--</span>
+                  <span class="text-xs text-neutral-300">--</span>
                 </template>
                 <template v-else-if="item.selected_candidate">
-                  <!-- 30s Preview Play Button -->
+                  <!-- 30s Preview Play Button (Enlarged to w-7 h-7) -->
                   <button v-if="item.selected_candidate.track.preview_url"
                     @click="toggleTrackPreview(item.selected_candidate.track)"
                     :class="playingTrackId === item.selected_candidate.track.id && isPlaying ? 'bg-applered text-white' : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'"
-                    class="w-6 h-6 rounded-full flex items-center justify-center transition"
+                    class="w-7 h-7 rounded-full flex items-center justify-center transition shadow-2xs"
                     :title="playingTrackId === item.selected_candidate.track.id && isPlaying ? '暂停试听' : '试听30秒原声'">
-                    <i class="fa-solid text-[9px]" :class="playingTrackId === item.selected_candidate.track.id && isPlaying ? 'fa-pause' : 'fa-play ml-0.5'"></i>
+                    <i class="fa-solid text-[10px]" :class="playingTrackId === item.selected_candidate.track.id && isPlaying ? 'fa-pause' : 'fa-play ml-0.5'"></i>
                   </button>
 
                   <!-- Change candidate button -->
                   <button @click="openCandidateModal(item)"
-                    class="px-2 py-1 rounded-md text-[11px] font-medium text-neutral-500 hover:text-applered hover:bg-neutral-100 transition">
+                    class="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-neutral-600 hover:text-applered hover:bg-neutral-100 transition">
                     换版本
                   </button>
                 </template>
                 <template v-else>
                   <!-- Auth required fast action -->
                   <button v-if="item.search_status === 'auth_required'" @click="showAuthModal = true"
-                    class="px-2 py-1 rounded-md text-[11px] font-bold border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition flex items-center space-x-1 shadow-2xs"
+                    class="px-2.5 py-1.5 rounded-lg text-xs font-bold border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition flex items-center space-x-1 shadow-2xs"
                     title="重新连接 Apple ID 授权">
-                    <i class="fa-brands fa-apple text-[11px]"></i>
+                    <i class="fa-brands fa-apple text-xs"></i>
                     <span>连接</span>
                   </button>
 
                   <!-- Single Track Rematch button -->
                   <button @click="rematchSingleTrack(item)" :disabled="item.rematching"
-                    class="px-2 py-1 rounded-md text-[11px] font-bold border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 transition flex items-center space-x-1 shadow-2xs disabled:opacity-50"
-                    title="在 Apple Music 中深度重试检索该曲目">
+                    class="px-2.5 py-1.5 rounded-lg text-xs font-bold border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 transition flex items-center space-x-1 shadow-2xs disabled:opacity-50"
+                    title="在 Apple Music 中重新检索该曲目">
                     <i :class="item.rematching ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-arrows-rotate'" class="text-[10px]"></i>
                     <span>{{ item.rematching ? '检索中' : '重试' }}</span>
                   </button>
 
                   <!-- Manual search modal button -->
                   <button @click="openCandidateModal(item)"
-                    class="px-1.5 py-1 rounded-md text-[11px] font-medium text-neutral-500 hover:text-sky-600 hover:bg-neutral-100 transition"
+                    class="px-2 py-1.5 rounded-lg text-xs font-medium text-neutral-500 hover:text-sky-600 hover:bg-neutral-100 transition"
                     title="手动输入关键词搜索 Apple Music">
                     搜曲库
                   </button>
 
-                  <!-- Single Bilibili auto-download / modal button (Directly available for uncollected songs) -->
+                  <!-- Single Bilibili auto-download / modal button -->
                   <button
                     @click="openBilibiliModal(item)"
                     :disabled="item.bilibili_downloading || item.bilibili_downloaded"
                     :class="item.bilibili_downloaded ? 'bg-emerald-50 text-emerald-700 border-emerald-200 cursor-default' : (item.bilibili_downloading ? 'bg-rose-50 text-applered border-rose-200 cursor-wait' : 'bg-rose-50 text-applered hover:bg-rose-100 border-rose-200 cursor-pointer')"
-                    class="px-2 py-1 rounded-md text-[11px] font-bold border transition flex items-center space-x-1 shadow-xs"
-                    :title="item.bilibili_downloaded ? '已从 B 站补全并入库' : '从 B 站检索并补全下载至 Apple Music 资料库'">
+                    class="px-2.5 py-1.5 rounded-lg text-xs font-bold border transition flex items-center space-x-1 shadow-xs"
+                    :title="item.bilibili_downloaded ? '已从 B 站补全' : '从 B 站检索补全'">
                     <i v-if="item.bilibili_downloading" class="fa-solid fa-circle-notch fa-spin text-[10px]"></i>
                     <i v-else-if="item.bilibili_downloaded" class="fa-solid fa-check text-[10px]"></i>
                     <i v-else class="fa-solid fa-bolt text-[10px]"></i>
@@ -663,7 +648,7 @@
           </div>
 
           <!-- Pagination Toolbar -->
-          <div v-if="filteredResults.length > 0" class="flex flex-col sm:flex-row items-center justify-between px-4 py-2.5 bg-neutral-50/80 border-t border-neutral-200/80 text-xs text-neutral-600 gap-2 select-none">
+          <div v-if="filteredResults.length > 0" class="flex flex-col sm:flex-row items-center justify-between px-4 py-3 bg-neutral-50/80 border-t border-neutral-200/80 text-xs text-neutral-600 gap-2 select-none">
             <div class="flex items-center space-x-2">
               <span>共 <strong class="font-bold text-neutral-900">{{ filteredResults.length }}</strong> 首</span>
               <span class="text-neutral-300">|</span>
@@ -673,9 +658,9 @@
 
             <div class="flex items-center space-x-2">
               <!-- Page Size Selector -->
-              <div class="flex items-center space-x-1 mr-2 text-[11px] text-neutral-500">
+              <div class="flex items-center space-x-1.5 mr-2 text-xs text-neutral-500">
                 <span>每页:</span>
-                <select v-model.number="pageSize" @change="currentPage = 1; pageJumpInput = 1;" class="bg-white border border-neutral-200 rounded px-1.5 py-0.5 text-xs text-neutral-700 focus:outline-none focus:border-applered cursor-pointer">
+                <select v-model.number="pageSize" @change="currentPage = 1; pageJumpInput = 1;" class="bg-white border border-neutral-200 rounded-lg px-2 py-1 text-xs text-neutral-700 focus:outline-none focus:border-applered cursor-pointer font-medium">
                   <option :value="50">50 首</option>
                   <option :value="100">100 首</option>
                   <option :value="200">200 首</option>
@@ -687,32 +672,32 @@
               <!-- Navigation Buttons -->
               <div v-if="pageSize > 0 && totalPages > 1" class="flex items-center space-x-1">
                 <button @click="goToPage(1)" :disabled="currentPage <= 1"
-                  class="px-2 py-1 rounded bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-[11px] transition" title="首页">
+                  class="px-2 py-1 rounded-lg bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-xs transition" title="首页">
                   <i class="fa-solid fa-angles-left"></i>
                 </button>
                 <button @click="goToPage(currentPage - 1)" :disabled="currentPage <= 1"
-                  class="px-2.5 py-1 rounded bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-[11px] font-medium transition">
+                  class="px-3 py-1 rounded-lg bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-xs font-semibold transition">
                   上一页
                 </button>
 
-                <span class="px-2 text-neutral-700 font-semibold font-mono text-[11px]">
+                <span class="px-2.5 text-neutral-700 font-bold font-mono text-xs">
                   {{ currentPage }} / {{ totalPages }}
                 </span>
 
                 <button @click="goToPage(currentPage + 1)" :disabled="currentPage >= totalPages"
-                  class="px-2.5 py-1 rounded bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-[11px] font-medium transition">
+                  class="px-3 py-1 rounded-lg bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-xs font-semibold transition">
                   下一页
                 </button>
                 <button @click="goToPage(totalPages)" :disabled="currentPage >= totalPages"
-                  class="px-2 py-1 rounded bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-[11px] transition" title="末页">
+                  class="px-2 py-1 rounded-lg bg-white border border-neutral-200 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-white text-xs transition" title="末页">
                   <i class="fa-solid fa-angles-right"></i>
                 </button>
 
                 <!-- Page Jump Input -->
-                <div class="flex items-center space-x-1 ml-1 text-[11px]">
+                <div class="flex items-center space-x-1 ml-1 text-xs">
                   <span>跳至</span>
                   <input type="number" :min="1" :max="totalPages" v-model.lazy.number="pageJumpInput" @keyup.enter="handlePageJump"
-                    class="w-11 px-1 py-0.5 text-center bg-white border border-neutral-200 rounded font-mono text-xs focus:outline-none focus:border-applered" />
+                    class="w-12 px-1.5 py-0.5 text-center bg-white border border-neutral-200 rounded-lg font-mono text-xs focus:outline-none focus:border-applered" />
                   <span>页</span>
                 </div>
               </div>
@@ -724,25 +709,24 @@
 
 
       <!-- ==================== CARD 3: SYNC TO APPLE MUSIC ==================== -->
-      <section v-if="matchResults.length > 0" class="bg-white rounded-2xl border border-appleborder p-6 shadow-[0_2px_8px_rgba(0,0,0,0.03)] space-y-4">
+      <section v-if="matchResults.length > 0" class="bg-white rounded-2xl border border-appleborder p-7 shadow-[0_2px_12px_rgba(0,0,0,0.03)] space-y-5">
         
-        <div class="flex items-center space-x-2.5">
-          <span class="w-6 h-6 rounded-full bg-applered/10 text-applered text-xs font-bold flex items-center justify-center">3</span>
-          <h2 class="text-base font-bold text-appledark">一键导入到 Apple Music 个人资料库</h2>
+        <div class="flex items-center space-x-3">
+          <span class="w-7 h-7 rounded-full bg-applered/10 text-applered text-sm font-bold flex items-center justify-center">3</span>
+          <h2 class="text-base font-bold text-appledark">导入到 Apple Music 个人资料库</h2>
         </div>
 
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 pt-1">
           <!-- Playlist Name Input -->
           <div class="flex-1">
-            <label class="block text-[11px] font-semibold text-applegray mb-1">目标播放列表名称</label>
             <input v-model="targetPlaylistName" type="text" placeholder="输入新建的 Apple Music 歌单名"
-              class="w-full px-3.5 py-2.5 bg-[#fbfbfd] border border-[#d1d1d6] rounded-xl text-sm font-semibold text-appledark focus:outline-none focus:border-applered focus:ring-2 focus:ring-applered/15 transition" />
+              class="w-full px-4 py-3 bg-[#fbfbfd] border border-[#d1d1d6] rounded-xl text-sm font-bold text-appledark focus:outline-none focus:border-applered focus:ring-2 focus:ring-applered/15 transition placeholder:font-normal placeholder:text-neutral-400" />
           </div>
 
           <!-- Execute Import Button -->
           <div class="sm:self-end">
             <button @click="executeSync" :disabled="syncing || selectedTracksCount === 0"
-              class="w-full sm:w-auto px-8 py-2.5 rounded-xl bg-applered text-white text-sm font-bold hover:bg-applepink active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition flex items-center justify-center space-x-2 shadow-md shadow-applered/30">
+              class="w-full sm:w-auto px-8 py-3 rounded-xl bg-applered text-white text-sm font-bold hover:bg-applepink active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition flex items-center justify-center space-x-2 shadow-md shadow-applered/25">
               <i v-if="syncing" class="fa-solid fa-circle-notch fa-spin text-sm"></i>
               <i v-else class="fa-solid fa-cloud-arrow-up text-sm"></i>
               <span>{{ syncing ? '正在导入资料库...' : '导入到 Apple Music (' + selectedTracksCount + ' 首)' }}</span>
@@ -784,7 +768,7 @@
         </div>
 
         <p class="text-xs text-applegray leading-relaxed">
-          写入个人曲库需要您的 Apple 账号写入凭证（<code class="text-applered font-mono">media-user-token</code>）。通过本工具的一键自动抓取功能，无需打开 F12 即可自动捕获！
+          写入个人曲库需配置 Apple 账号写入凭证（<code class="text-applered font-mono">media-user-token</code>）。
         </p>
 
         <!-- Method 1: Edge CDP Automated Login (Primary & One-Click) -->
@@ -794,10 +778,10 @@
               <i class="fa-brands fa-edge text-blue-600"></i>
               <span>方案 1：Edge 浏览器一键自动提取 (推荐)</span>
             </span>
-            <span class="text-[10px] font-bold text-applered uppercase bg-white px-2 py-0.5 rounded-full border border-red-200">免 F12 · 自动持久化</span>
+            <span class="text-[10px] font-bold text-applered uppercase bg-white px-2 py-0.5 rounded-full border border-red-200">免 F12 · 自动捕获</span>
           </div>
           <p class="text-[11px] text-neutral-600 leading-relaxed">
-            点击下方按钮将自动唤起系统的 Edge 浏览器并打开 Apple Music。在弹出的窗口中登录您的 Apple ID，程序将自动截获 Token 并保存（登录态自动保存，后续无需重复登录）！
+            点击下方按钮唤起 Edge 登录 Apple ID，程序将自动捕获凭证并保存。
           </p>
           <div class="space-y-2">
             <button @click="triggerAutoLogin" :disabled="autoLoggingIn"
@@ -832,9 +816,9 @@
             </div>
           </div>
           <div v-if="copyConsoleFeedback" class="text-[11px] text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200 leading-tight">
-            ✓ 脚本已复制！在 music.apple.com 按 F12 -> 控制台 (Console) 粘贴并回车，Token 将瞬间自动复制到剪贴板，随后直接在此粘贴即可！
+            ✓ 脚本已复制！在 music.apple.com 控制台粘贴运行后直接在此粘贴即可。
           </div>
-          <textarea v-model="tokenInput" rows="2" placeholder="在此粘贴从浏览器获取的 media-user-token"
+          <textarea v-model="tokenInput" rows="2" placeholder="在此粘贴 media-user-token"
             class="w-full p-2.5 bg-[#fbfbfd] border border-neutral-300 rounded-xl text-xs font-mono focus:outline-none focus:border-applered focus:ring-1 focus:ring-applered transition"></textarea>
           <div class="flex justify-end">
             <button @click="testAndSaveToken" :disabled="testingToken || !tokenInput.trim()"
@@ -871,9 +855,9 @@
 
         <!-- Custom Search input for alternative -->
         <div class="flex space-x-2">
-          <input v-model="modalSearchQuery" @keyup.enter="searchAlternative" type="text" placeholder="输入搜索词检索其它版本 (如 歌名 歌手)"
+          <input v-model="modalSearchQuery" @keyup.enter="searchAlternative" type="text" placeholder="输入关键词检索其它版本 (如 歌名 歌手)"
             class="flex-1 px-3 py-2 bg-[#fbfbfd] border border-neutral-300 rounded-xl text-xs focus:outline-none focus:border-applered focus:ring-1 focus:ring-applered transition" />
-          <button @click="searchAlternative" class="px-3.5 py-2 rounded-xl bg-neutral-900 text-white text-xs font-semibold hover:bg-black transition">
+          <button @click="searchAlternative" class="px-4 py-2 rounded-xl bg-neutral-900 text-white text-xs font-semibold hover:bg-black transition">
             搜索
           </button>
         </div>
@@ -883,28 +867,29 @@
           <div v-for="(cand, idx) in modalCandidates" :key="idx"
             class="p-3 hover:bg-neutral-50 flex items-center justify-between space-x-3 transition text-xs">
             
-            <div class="flex items-center space-x-2.5 min-w-0 flex-1">
-              <div class="w-9 h-9 rounded-md bg-neutral-100 border border-neutral-200 overflow-hidden flex-shrink-0">
+            <div class="flex items-center space-x-3 min-w-0 flex-1">
+              <div class="w-12 h-12 rounded-xl bg-neutral-100 border border-neutral-200/80 shadow-2xs overflow-hidden flex-shrink-0 relative">
                 <img v-if="getArtwork(cand.track)" :src="getArtwork(cand.track)" loading="lazy" decoding="async" class="w-full h-full object-cover">
+                <i v-else class="fa-solid fa-music text-neutral-300 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
               </div>
               <div class="min-w-0 flex-1">
                 <div class="font-bold text-neutral-900 truncate">{{ cand.track.title }}</div>
-                <div class="text-[11px] text-neutral-500 truncate">
+                <div class="text-xs text-neutral-500 truncate mt-0.5">
                   {{ cand.track.artists.join('/') }} · {{ cand.track.album }}
                 </div>
               </div>
             </div>
 
             <div class="flex items-center space-x-2 flex-shrink-0">
-              <!-- Audio Preview -->
+              <!-- Audio Preview (Enlarged w-7 h-7) -->
               <button v-if="cand.track.preview_url" @click="toggleTrackPreview(cand.track)"
                 :class="playingTrackId === cand.track.id && isPlaying ? 'bg-applered text-white' : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'"
-                class="w-6 h-6 rounded-full flex items-center justify-center transition" title="试听">
-                <i class="fa-solid text-[9px]" :class="playingTrackId === cand.track.id && isPlaying ? 'fa-pause' : 'fa-play ml-0.5'"></i>
+                class="w-7 h-7 rounded-full flex items-center justify-center transition shadow-2xs" title="试听">
+                <i class="fa-solid text-[10px]" :class="playingTrackId === cand.track.id && isPlaying ? 'fa-pause' : 'fa-play ml-0.5'"></i>
               </button>
 
               <button @click="selectCandidateForModal(cand)"
-                class="px-3 py-1.5 bg-applered text-white rounded-lg text-xs font-semibold hover:bg-applepink transition">
+                class="px-3 py-1.5 bg-applered text-white rounded-lg text-xs font-semibold hover:bg-applepink transition shadow-2xs">
                 采用此版本
               </button>
             </div>
@@ -936,13 +921,13 @@
           <div>本次成功同步写入：<b class="text-applered text-sm">{{ syncSuccessModal.added_count }}</b> 首歌曲</div>
           <div v-if="syncSuccessModal.bilibili_added_count > 0" class="text-emerald-700 font-semibold flex items-center justify-center gap-1">
             <i class="fa-solid fa-circle-check text-emerald-500"></i>
-            <span>含 <b>{{ syncSuccessModal.bilibili_added_count }}</b> 首从 B 站提取的本地音乐已成功并入歌单</span>
+            <span>含 <b>{{ syncSuccessModal.bilibili_added_count }}</b> 首从 B 站补全的本地曲目</span>
           </div>
           <div v-if="syncSuccessModal.bilibili_pending_count > 0" class="text-amber-700 text-[11px] bg-amber-50 rounded-md p-1.5 border border-amber-200/60">
             <i class="fa-solid fa-info-circle mr-0.5"></i>
-            {{ syncSuccessModal.bilibili_pending_count }} 首新提取本地曲目已放入 Apple Music 本地资料库，待客户端完成 iCloud 云端上传后可完全随处收听
+            {{ syncSuccessModal.bilibili_pending_count }} 首新提取本地曲目已放入自动导入目录
           </div>
-          <div class="text-[11px] text-neutral-400">打开 iPhone、iPad、Mac 或 Windows Apple Music 客户端即可即时播放</div>
+          <div class="text-[11px] text-neutral-400">打开各端 Apple Music 客户端即可即时播放</div>
         </div>
 
         <button @click="syncSuccessModal = null"
@@ -964,7 +949,7 @@
               <i class="fa-solid fa-bolt"></i>
             </span>
             <div>
-              <h3 class="text-base font-bold text-appledark">从 B 站补漏并导入 Apple Music</h3>
+              <h3 class="text-base font-bold text-appledark">从 B 站检索补全</h3>
               <p class="text-xs text-applegray mt-0.5">歌曲: {{ bilibiliModalItem.source_track.title }} - {{ bilibiliModalItem.source_track.artists.join('/') }}</p>
             </div>
           </div>
@@ -973,26 +958,22 @@
           </button>
         </div>
 
-        <p class="text-xs text-applegray leading-relaxed">
-          程序已在 B 站全站检索相关视频（MV/演唱会现场/纯享音频等）。选定后将自动下载视频缓存并提取/转码原音为 M4A 音乐格式、写入原歌曲名/歌手/封面元数据，并直接投放至 Apple Music 自动导入目录，全设备自动漫游！
-        </p>
-
-        <!-- Legal & Usage Notice Banner -->
-        <div class="bg-amber-50/80 border border-amber-200/80 rounded-xl p-2.5 text-[11px] text-amber-800 flex items-start space-x-2">
-          <i class="fa-solid fa-shield-halved text-amber-600 mt-0.5 flex-shrink-0"></i>
-          <div class="leading-relaxed">
-            <span class="font-bold">自用合理使用提示：</span>
-            本功能系为补充个人曲库设计的第三方音源检索工具。音源仅供个人离线学习与合理使用，严禁用于商业分发，请支持正版音乐。
-          </div>
+        <!-- Compact Notice -->
+        <div class="bg-neutral-50 border border-neutral-200/70 rounded-xl px-3.5 py-2 text-xs text-neutral-600 flex items-center justify-between">
+          <span class="flex items-center gap-1.5">
+            <i class="fa-solid fa-circle-info text-neutral-400"></i>
+            <span>提取音源转码为 M4A 并写入曲目信息导入本地曲库</span>
+          </span>
+          <span class="text-[10px] text-neutral-400">仅供自用</span>
         </div>
 
         <!-- Search input box in modal -->
         <div class="flex items-center space-x-2">
           <div class="relative flex-1">
             <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-neutral-400"></i>
-            <input v-model="bilibiliSearchQuery" @keyup.enter="searchBilibiliManual" type="text" placeholder="输入关键词在 B 站检索..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-applered transition">
+            <input v-model="bilibiliSearchQuery" @keyup.enter="searchBilibiliManual" type="text" placeholder="输入关键词在 B 站检索..." class="w-full pl-8 pr-3 py-2 text-xs bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:border-applered transition">
           </div>
-          <button @click="searchBilibiliManual" :disabled="bilibiliSearching" class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-900 text-white rounded-lg text-xs font-bold transition flex items-center space-x-1 disabled:opacity-50">
+          <button @click="searchBilibiliManual" :disabled="bilibiliSearching" class="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-900 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1 disabled:opacity-50">
             <i v-if="bilibiliSearching" class="fa-solid fa-circle-notch fa-spin text-[10px]"></i>
             <i v-else class="fa-solid fa-magnifying-glass text-[10px]"></i>
             <span>搜索</span>
@@ -1002,7 +983,7 @@
         <!-- Loading Candidates Indicator -->
         <div v-if="bilibiliSearching" class="py-8 text-center space-y-2">
           <i class="fa-solid fa-circle-notch fa-spin text-2xl text-applered"></i>
-          <div class="text-xs text-applegray">正在 B 站全站检索相关视频...</div>
+          <div class="text-xs text-applegray">正在 B 站检索相关视频...</div>
         </div>
 
         <!-- Candidates List -->
@@ -1010,22 +991,23 @@
           <div v-for="(cand, idx) in bilibiliCandidates" :key="idx"
             class="p-3 hover:bg-neutral-50 flex items-center justify-between space-x-3 transition text-xs">
             
-            <div class="flex items-center space-x-2.5 min-w-0 flex-1">
-              <div class="w-14 h-9 rounded-md bg-neutral-100 border border-neutral-200 overflow-hidden flex-shrink-0 relative">
+            <div class="flex items-center space-x-3 min-w-0 flex-1">
+              <!-- Enlarged video thumbnail -->
+              <div class="w-20 h-12 rounded-lg bg-neutral-100 border border-neutral-200/80 overflow-hidden flex-shrink-0 relative shadow-2xs">
                 <img v-if="cand.pic" :src="cand.pic" class="w-full h-full object-cover">
-                <span class="absolute bottom-0.5 right-0.5 bg-black/70 text-white text-[9px] px-1 rounded font-mono leading-tight">{{ cand.duration }}</span>
+                <span class="absolute bottom-0.5 right-0.5 bg-black/75 text-white text-[9px] px-1 rounded font-mono leading-tight">{{ cand.duration }}</span>
               </div>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center space-x-1.5 truncate">
-                  <span v-if="cand.up_is_artist || cand.up_is_official" class="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-extrabold rounded-md flex items-center gap-0.5 flex-shrink-0">
+                  <span v-if="cand.up_is_artist || cand.up_is_official" class="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 text-[9px] font-extrabold rounded-md flex items-center gap-0.5 flex-shrink-0">
                     <i class="fa-solid fa-circle-check text-[8px]"></i> {{ cand.up_is_artist ? '作者原发布' : '官方发布' }}
                   </span>
-                  <span v-else-if="idx === 0" class="px-1.5 py-0.5 bg-sky-100 text-sky-700 text-[9px] font-extrabold rounded-md flex items-center gap-0.5 flex-shrink-0">
+                  <span v-else-if="idx === 0" class="px-1.5 py-0.2 bg-sky-100 text-sky-700 text-[9px] font-extrabold rounded-md flex items-center gap-0.5 flex-shrink-0">
                     <i class="fa-solid fa-thumbs-up text-[8px]"></i> 最佳匹配
                   </span>
                   <div class="font-bold text-neutral-900 truncate" :title="cand.title">{{ cand.title }}</div>
                 </div>
-                <div class="text-[11px] text-neutral-500 truncate flex items-center space-x-2 mt-0.5">
+                <div class="text-xs text-neutral-500 truncate flex items-center space-x-2 mt-0.5">
                   <span>UP主: {{ cand.author }}</span>
                   <span v-if="cand.play_str" class="inline-flex items-center gap-1 font-mono text-neutral-600 bg-neutral-100 px-1.5 py-0.2 rounded text-[10px]">
                     <i class="fa-regular fa-circle-play text-[9px] text-neutral-400"></i> {{ cand.play_str }} 播放
@@ -1036,7 +1018,7 @@
 
             <div class="flex items-center space-x-2 flex-shrink-0">
               <button @click="downloadBilibiliCandidate(cand)" :disabled="bilibiliDownloading"
-                class="px-3 py-1.5 bg-applered hover:bg-applepink text-white rounded-lg text-xs font-bold transition flex items-center space-x-1 shadow-xs disabled:opacity-50">
+                class="px-3 py-1.5 bg-applered hover:bg-applepink text-white rounded-lg text-xs font-bold transition flex items-center space-x-1 shadow-2xs disabled:opacity-50">
                 <i v-if="bilibiliDownloading && downloadingBvid === cand.bvid" class="fa-solid fa-circle-notch fa-spin"></i>
                 <i v-else class="fa-solid fa-cloud-arrow-down"></i>
                 <span>下载入库</span>
