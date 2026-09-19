@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Apple Music 歌单导入助手</title>
+  <title>&#8203;</title>
   <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
   <link rel="apple-touch-icon" href="/static/app_icon.png">
   <link rel="manifest" href="/static/manifest.json">
   <!-- Desktop Window Title Bar Styling (Apple Clean White Theme) -->
   <meta name="theme-color" content="#ffffff">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1d1d1f">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#ffffff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- Tailwind CSS: Local bundle with CDN fallback -->
@@ -71,11 +71,11 @@
         <div class="flex items-center justify-between" :class="sidebarExpanded ? 'px-1' : 'flex-col space-y-3 items-center'">
           <!-- Logo & Title -->
           <div class="flex items-center space-x-3 overflow-hidden">
-            <img src="/static/app_icon.png" class="w-9 h-9 rounded-2xl shadow-sm shadow-applered/25 object-cover flex-shrink-0" alt="Logo" :title="sidebarExpanded ? '' : 'Apple Music v2.0'">
+            <img src="/static/app_icon.png" class="w-9 h-9 rounded-2xl shadow-sm shadow-applered/25 object-cover flex-shrink-0" alt="Logo" :title="sidebarExpanded ? '' : 'Apple Music v2.0.1'">
             <div v-if="sidebarExpanded" class="min-w-0 transition-opacity duration-200">
               <div class="flex items-center space-x-1.5">
                 <span class="font-extrabold text-base text-appledark tracking-tight truncate">Apple Music</span>
-                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200">v2.0</span>
+                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200">v2.0.1</span>
               </div>
               <div class="text-[11px] text-neutral-400 font-medium truncate">曲库导入与管理</div>
             </div>
@@ -89,42 +89,42 @@
           </button>
         </div>
 
-        <!-- 3 Vertical Navigation Buttons (竖列排放) -->
+        <!-- 3 Vertical Navigation Buttons (简洁协调现代设计) -->
         <nav class="flex flex-col space-y-2">
           <!-- Button 1: 歌单导入 -->
           <button @click="switchAppTab('importer')"
-            :class="currentAppTab === 'importer' ? 'bg-rose-50 text-applered font-bold border border-rose-200/80 shadow-xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 font-medium border border-transparent'"
             :title="sidebarExpanded ? '' : '歌单导入'"
-            class="w-full rounded-xl transition flex items-center cursor-pointer text-xs"
-            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px;' : 'padding: 10px 0; justify-content: center;'">
-            <span class="w-7 h-7 rounded-lg flex items-center justify-center transition flex-shrink-0" :class="currentAppTab === 'importer' ? 'bg-applered text-white shadow-2xs' : 'bg-neutral-100 text-neutral-500'">
-              <i class="fa-solid fa-cloud-arrow-up text-xs"></i>
-            </span>
-            <span v-if="sidebarExpanded" class="text-xs font-semibold truncate">歌单导入</span>
+            :class="sidebarExpanded 
+              ? (currentAppTab === 'importer' ? 'bg-rose-50 text-applered font-bold border border-rose-200/70 shadow-2xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80 font-medium border border-transparent')
+              : (currentAppTab === 'importer' ? 'bg-applered text-white shadow-sm shadow-applered/30 font-bold border border-applered' : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100/90 border border-transparent')"
+            class="rounded-xl transition-all duration-200 flex items-center cursor-pointer select-none text-xs"
+            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px; width: 100%;' : 'width: 44px; height: 44px; margin: 0 auto; justify-content: center;'">
+            <i class="fa-solid fa-cloud-arrow-up text-base flex-shrink-0"></i>
+            <span v-if="sidebarExpanded" class="text-xs truncate">歌单导入</span>
           </button>
 
           <!-- Button 2: Apple Music 资料库 -->
           <button @click="switchAppTab('cloud')"
-            :class="currentAppTab === 'cloud' ? 'bg-rose-50 text-applered font-bold border border-rose-200/80 shadow-xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 font-medium border border-transparent'"
             :title="sidebarExpanded ? '' : 'Apple Music 资料库'"
-            class="w-full rounded-xl transition flex items-center cursor-pointer text-xs"
-            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px;' : 'padding: 10px 0; justify-content: center;'">
-            <span class="w-7 h-7 rounded-lg flex items-center justify-center transition flex-shrink-0" :class="currentAppTab === 'cloud' ? 'bg-applered text-white shadow-2xs' : 'bg-neutral-100 text-neutral-500'">
-              <i class="fa-solid fa-compact-disc text-xs"></i>
-            </span>
-            <span v-if="sidebarExpanded" class="text-xs font-semibold truncate">Apple Music 资料库</span>
+            :class="sidebarExpanded 
+              ? (currentAppTab === 'cloud' ? 'bg-rose-50 text-applered font-bold border border-rose-200/70 shadow-2xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80 font-medium border border-transparent')
+              : (currentAppTab === 'cloud' ? 'bg-applered text-white shadow-sm shadow-applered/30 font-bold border border-applered' : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100/90 border border-transparent')"
+            class="rounded-xl transition-all duration-200 flex items-center cursor-pointer select-none text-xs"
+            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px; width: 100%;' : 'width: 44px; height: 44px; margin: 0 auto; justify-content: center;'">
+            <i class="fa-solid fa-compact-disc text-base flex-shrink-0"></i>
+            <span v-if="sidebarExpanded" class="text-xs truncate">Apple Music 资料库</span>
           </button>
 
           <!-- Button 3: 本地 Apple Music 资料库 -->
           <button @click="switchAppTab('local_lib')"
-            :class="currentAppTab === 'local_lib' ? 'bg-rose-50 text-applered font-bold border border-rose-200/80 shadow-xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 font-medium border border-transparent'"
             :title="sidebarExpanded ? '' : '本地 Apple Music 资料库'"
-            class="w-full rounded-xl transition flex items-center cursor-pointer text-xs"
-            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px;' : 'padding: 10px 0; justify-content: center;'">
-            <span class="w-7 h-7 rounded-lg flex items-center justify-center transition flex-shrink-0" :class="currentAppTab === 'local_lib' ? 'bg-applered text-white shadow-2xs' : 'bg-neutral-100 text-neutral-500'">
-              <i class="fa-solid fa-folder-music text-xs"></i>
-            </span>
-            <span v-if="sidebarExpanded" class="text-xs font-semibold truncate">本地 Apple Music 资料库</span>
+            :class="sidebarExpanded 
+              ? (currentAppTab === 'local_lib' ? 'bg-rose-50 text-applered font-bold border border-rose-200/70 shadow-2xs' : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80 font-medium border border-transparent')
+              : (currentAppTab === 'local_lib' ? 'bg-applered text-white shadow-sm shadow-applered/30 font-bold border border-applered' : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100/90 border border-transparent')"
+            class="rounded-xl transition-all duration-200 flex items-center cursor-pointer select-none text-xs"
+            :style="sidebarExpanded ? 'padding: 10px 14px; gap: 12px; width: 100%;' : 'width: 44px; height: 44px; margin: 0 auto; justify-content: center;'">
+            <i class="fa-solid fa-hard-drive text-base flex-shrink-0"></i>
+            <span v-if="sidebarExpanded" class="text-xs truncate">本地 Apple Music 资料库</span>
           </button>
         </nav>
       </div>
@@ -191,16 +191,6 @@
 
     <!-- RIGHT CONTENT AREA (Scrollable) -->
     <div class="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
-      
-      <!-- Top clean bar -->
-      <header class="h-14 bg-white/90 backdrop-blur-md border-b border-[#e5e5ea] sticky top-0 z-20 px-6 sm:px-8 flex items-center justify-between flex-shrink-0">
-        <div class="text-xs font-bold text-neutral-700 flex items-center space-x-2">
-          <span class="text-neutral-400 font-normal">当前模块 /</span>
-          <span class="text-appledark font-bold">
-            {{ currentAppTab === 'importer' ? '歌单导入与匹配' : (currentAppTab === 'cloud' ? 'Apple Music 云端资料库与歌单管理' : '本地 Apple Music 资料库管理') }}
-          </span>
-        </div>
-      </header>
 
       <!-- MAIN BODY CONTAINER -->
       <main class="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-8 space-y-7">
@@ -376,11 +366,6 @@
               <span>重搜未匹配 ({{ unmatchedCount }})</span>
             </button>
 
-            <!-- Diagnostics Summary Button -->
-            <button @click="openDiagnosticsModal" class="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200/80 rounded-xl text-xs font-medium text-neutral-600 transition" title="查看检索诊断统计">
-              <i class="fa-solid fa-chart-pie mr-1"></i>诊断
-            </button>
-
             <!-- Export CSV -->
             <button @click="exportCSV" class="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200/80 rounded-xl text-xs font-medium text-neutral-600 transition" title="导出匹配结果为 CSV 文件">
               <i class="fa-solid fa-download mr-1"></i>导出
@@ -425,13 +410,6 @@
                 <i class="fa-solid fa-wand-magic-sparkles"></i>
                 <span>从 B 站补全 ({{ noMatchCount }})</span>
               </button>
-
-              <!-- Open Folder Button -->
-              <button @click="openDownloadedFolder" :class="folderOpenedFeedback ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-white text-neutral-700 hover:bg-neutral-50 border-neutral-200'" class="px-3.5 py-2 border rounded-xl text-xs font-medium transition flex items-center space-x-1.5 shadow-2xs">
-                <i :class="folderOpenedFeedback ? 'fa-solid fa-check text-emerald-600' : 'fa-solid fa-folder-open text-neutral-500'"></i>
-                <span>{{ folderOpenedFeedback ? '已打开' : '导入目录' }}</span>
-              </button>
-
             </div>
 
           </div>
@@ -3076,7 +3054,7 @@
         const rematchCancelRequested = ref(false);
         const rematchStorefront = ref('');
         const rematchRelaxed = ref(true);
-        const rematchFallback = ref(true);
+        const rematchFallback = ref(false);
         const rematchProgress = ref({
           current: 0,
           total: 0,
