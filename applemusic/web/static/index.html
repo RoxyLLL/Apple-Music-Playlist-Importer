@@ -627,7 +627,10 @@
               <!-- Match Confidence Badge -->
               <div class="w-24 text-center flex-shrink-0">
                 <template v-if="item.selected_candidate">
-                  <span v-if="item.status === 'user_confirmed'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
+                  <span v-if="item.selected_candidate.track && item.selected_candidate.track.id && item.selected_candidate.track.id.startsWith('i.')" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-violet-50 text-violet-700 border border-violet-200" title="已收录于个人资料库 (本地音源)">
+                    个人资料库
+                  </span>
+                  <span v-else-if="item.status === 'user_confirmed'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
                     人工确认
                   </span>
                   <span v-else-if="item.status === 'exact'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -1020,7 +1023,20 @@
                       class="rounded text-applered focus:ring-applered cursor-pointer">
                   </div>
                   <div class="w-10 text-center">封面</div>
-                  <div class="flex-1 ml-3">歌曲信息 (共 {{ displayedLibrarySongs.length }} 首)</div>
+                  <div class="flex-1 ml-3 flex items-center justify-between">
+                    <span>歌曲信息 (共 {{ displayedLibrarySongs.length }} 首)</span>
+                    <div class="flex items-center space-x-1.5 mr-4 font-normal text-xs">
+                      <span class="text-neutral-400 text-[11px]">排序:</span>
+                      <select v-model="cloudSongSortOrder"
+                        class="bg-white border border-neutral-200 rounded-lg px-2 py-0.5 text-xs text-neutral-700 focus:outline-none focus:border-applered cursor-pointer shadow-2xs">
+                        <option value="date_desc">加入时间 (最新在前)</option>
+                        <option value="date_asc">加入时间 (最早在前)</option>
+                        <option value="title_asc">歌名 (A - Z)</option>
+                        <option value="title_desc">歌名 (Z - A)</option>
+                        <option value="artist_asc">歌手 (A - Z)</option>
+                      </select>
+                    </div>
+                  </div>
                   <div class="w-36 hidden sm:block">专辑</div>
                   <div class="w-20 text-center">时长</div>
                   <div class="w-24 text-right pr-2">操作</div>
@@ -1726,12 +1742,36 @@
               </button>
             </div>
 
+            <!-- Select All & Sort Bar -->
+            <div v-if="filteredCloudAddSongs.length > 0" class="flex flex-wrap items-center justify-between gap-2 px-1 py-1 text-xs text-neutral-600 border-b border-neutral-200/50">
+              <div class="flex items-center space-x-2">
+                <label class="flex items-center space-x-1.5 font-semibold text-neutral-700 cursor-pointer select-none">
+                  <input type="checkbox" :checked="isAllCloudAddSongsSelected" @change="toggleSelectAllCloudAddSongs"
+                    class="rounded text-applered focus:ring-applered cursor-pointer">
+                  <span>全选</span>
+                </label>
+                <span class="text-neutral-300">|</span>
+                <span class="text-neutral-500 font-mono text-[11px]">已选 {{ selectedCloudAddSongs.length }} / 共 {{ filteredCloudAddSongs.length }} 首</span>
+              </div>
+              <div class="flex items-center space-x-1.5 text-xs">
+                <span class="text-neutral-400 text-[11px]">排序:</span>
+                <select v-model="cloudAddSortOrder"
+                  class="bg-white border border-neutral-200 rounded-lg px-2 py-0.5 text-xs text-neutral-700 focus:outline-none focus:border-applered cursor-pointer shadow-2xs">
+                  <option value="date_desc">加入时间 (最新在前)</option>
+                  <option value="date_asc">加入时间 (最早在前)</option>
+                  <option value="title_asc">歌名 (A - Z)</option>
+                  <option value="title_desc">歌名 (Z - A)</option>
+                  <option value="artist_asc">歌手 (A - Z)</option>
+                </select>
+              </div>
+            </div>
+
             <!-- List of Cloud Library Songs -->
             <div v-if="loadingCloudSongs" class="py-6 text-center text-xs text-neutral-400">
               <i class="fa-solid fa-circle-notch fa-spin text-base text-applered mb-1"></i>
               <div>正在载入个人资料库曲目...</div>
             </div>
-            <div v-else-if="filteredCloudAddSongs.length > 0" class="max-h-52 overflow-y-auto divide-y divide-neutral-100 bg-white border border-neutral-200/70 rounded-xl text-xs">
+            <div v-else-if="filteredCloudAddSongs.length > 0" class="max-h-72 overflow-y-auto divide-y divide-neutral-100 bg-white border border-neutral-200/70 rounded-xl text-xs">
               <div v-for="cs in filteredCloudAddSongs" :key="cs.id"
                 class="p-2 hover:bg-neutral-50 flex items-center justify-between space-x-2 transition">
                 <input type="checkbox" :value="cs.id" v-model="selectedCloudAddSongs"
@@ -1781,12 +1821,28 @@
               </button>
             </div>
 
+            <!-- Select All & Counter Bar -->
+            <div v-if="filteredLocalAddSongs.length > 0" class="flex items-center justify-between px-1 py-1 text-xs text-neutral-600 border-b border-neutral-200/50">
+              <div class="flex items-center space-x-2">
+                <label class="flex items-center space-x-1.5 font-semibold text-neutral-700 cursor-pointer select-none">
+                  <input type="checkbox" :checked="isAllLocalAddSongsSelected" @change="toggleSelectAllLocalAddSongs"
+                    class="rounded text-applered focus:ring-applered cursor-pointer">
+                  <span>全选</span>
+                </label>
+                <span class="text-neutral-300">|</span>
+                <span class="text-neutral-500 font-mono text-[11px]">已选 {{ selectedLocalAddSongs.length }} / 共 {{ filteredLocalAddSongs.length }} 首</span>
+              </div>
+              <div v-if="localAddSearchQuery" class="text-neutral-400 text-[11px]">
+                搜索过滤结果
+              </div>
+            </div>
+
             <!-- List of Local Library Songs -->
             <div v-if="loadingLocalSongs" class="py-6 text-center text-xs text-neutral-400">
               <i class="fa-solid fa-circle-notch fa-spin text-base text-applered mb-1"></i>
               <div>正在扫描本地 Apple Music 资料库...</div>
             </div>
-            <div v-else-if="filteredLocalAddSongs.length > 0" class="max-h-52 overflow-y-auto divide-y divide-neutral-100 bg-white border border-neutral-200/70 rounded-xl text-xs">
+            <div v-else-if="filteredLocalAddSongs.length > 0" class="max-h-72 overflow-y-auto divide-y divide-neutral-100 bg-white border border-neutral-200/70 rounded-xl text-xs">
               <div v-for="ls in filteredLocalAddSongs" :key="ls.file_path"
                 class="p-2 hover:bg-neutral-50 flex items-center justify-between space-x-2 transition">
                 <input type="checkbox" :value="ls.file_path" v-model="selectedLocalAddSongs"
@@ -2978,8 +3034,11 @@
 
           const syncTracks = selectedItems.map(r => {
             if (r.bilibili_downloaded) {
+              const knownId = (r.selected_candidate && r.selected_candidate.track && r.selected_candidate.track.id)
+                ? r.selected_candidate.track.id
+                : (r.bilibili_info && r.bilibili_info.lib_id ? r.bilibili_info.lib_id : null);
               return {
-                id: null,
+                id: knownId,
                 type: 'bilibili_local',
                 title: r.source_track.title,
                 artist: (r.source_track.artists && r.source_track.artists.join(' / ')) || '',
@@ -2987,13 +3046,15 @@
                 is_bilibili: true
               };
             } else {
+              const trackId = r.selected_candidate ? r.selected_candidate.track.id : null;
+              const isLib = Boolean(trackId && String(trackId).startsWith('i.'));
               return {
-                id: r.selected_candidate.track.id,
-                type: 'songs',
+                id: trackId,
+                type: isLib ? 'library-songs' : 'songs',
                 title: r.selected_candidate.track.title,
                 artist: r.selected_candidate.track.artist_str,
                 album: r.selected_candidate.track.album || '',
-                is_bilibili: false
+                is_bilibili: isLib
               };
             }
           });
@@ -3377,6 +3438,23 @@
               bilibiliModalItem.value.bilibili_downloaded = true;
               bilibiliModalItem.value.selected = true;
               bilibiliModalItem.value.bilibili_info = data;
+              if (data.lib_id) {
+                bilibiliModalItem.value.selected_candidate = {
+                  track: {
+                    id: data.lib_id,
+                    title: bilibiliModalItem.value.source_track.title,
+                    artists: bilibiliModalItem.value.source_track.artists || [],
+                    artist_str: (bilibiliModalItem.value.source_track.artists && bilibiliModalItem.value.source_track.artists.join(' / ')) || '',
+                    album: bilibiliModalItem.value.source_track.album || '',
+                  },
+                  score: 1.0,
+                  status: 'exact',
+                  decision: 'auto_accept',
+                  decision_reasons: ['已收录于个人资料库 (本地音源)'],
+                };
+                bilibiliModalItem.value.status = 'exact';
+                bilibiliModalItem.value.decision = 'auto_accept';
+              }
               alert(`成功下载并提取「${data.title}」！\n已自动放入 Apple Music 本地资料库，导入歌单时将一并合并加入！`);
               bilibiliModalItem.value = null;
             } else {
@@ -3458,6 +3536,23 @@
                   item.bilibili_downloaded = true;
                   item.selected = true;
                   item.bilibili_info = data;
+                  if (data.lib_id) {
+                    item.selected_candidate = {
+                      track: {
+                        id: data.lib_id,
+                        title: item.source_track.title,
+                        artists: item.source_track.artists || [item.source_track.artist_str || '未知歌手'],
+                        artist_str: (item.source_track.artists && item.source_track.artists.join(' / ')) || item.source_track.artist_str || '',
+                        album: item.source_track.album || '',
+                      },
+                      score: 1.0,
+                      status: 'exact',
+                      decision: 'auto_accept',
+                      decision_reasons: ['已收录于个人资料库 (本地音源)'],
+                    };
+                    item.status = 'exact';
+                    item.decision = 'auto_accept';
+                  }
                   bilibiliProgress.value.successCount++;
                 } else {
                   item.bilibili_error = data.error || '未检索到音源';
@@ -3758,16 +3853,54 @@
         };
 
         // Tab 1: Cloud Library Add Logic
+        const cloudAddSortOrder = ref('date_desc'); // 'date_desc' | 'date_asc' | 'title_asc' | 'title_desc' | 'artist_asc'
+
         const filteredCloudAddSongs = computed(() => {
           const q = cloudAddSearchQuery.value.trim().toLowerCase();
-          if (!q) return userLibrarySongs.value.slice(0, 100);
-          return userLibrarySongs.value.filter(s => {
-            const title = (s.title || '').toLowerCase();
-            const artist = (s.artist || '').toLowerCase();
-            const album = (s.album || '').toLowerCase();
-            return title.includes(q) || artist.includes(q) || album.includes(q);
-          }).slice(0, 100);
+          let list = userLibrarySongs.value;
+          if (q) {
+            list = list.filter(s => {
+              const title = (s.title || '').toLowerCase();
+              const artist = (s.artist || '').toLowerCase();
+              const album = (s.album || '').toLowerCase();
+              return title.includes(q) || artist.includes(q) || album.includes(q);
+            });
+          }
+
+          const order = cloudAddSortOrder.value;
+          const sorted = [...list];
+          if (order === 'date_desc') {
+            sorted.sort((a, b) => (a.date_added_rank ?? 0) - (b.date_added_rank ?? 0));
+          } else if (order === 'date_asc') {
+            sorted.sort((a, b) => (b.date_added_rank ?? 0) - (a.date_added_rank ?? 0));
+          } else if (order === 'title_asc') {
+            sorted.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh-CN'));
+          } else if (order === 'title_desc') {
+            sorted.sort((a, b) => (b.title || '').localeCompare(a.title || '', 'zh-CN'));
+          } else if (order === 'artist_asc') {
+            sorted.sort((a, b) => (a.artist || '').localeCompare(b.artist || '', 'zh-CN'));
+          }
+          return sorted;
         });
+
+        const isAllCloudAddSongsSelected = computed(() => {
+          const list = filteredCloudAddSongs.value;
+          return list.length > 0 && list.every(s => selectedCloudAddSongs.value.includes(s.id));
+        });
+
+        const toggleSelectAllCloudAddSongs = (e) => {
+          const checked = e.target.checked;
+          if (checked) {
+            const currentIds = new Set(selectedCloudAddSongs.value);
+            filteredCloudAddSongs.value.forEach(s => {
+              if (s.id) currentIds.add(s.id);
+            });
+            selectedCloudAddSongs.value = Array.from(currentIds);
+          } else {
+            const filterIds = new Set(filteredCloudAddSongs.value.map(s => s.id));
+            selectedCloudAddSongs.value = selectedCloudAddSongs.value.filter(id => !filterIds.has(id));
+          }
+        };
 
         const batchAddCloudSongsToPlaylist = async () => {
           if (!viewingPlaylist.value || selectedCloudAddSongs.value.length === 0) return;
@@ -3800,15 +3933,34 @@
         // Tab 2: Local Library Add Logic
         const filteredLocalAddSongs = computed(() => {
           const q = localAddSearchQuery.value.trim().toLowerCase();
-          if (!q) return localSongs.value.slice(0, 100);
+          if (!q) return localSongs.value;
           return localSongs.value.filter(s => {
             const title = (s.title || '').toLowerCase();
             const artist = (s.artist || '').toLowerCase();
             const album = (s.album || '').toLowerCase();
             const fn = (s.file_name || '').toLowerCase();
             return title.includes(q) || artist.includes(q) || album.includes(q) || fn.includes(q);
-          }).slice(0, 100);
+          });
         });
+
+        const isAllLocalAddSongsSelected = computed(() => {
+          const list = filteredLocalAddSongs.value;
+          return list.length > 0 && list.every(s => selectedLocalAddSongs.value.includes(s.file_path));
+        });
+
+        const toggleSelectAllLocalAddSongs = (e) => {
+          const checked = e.target.checked;
+          if (checked) {
+            const currentPaths = new Set(selectedLocalAddSongs.value);
+            filteredLocalAddSongs.value.forEach(s => {
+              if (s.file_path) currentPaths.add(s.file_path);
+            });
+            selectedLocalAddSongs.value = Array.from(currentPaths);
+          } else {
+            const filterPaths = new Set(filteredLocalAddSongs.value.map(s => s.file_path));
+            selectedLocalAddSongs.value = selectedLocalAddSongs.value.filter(p => !filterPaths.has(p));
+          }
+        };
 
         const addSingleLocalSongToPlaylist = async (song) => {
           if (!viewingPlaylist.value || !song) return;
@@ -3982,18 +4134,40 @@
         const searchingCloudSongs = ref(false);
         const serverSearchResults = ref(null);
 
+        const cloudSongSortOrder = ref('date_desc'); // 'date_desc' | 'date_asc' | 'title_asc' | 'title_desc' | 'artist_asc'
+
         const displayedLibrarySongs = computed(() => {
+          let list = [];
           if (serverSearchResults.value !== null) {
-            return serverSearchResults.value;
+            list = serverSearchResults.value;
+          } else {
+            const q = cloudSongSearch.value.trim().toLowerCase();
+            if (!q) {
+              list = userLibrarySongs.value;
+            } else {
+              list = userLibrarySongs.value.filter(s => {
+                const title = (s.title || '').toLowerCase();
+                const artist = (s.artist || '').toLowerCase();
+                const album = (s.album || '').toLowerCase();
+                return title.includes(q) || artist.includes(q) || album.includes(q);
+              });
+            }
           }
-          const q = cloudSongSearch.value.trim().toLowerCase();
-          if (!q) return userLibrarySongs.value;
-          return userLibrarySongs.value.filter(s => {
-            const title = (s.title || '').toLowerCase();
-            const artist = (s.artist || '').toLowerCase();
-            const album = (s.album || '').toLowerCase();
-            return title.includes(q) || artist.includes(q) || album.includes(q);
-          });
+
+          const order = cloudSongSortOrder.value;
+          const sorted = [...list];
+          if (order === 'date_desc') {
+            sorted.sort((a, b) => (a.date_added_rank ?? 0) - (b.date_added_rank ?? 0));
+          } else if (order === 'date_asc') {
+            sorted.sort((a, b) => (b.date_added_rank ?? 0) - (a.date_added_rank ?? 0));
+          } else if (order === 'title_asc') {
+            sorted.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh-CN'));
+          } else if (order === 'title_desc') {
+            sorted.sort((a, b) => (b.title || '').localeCompare(a.title || '', 'zh-CN'));
+          } else if (order === 'artist_asc') {
+            sorted.sort((a, b) => (a.artist || '').localeCompare(b.artist || '', 'zh-CN'));
+          }
+          return sorted;
         });
 
         const isAllCloudSongsSelected = computed(() => {
@@ -4046,7 +4220,7 @@
           loadingCloudSongs.value = true;
           serverSearchResults.value = null;
           try {
-            const res = await fetch(`/api/user/library/songs?limit=100&fetch_all=${fetchAll}`);
+            const res = await fetch(`/api/user/library/songs?limit=100&fetch_all=${fetchAll}&sort=-dateAdded`);
             const data = await res.json();
             if (data.success) {
               userLibrarySongs.value = data.songs || [];
@@ -4454,9 +4628,14 @@
           selectedCloudAddSongs,
           addingTracksBatch,
           filteredCloudAddSongs,
+          cloudAddSortOrder,
+          isAllCloudAddSongsSelected,
+          toggleSelectAllCloudAddSongs,
           batchAddCloudSongsToPlaylist,
           localAddSearchQuery,
           selectedLocalAddSongs,
+          isAllLocalAddSongsSelected,
+          toggleSelectAllLocalAddSongs,
           addingLocalBatch,
           filteredLocalAddSongs,
           addSingleLocalSongToPlaylist,
@@ -4485,6 +4664,7 @@
           searchingCloudSongs,
           serverSearchResults,
           displayedLibrarySongs,
+          cloudSongSortOrder,
           onCloudSongSearchInput,
           searchCloudSongsServer,
           clearServerSearch,

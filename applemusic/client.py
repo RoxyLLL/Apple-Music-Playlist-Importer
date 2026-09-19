@@ -1363,10 +1363,12 @@ class AppleMusicClient:
         offset: int = 0,
         fetch_all: bool = False,
         max_songs: int = 5000,
+        sort: Optional[str] = "-dateAdded",
     ) -> List[Dict[str, Any]]:
         """
         Fetch songs from user's personal iCloud Music Library.
         If fetch_all is True, automatically iterates through pages up to max_songs.
+        sort options: '-dateAdded', 'dateAdded', 'name', '-name'.
         """
         url = f"{self.AMP_API_URL}/me/library/songs"
         headers = self._get_auth_headers(require_user=True)
@@ -1376,11 +1378,13 @@ class AppleMusicClient:
 
         while True:
             params = {"limit": batch_size, "offset": cur_offset}
+            if sort:
+                params["sort"] = sort
             try:
                 resp = self.session.get(url, headers=headers, params=params, timeout=15)
                 if resp.status_code == 200:
                     data = resp.json().get("data", [])
-                    for item in data:
+                    for idx, item in enumerate(data):
                         attrs = item.get("attributes", {})
                         artwork = attrs.get("artwork") or {}
                         all_songs.append({
@@ -1391,6 +1395,7 @@ class AppleMusicClient:
                             "duration_ms": attrs.get("durationInMillis"),
                             "artwork_url": artwork.get("url"),
                             "date_added": attrs.get("dateAdded"),
+                            "date_added_rank": cur_offset + idx,
                         })
 
                     if not fetch_all or len(data) < batch_size or len(all_songs) >= max_songs:

@@ -582,6 +582,10 @@ async def sync_to_apple_music(req: SyncRequest):
                 current_to_check = still_pending_bilibili
                 still_pending_bilibili = []
                 for item in current_to_check:
+                    if item.id and str(item.id).startswith("i."):
+                        final_track_ids.append(str(item.id))
+                        bilibili_added_count += 1
+                        continue
                     lib_id = client.find_library_song_id(item.title, item.artist or "")
                     if lib_id:
                         final_track_ids.append(lib_id)
@@ -657,6 +661,8 @@ from applemusic.extractors.bilibili_downloader import (
     get_apple_music_auto_add_dir,
     get_backup_download_dir,
     sanitize_filename,
+    find_existing_bilibili_audio,
+    ensure_auto_imported,
 )
 
 
@@ -690,6 +696,7 @@ async def api_bilibili_search(req: BilibiliSearchRequest):
 
 @app.post("/api/bilibili/download")
 async def api_bilibili_download(req: BilibiliDownloadRequest):
+    client, _ = get_shared_engine()
     result = await asyncio.to_thread(
         download_bilibili_audio,
         bvid=req.bvid,
@@ -699,14 +706,50 @@ async def api_bilibili_download(req: BilibiliDownloadRequest):
         cover_url=req.cover_url or "",
         auto_import_to_apple_music=req.auto_import if req.auto_import is not None else True,
     )
+    if result.get("success") and client.config.is_authorized():
+        lib_id = client.find_library_song_id(req.title, req.artist or "")
+        if lib_id:
+            result["lib_id"] = lib_id
+            result["already_in_library"] = True
     return result
 
 
 @app.post("/api/bilibili/batch-download")
 async def api_bilibili_batch_download(req: BilibiliBatchDownloadRequest):
     def _do_batch():
+        client, _ = get_shared_engine()
         results = []
         for t in req.tracks:
+            # 1. Personal iCloud Music Library fast-path
+            if client.config.is_authorized():
+                lib_id = client.find_library_song_id(t.title, t.artist_str or "")
+                if lib_id:
+                    results.append({
+                        "success": True,
+                        "title": t.title,
+                        "artist": t.artist_str,
+                        "already_in_library": True,
+                        "lib_id": lib_id,
+                        "message": "已在 Apple Music 个人资料库中找到本地音源",
+                    })
+                    continue
+
+            # 2. Local audio files fast-path
+            local_file = find_existing_bilibili_audio(t.title, t.artist_str or "")
+            if local_file:
+                if req.auto_import is not False:
+                    ensure_auto_imported(local_file, t.title, t.artist_str or "")
+                results.append({
+                    "success": True,
+                    "title": t.title,
+                    "artist": t.artist_str,
+                    "already_downloaded": True,
+                    "local_path": local_file,
+                    "message": "本地已存在该歌曲音频，已放入 Apple Music 自动导入目录",
+                })
+                continue
+
+            # 3. Search Bilibili
             cands = search_bilibili(t.title, t.artist_str, limit=3)
             if not cands:
                 results.append({
@@ -758,6 +801,36 @@ class BilibiliSingleAutoRequest(BaseModel):
 @app.post("/api/bilibili/download-single-auto")
 async def api_bilibili_download_single_auto(req: BilibiliSingleAutoRequest):
     def _do():
+        client, _ = get_shared_engine()
+
+        # 1. Personal iCloud Music Library fast-path
+        if client.config.is_authorized():
+            lib_id = client.find_library_song_id(req.title, req.artist or "")
+            if lib_id:
+                return {
+                    "success": True,
+                    "title": req.title,
+                    "artist": req.artist,
+                    "already_in_library": True,
+                    "lib_id": lib_id,
+                    "message": "已在 Apple Music 个人资料库中找到本地音源",
+                }
+
+        # 2. Local audio files fast-path
+        local_file = find_existing_bilibili_audio(req.title, req.artist or "")
+        if local_file:
+            if req.auto_import is not False:
+                ensure_auto_imported(local_file, req.title, req.artist or "")
+            return {
+                "success": True,
+                "title": req.title,
+                "artist": req.artist,
+                "already_downloaded": True,
+                "local_path": local_file,
+                "message": "本地已存在该歌曲音频，已放入 Apple Music 自动导入目录",
+            }
+
+        # 3. Search Bilibili
         cands = search_bilibili(req.title, req.artist or "", limit=3)
         if not cands:
             return {
@@ -948,11 +1021,16 @@ async def api_batch_delete_playlists(req: BatchDeletePlaylistsRequest):
 
 
 @app.get("/api/user/library/songs")
-async def api_get_library_songs(limit: int = 100, offset: int = 0, fetch_all: bool = False):
+async def api_get_library_songs(
+    limit: int = 100,
+    offset: int = 0,
+    fetch_all: bool = False,
+    sort: Optional[str] = "-dateAdded",
+):
     client, _ = get_shared_engine()
     if not client.config.is_authorized():
         raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    songs = await asyncio.to_thread(client.get_library_songs, limit, offset, fetch_all)
+    songs = await asyncio.to_thread(client.get_library_songs, limit, offset, fetch_all, 5000, sort)
     return {"success": True, "songs": songs, "total": len(songs)}
 
 

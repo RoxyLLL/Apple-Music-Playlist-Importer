@@ -124,6 +124,67 @@ def sanitize_filename(name: str) -> str:
     return cleaned.strip()[:80]
 
 
+def find_existing_bilibili_audio(title: str, artist: str = "") -> Optional[str]:
+    """
+    Search local directories (backup download folder, Apple Music auto-add folder)
+    for an already downloaded audio file corresponding to title & artist.
+    """
+    from applemusic.matcher.cleaner import TextCleaner
+
+    clean_t = TextCleaner.clean_title(title).lower().strip()
+    norm_t = TextCleaner.normalize(title).lower().strip()
+    if not clean_t and not norm_t:
+        return None
+
+    clean_a = TextCleaner.clean_artist(artist).lower().strip() if artist else ""
+
+    dirs_to_check = [get_backup_download_dir()]
+    auto_dir = get_apple_music_auto_add_dir()
+    if auto_dir and os.path.isdir(auto_dir):
+        dirs_to_check.append(auto_dir)
+
+    for d in dirs_to_check:
+        if not os.path.isdir(d):
+            continue
+        try:
+            for entry in os.scandir(d):
+                if entry.is_file() and entry.name.lower().endswith((".m4a", ".mp3")):
+                    fname = entry.name
+                    fname_norm = TextCleaner.normalize(fname).lower()
+                    if (clean_t and clean_t in fname_norm) or (norm_t and norm_t in fname_norm):
+                        if clean_a and clean_a not in fname_norm:
+                            stem_lower = os.path.splitext(fname)[0].lower()
+                            if clean_t and clean_t not in stem_lower:
+                                continue
+                        if entry.stat().st_size > 102400:
+                            return entry.path
+        except Exception as e:
+            logger.warning("扫描本地音源目录异常 (%s): %s", d, e)
+
+    return None
+
+
+def ensure_auto_imported(file_path: str, target_title: str, target_artist: str) -> bool:
+    """Ensure a local audio file is copied to Apple Music auto-add folder."""
+    auto_dir = get_apple_music_auto_add_dir()
+    if not auto_dir or not os.path.isdir(auto_dir):
+        return False
+    try:
+        safe_title = sanitize_filename(target_title or "未知曲目")
+        safe_artist = sanitize_filename(target_artist or "未知歌手")
+        dest_filename = f"{safe_artist} - {safe_title}.m4a"
+        dest_path = os.path.join(auto_dir, dest_filename)
+        if os.path.normpath(file_path) != os.path.normpath(dest_path):
+            if not os.path.exists(dest_path):
+                shutil.copy2(file_path, dest_path)
+                logger.info("已将现有本地音频复制到 Apple Music 导入目录: %s", dest_path)
+        return True
+    except Exception as e:
+        logger.warning("复制到 Apple Music 导入目录异常: %s", e)
+        return False
+
+
+
 def parse_duration_to_sec(duration_str: str) -> int:
     """Convert mm:ss or hh:mm:ss to total seconds."""
     try:

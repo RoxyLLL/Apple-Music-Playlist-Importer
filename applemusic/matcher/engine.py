@@ -217,6 +217,37 @@ class MatchingEngine:
             )
         else:
             # All executed requests returned HTTP 200 with no hits!
+            # Check user's personal iCloud Music Library if authorized
+            if self.client and self.client.config.is_authorized():
+                try:
+                    lib_id = self.client.find_library_song_id(source.title, source.artist_str or "")
+                    if lib_id:
+                        lib_track = AppleMusicTrack(
+                            id=lib_id,
+                            title=source.title,
+                            artists=source.artists or ([source.primary_artist] if source.primary_artist else []),
+                            album=source.album or "个人资料库",
+                            storefront=sf,
+                            url=None,
+                        )
+                        cand = MatchCandidate(track=lib_track, score=1.0)
+                        return SongMatchResult(
+                            source_track=source,
+                            candidates=[cand],
+                            selected_candidate=cand,
+                            status=ConfidenceLevel.EXACT,
+                            score_gap=1.0,
+                            decision=DecisionStatus.AUTO_ACCEPT.value,
+                            decision_reasons=["已收录于个人资料库 (本地音源)"],
+                            search_status="matched",
+                            search_attempts=query_attempts,
+                            search_failures=[],
+                            retry_after_seconds=None,
+                            search_incomplete=False,
+                        )
+                except Exception:
+                    pass
+
             prefix = "重试检索在" if is_rematch else "在"
             return SongMatchResult(
                 source_track=source,
