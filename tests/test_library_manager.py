@@ -223,6 +223,32 @@ class TestAppleMusicClientLibraryMethods(unittest.TestCase):
         self.assertEqual(results[0]["id"], "i.song_search_1")
         self.assertEqual(results[0]["title"], "七里香")
 
+    @patch("requests.Session.get")
+    def test_find_library_song_id(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": {
+                "library-songs": {
+                    "data": [
+                        {
+                            "id": "i.song_bilibili_999",
+                            "type": "library-songs",
+                            "attributes": {
+                                "name": "幹物女",
+                                "artistName": "封茗囧菌 / 艾辰",
+                                "albumName": "Bilibili 音源补全",
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        mock_get.return_value = mock_resp
+
+        found_id = self.client.find_library_song_id("幹物女", "封茗囧菌 / 艾辰")
+        self.assertEqual(found_id, "i.song_bilibili_999")
+
     @patch("requests.Session.delete")
     def test_delete_library_song(self, mock_delete):
         mock_resp = MagicMock()

@@ -71,11 +71,11 @@
         <div class="flex items-center justify-between" :class="sidebarExpanded ? 'px-1' : 'flex-col space-y-3 items-center'">
           <!-- Logo & Title -->
           <div class="flex items-center space-x-3 overflow-hidden">
-            <img src="/static/app_icon.png" class="w-9 h-9 rounded-2xl shadow-sm shadow-applered/25 object-cover flex-shrink-0" alt="Logo" :title="sidebarExpanded ? '' : 'Apple Music v2.0.1'">
+            <img src="/static/app_icon.png" class="w-9 h-9 rounded-2xl shadow-sm shadow-applered/25 object-cover flex-shrink-0" alt="Logo" :title="sidebarExpanded ? '' : 'Apple Music v2.0.2'">
             <div v-if="sidebarExpanded" class="min-w-0 transition-opacity duration-200">
               <div class="flex items-center space-x-1.5">
                 <span class="font-extrabold text-base text-appledark tracking-tight truncate">Apple Music</span>
-                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200">v2.0.1</span>
+                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200">v2.0.2</span>
               </div>
               <div class="text-[11px] text-neutral-400 font-medium truncate">曲库导入与管理</div>
             </div>
@@ -1363,15 +1363,24 @@
           </p>
         </div>
 
-        <div class="bg-neutral-50 rounded-xl p-3 text-xs text-neutral-600 space-y-1.5 text-left sm:text-center">
+        <div class="bg-neutral-50 rounded-xl p-3 text-xs text-neutral-600 space-y-2 text-left sm:text-center">
           <div>本次成功同步写入：<b class="text-applered text-sm">{{ syncSuccessModal.added_count }}</b> 首歌曲</div>
           <div v-if="syncSuccessModal.bilibili_added_count > 0" class="text-emerald-700 font-semibold flex items-center justify-center gap-1">
             <i class="fa-solid fa-circle-check text-emerald-500"></i>
             <span>含 <b>{{ syncSuccessModal.bilibili_added_count }}</b> 首从 B 站补全的本地曲目</span>
           </div>
-          <div v-if="syncSuccessModal.bilibili_pending_count > 0" class="text-amber-700 text-[11px] bg-amber-50 rounded-md p-1.5 border border-amber-200/60">
-            <i class="fa-solid fa-info-circle mr-0.5"></i>
-            {{ syncSuccessModal.bilibili_pending_count }} 首新提取本地曲目已放入自动导入目录
+          <div v-if="syncSuccessModal.bilibili_pending_count > 0" class="text-amber-700 text-[11px] bg-amber-50 rounded-md p-2.5 border border-amber-200/60 space-y-1.5 text-left">
+            <div class="flex items-center space-x-1.5 font-bold">
+              <i class="fa-solid fa-clock-rotate-left text-amber-500"></i>
+              <span>{{ syncSuccessModal.bilibili_pending_count }} 首新提取 B 站本地曲目正在同步到 iCloud</span>
+            </div>
+            <p class="text-[11px] text-neutral-500 leading-relaxed">Apple Music 客户端正在将这部分本地音频上传并同步至云端资料库（通常需 10~30 秒），完成后可直接补入此歌单。</p>
+            <button @click="retryAddPendingBilibili" :disabled="retryingPendingBilibili"
+              class="w-full py-1.5 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow-2xs disabled:opacity-50">
+              <i v-if="retryingPendingBilibili" class="fa-solid fa-circle-notch fa-spin text-[10px]"></i>
+              <i v-else class="fa-solid fa-arrows-rotate text-[10px]"></i>
+              <span>{{ retryingPendingBilibili ? '正在检查云端资料库...' : '一键补入已就绪的 B 站歌曲' }}</span>
+            </button>
           </div>
           <div class="text-[11px] text-neutral-400">打开各端 Apple Music 客户端即可即时播放</div>
         </div>
@@ -2962,13 +2971,13 @@
           }
 
           const trackIds = selectedItems
-            .filter(r => r.selected_candidate)
+            .filter(r => r.selected_candidate && !r.bilibili_downloaded)
             .map(r => r.selected_candidate.track.id);
 
           const playlistTitle = targetPlaylistName.value || extractedPlaylist.value?.name || '我的导入歌单';
 
           const syncTracks = selectedItems.map(r => {
-            if (r.bilibili_downloaded && !r.selected_candidate) {
+            if (r.bilibili_downloaded) {
               return {
                 id: null,
                 type: 'bilibili_local',
@@ -3007,12 +3016,50 @@
                 playlist_name: playlistTitle,
               };
             } else {
-              alert('同步失败: ' + (data.detail || '未知错误'));
+              alert('同步失败: ' + (data.message || data.detail || '未知错误'));
             }
           } catch (e) {
             alert('同步请求异常: ' + e.message);
           } finally {
             syncing.value = false;
+          }
+        };
+
+        const retryingPendingBilibili = ref(false);
+        const retryAddPendingBilibili = async () => {
+          if (!syncSuccessModal.value || !syncSuccessModal.value.playlist_id) return;
+          const pendingTracks = syncSuccessModal.value.pending_tracks || [];
+          if (pendingTracks.length === 0) {
+            alert('没有待补入的歌曲');
+            return;
+          }
+          retryingPendingBilibili.value = true;
+          try {
+            const res = await fetch(`/api/user/playlists/${syncSuccessModal.value.playlist_id}/add-local-tracks`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tracks: pendingTracks }),
+            });
+            const data = await res.json();
+            if (data.success) {
+              if (data.added_count > 0) {
+                syncSuccessModal.value.added_count = (syncSuccessModal.value.added_count || 0) + data.added_count;
+                syncSuccessModal.value.bilibili_added_count = (syncSuccessModal.value.bilibili_added_count || 0) + data.added_count;
+                syncSuccessModal.value.bilibili_pending_count = Math.max(0, syncSuccessModal.value.bilibili_pending_count - data.added_count);
+                syncSuccessModal.value.pending_tracks = (syncSuccessModal.value.pending_tracks || []).filter(
+                  t => (data.failed_titles || []).includes(t.title)
+                );
+                alert(`成功补入 ${data.added_count} 首 B 站歌曲到歌单！`);
+              } else {
+                alert('Apple Music 仍未完成此音频的云端资料库同步，请保持 Apple Music 客户端开启，稍候几秒后再试。');
+              }
+            } else {
+              alert('补入失败: ' + (data.detail || '未知错误'));
+            }
+          } catch (e) {
+            alert('补入请求异常: ' + e.message);
+          } finally {
+            retryingPendingBilibili.value = false;
           }
         };
 
@@ -4376,6 +4423,8 @@
           unselectAll,
           getArtwork,
           executeSync,
+          retryingPendingBilibili,
+          retryAddPendingBilibili,
           exportCSV,
           sidebarExpanded,
           currentAppTab,

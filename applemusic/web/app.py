@@ -559,20 +559,42 @@ async def sync_to_apple_music(req: SyncRequest):
         final_track_ids = list(req.track_ids or [])
         bilibili_added_count = 0
         bilibili_pending_count = 0
+        still_pending_bilibili = []
 
         # Process structured tracks list if provided
         if req.tracks:
-            for item in req.tracks:
-                if item.is_bilibili or item.type == "bilibili_local":
-                    # Look up user's personal cloud library
+            bilibili_items = [
+                item for item in req.tracks
+                if item.is_bilibili or item.type == "bilibili_local"
+            ]
+            catalog_items = [
+                item for item in req.tracks
+                if not (item.is_bilibili or item.type == "bilibili_local") and item.id
+            ]
+
+            for item in catalog_items:
+                if item.id not in final_track_ids:
+                    final_track_ids.append(item.id)
+
+            # Look up Bilibili items in user's personal cloud library with retry for freshly imported files
+            still_pending_bilibili = list(bilibili_items)
+            for attempt in range(3):
+                current_to_check = still_pending_bilibili
+                still_pending_bilibili = []
+                for item in current_to_check:
                     lib_id = client.find_library_song_id(item.title, item.artist or "")
                     if lib_id:
                         final_track_ids.append(lib_id)
                         bilibili_added_count += 1
                     else:
-                        bilibili_pending_count += 1
-                elif item.id and item.id not in final_track_ids:
-                    final_track_ids.append(item.id)
+                        still_pending_bilibili.append(item)
+
+                if not still_pending_bilibili:
+                    break
+                if attempt < 2 and still_pending_bilibili:
+                    time.sleep(2.0)  # Wait for Apple Music Windows to ingest and sync to iCloud
+
+            bilibili_pending_count = len(still_pending_bilibili)
 
         # Deduplicate while preserving sequence
         seen_tids = set()
@@ -582,9 +604,14 @@ async def sync_to_apple_music(req: SyncRequest):
                 seen_tids.add(tid)
                 deduped_ids.append(tid)
 
+        pending_tracks_info = [
+            {"title": t.title, "artist": t.artist or ""}
+            for t in still_pending_bilibili
+        ]
+
         if not deduped_ids:
             msg = (
-                f"没有可写入 Apple Music 的有效歌曲。已下载的 {bilibili_pending_count} 首 B 站本地歌曲尚未完成 iTunes/Apple Music 资料库导入匹配，请稍后重试。"
+                f"已下载的 {bilibili_pending_count} 首 B 站本地歌曲已进入 Apple Music 自动导入目录，但 Apple Music 尚未完成云端资料库同步（通常需要 10~30 秒）。请确保 Apple Music 客户端处于打开状态，稍候片刻再次点击「同步到 Apple Music」即可自动建单。"
                 if bilibili_pending_count
                 else "待同步歌曲列表为空，未创建空歌单。"
             )
@@ -594,6 +621,7 @@ async def sync_to_apple_music(req: SyncRequest):
                 "added_count": 0,
                 "bilibili_added_count": 0,
                 "bilibili_pending_count": bilibili_pending_count,
+                "pending_tracks": pending_tracks_info,
                 "failed_count": 0,
                 "failed_ids": [],
                 "message": msg,
@@ -611,6 +639,7 @@ async def sync_to_apple_music(req: SyncRequest):
             "added_count": added_count,
             "bilibili_added_count": bilibili_added_count,
             "bilibili_pending_count": bilibili_pending_count,
+            "pending_tracks": pending_tracks_info,
             "failed_count": len(failed_ids),
             "failed_ids": failed_ids,
         }
@@ -867,10 +896,10 @@ async def api_add_local_tracks_to_playlist(playlist_id: str, req: AddLocalTracks
         if not lib_id and title:
             try:
                 cat_res = await asyncio.to_thread(
-                    client.search, f"{title} {artist}".strip(), types=["songs"], limit=1
+                    client.search_catalog, f"{title} {artist}".strip(), limit=1
                 )
-                if cat_res and cat_res.get("songs") and cat_res["songs"].get("data"):
-                    lib_id = cat_res["songs"]["data"][0]["id"]
+                if cat_res and cat_res.tracks:
+                    lib_id = cat_res.tracks[0].id
             except Exception:
                 pass
         if lib_id:

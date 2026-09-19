@@ -1014,7 +1014,9 @@ class AppleMusicClient:
         Search user's personal iCloud Music Library for a track (e.g. locally ingested M4A).
         Returns library song ID (e.g. 'i.xxxx') if found.
         """
+        from applemusic.matcher.scorer import TrackScorer
         import re
+
         clean_t = re.sub(r"[《》「」『』\"“”'‘’]", " ", title)
         prev = None
         while prev != clean_t:
@@ -1029,8 +1031,9 @@ class AppleMusicClient:
 
         queries = [clean_t]
         if artist:
-            first_artist = artist.split()[0] if artist.split() else ""
-            if first_artist:
+            # Extract first artist or clean artist
+            first_artist = re.split(r"[/,、&和与+]", artist)[0].strip() if artist else ""
+            if first_artist and f"{clean_t} {first_artist}" not in queries:
                 queries.append(f"{clean_t} {first_artist}")
         if title.strip() not in queries:
             queries.append(title.strip())
@@ -1057,24 +1060,30 @@ class AppleMusicClient:
                             it_name = attrs.get("name", "")
                             it_artist = attrs.get("artistName", "")
 
+                            # Title similarity
+                            title_sim = TrackScorer.calculate_title_similarity(clean_t, it_name)
                             norm_it_name = TextCleaner.normalize(it_name).lower()
-                            norm_it_artist = TextCleaner.normalize(it_artist).lower()
-
-                            # Calculate title similarity
-                            title_sim = TextCleaner.similarity(norm_target_title, norm_it_name)
                             if norm_target_title in norm_it_name or norm_it_name in norm_target_title:
-                                title_sim = max(title_sim, 0.85)
+                                title_sim = max(title_sim, 0.88)
 
-                            # Calculate artist similarity if artist was provided
-                            if norm_target_artist and norm_it_artist:
-                                artist_sim = TextCleaner.similarity(norm_target_artist, norm_it_artist)
+                            # Artist similarity
+                            if artist and it_artist:
+                                artist_sim = TrackScorer.calculate_artist_similarity(
+                                    [a.strip() for a in re.split(r"[/,、&和与+]", artist) if a.strip()],
+                                    [a.strip() for a in re.split(r"[/,、&和与+]", it_artist) if a.strip()],
+                                )
+                                norm_it_artist = TextCleaner.normalize(it_artist).lower()
                                 if norm_target_artist in norm_it_artist or norm_it_artist in norm_target_artist:
-                                    artist_sim = max(artist_sim, 0.85)
+                                    artist_sim = max(artist_sim, 0.88)
                                 combined_score = title_sim * 0.65 + artist_sim * 0.35
                             else:
                                 combined_score = title_sim
 
-                            if combined_score > best_score and combined_score >= 0.75:
+                            # Exact title match shortcut
+                            if title_sim >= 0.95:
+                                combined_score = max(combined_score, 0.85)
+
+                            if combined_score > best_score and combined_score >= 0.70:
                                 best_score = combined_score
                                 best_cand_id = it.get("id")
 
