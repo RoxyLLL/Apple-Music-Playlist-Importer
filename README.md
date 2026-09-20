@@ -2,147 +2,168 @@
 
 # 🎵 Apple Music Playlist Importer
 
-**专注于 Windows 环境的跨平台智能歌单迁移工具 · 智能模糊匹配引擎 · B 站无损补全 · 现代桌面独立仪表盘**
+### 可能是最好用、最优雅的 Apple Music 跨平台歌单搬家与资料库管理神器
 
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-0078d7.svg?logo=windows)](https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases)
-[![Release](https://img.shields.io/github/v/release/RoxyLLL/Apple-Music-Playlist-Importer?color=brightgreen)](https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+**一键迁移网易云 / QQ 音乐 / Spotify 歌单 · B 站音源无损自动补漏 · 真正 100% 完整度迁移 · Windows 单文件绿色版**
 
-[功能特性](#-核心特性) · [EXE 使用指南](#-exe-程序使用指南) · [常见问题](#-常见问题-faq)
+<p align="center">
+  <a href="https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases">
+    <img src="https://img.shields.io/github/v/release/RoxyLLL/Apple-Music-Playlist-Importer?color=ff2d55&style=for-the-badge&logo=apple&logoColor=white" alt="Latest Release">
+  </a>
+  <a href="https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases">
+    <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-0078d7.svg?style=for-the-badge&logo=windows&logoColor=white" alt="Platform">
+  </a>
+  <a href="https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/stargazers">
+    <img src="https://img.shields.io/github/stars/RoxyLLL/Apple-Music-Playlist-Importer?style=for-the-badge&color=gold" alt="Stars">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="License">
+  </a>
+</p>
+
+[📥 立即下载最新版 (免安装 EXE)](https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases/latest) · [✨ 核心功能](#-它能用来干什么) · [🚀 3 步上手指南](#-3-步极速上手) · [❓ 常见问题](#-常见问题-faq)
 
 </div>
 
 ---
 
-> 💻 **运行环境要求**：**Windows 10 / Windows 11 (64 位)**。  
-> 本项目已编译为**单文件绿色便携版 EXE**，双击即用，**无需安装 Python 或任何开发环境**。
+> 💡 **无需安装 Python，无需配置复杂环境！**  
+> 下载单个 `AppleMusicImporter.exe`，双击即可直接运行。
 
 ---
 
-## 📖 项目简介
+## 🌟 为什么选择它？
 
-**Apple Music Playlist Importer** 是一款面向 Windows 用户的全功能歌单迁移与 Apple Music 资料库批量管理工具。不仅能够将**网易云音乐**、**QQ 音乐**、**Spotify** 或 **本地文本/CSV** 歌单智能匹配并一键导入到您的 **Apple Music** 个人资料库中，还全面开放了 **Apple Music 云端歌单/资料库与 Windows 本地资料库的批量管理、删除与编辑功能**。
+从国内音乐平台转到 Apple Music，你是否也遇到过这些头疼的问题？
 
-针对部分因版权下架或未收录的歌曲，本项目内置了 **B 站无损音源检索与自动补全功能**：基于分层匹配度优选原唱与官方版本，自动下载高品质音频并深度嵌入专辑封面、歌词与 ID3 元数据，助您实现 100% 完整度的歌单迁移。
+- ❌ **很多小众歌、Live 现场版在 Apple Music 搜不到**，迁移后歌单缺斤少两；
+- ❌ **同名歌曲经常匹配错**，把原版误匹配成了翻唱或纯伴奏；
+- ❌ **很多工具还要买几百块的苹果开发者账号**，或者需要手动抓包配置 Token；
+- ❌ **歌单里的歌曲导入后乱序**，找不到刚导进去的歌。
 
----
+**Apple Music Playlist Importer 为解决这些痛点而生：**
 
-## ✨ 核心特性
-
-- **现代 Apple 风格桌面仪表盘 2.0 & 折叠侧边栏**：
-  - **优雅折叠侧边栏**：默认采用紧凑单图标宽度（`72px`），最大化主屏浏览视野，支持一键平滑展开（`256px`）查看完整标签；
-  - **独立沙箱窗口隔离**：采用独立的桌面环境启动，不污染日常浏览器的个人主题色与扩展插件；
-  - **沉浸式无缝标题栏与状态下沉**：曲库地区选择与 Apple ID 状态组件沉降至侧边栏左下角，视觉纯净专注；
-  - **48px 高清专辑封面与内置试听**：曲目一键试听 30 秒官方原声片段，多版本自由切换。
-
-- **全功能 Apple Music 个人资料库与歌单批量管理**：
-  - **歌单批量管理**：一览个人创建的所有歌单，支持歌单名称与描述的实时修改、单项或多选批量删除；
-  - **歌单曲目管理（突破 100 首上限）**：支持全量自动分页拉取，完美展示 100+、200+ 甚至上千首歌曲；支持从歌单中单曲或批量移除歌曲；
-  - **多源添加歌曲至歌单**：
-    - **从个人资料库添加**：快速检索云端资料库，支持单曲添加与批量多选添加；
-    - **从本地资料库添加**：检索 Windows Apple Music 本地音频文件，自动匹配曲库并直接入库当前歌单；
-    - **在线曲库检索添加**：直接在 Apple Music 官方曲库中搜索任意歌曲并加入歌单。
-  - **资料库歌曲管理**：批量查看个人资料库全部已收藏歌曲，支持云端全量检索与批量删除；
-  - **本地 Apple Music 媒体库管理**：自动扫描 Windows 客户端本地媒体库，支持音频一键在文件夹中定位、批量删除、修改元数据（歌名/歌手/专辑）与自动重命名。
-
-- **多平台歌单极速提取**：支持粘贴网易云音乐、QQ 音乐、Spotify 公开歌单链接/分享口令，或直接导入本地 TXT/CSV 文件，支持超长歌单批量提取。
-
-- **智能多维匹配打分引擎 2.0**：
-  - **版本语义隔离**：严格识别 `Live` 现场版、`Remix` 混音版、`伴奏/Instrumental`、`Demo` 等，版本冲突扣分降级，杜绝原版被误替为现场版；
-  - **超短歌名保护**：对《晴天》《红豆》等单双字歌名启用严格作者交集校验，防止同名串歌；
-  - **竞争候选降级复核**：多候选分差小于 0.08 时稳健降级为人工复核，避免模型武断错选；
-  - **时长高斯平滑衰减**：有效防止长音频/解说与常规单曲混淆。
-
-- **二次宽松重试与全球曲库无损探测**：
-  - 针对首次未命中的冷门歌曲，一键剥离影视修饰词（如《...》主题曲、片尾曲、OST）并以宽松阈值深度重试；
-  - 具备全球跨区探测能力，当国区 (CN) 未收录时，自动探测试听港区 (HK)、台区 (TW)、美区 (US)、日区 (JP) 等全球曲库。
-
-- **频控感知与智能熔断保护**：
-  - 实时监测 Apple Music API 频控状态，遇到 429 限制自动启动 8 ~ 18 秒平滑冷却与自愈，避免连续高频撞墙导致封禁。
-
-- **B 站无损音频补全系统**：
-  - **四层绝对隔离打分**：原作者与官方唱片厂牌（Tier 1）绝对优先，对数播放量增益，彻底杜绝翻唱、恶搞劣币驱逐良币；
-  - **元数据自动写入**：自动转码高品质音轨，下载高清封面图并写入标准 ID3v2.4 / MP4 标签。
+| 功能对比 | 传统导入工具 | Apple Music Playlist Importer |
+| :--- | :--- | :--- |
+| **未收录/下架歌曲** | ❌ 直接丢失，歌单残缺 | ✅ **一键从 B 站补全音源并写入资料库**，实现 100% 完整迁移 |
+| **匹配准确率** | ⚠️ 经常串歌（匹配成翻唱/伴奏） | ✅ **智能多维打分**，严格区分 Live/翻唱/原版，支持 30 秒试听 |
+| **使用门槛** | ❌ 需安装 Python、Docker 或手动抓包 | ✅ **单文件免安装绿色 EXE**，支持 Edge 一键自动授权 |
+| **云端资料库管理** | ❌ 仅支持一次性导歌 | ✅ **全功能资料库管家**（批量删歌/换版本/按加入时间排序） |
+| **全设备漫游** | ⚠️ 仅保存在本机 | ✅ **自动同步到 iCloud**，iPhone、iPad、Mac 随时随地收听 |
 
 ---
 
-## 🖥️ EXE 程序使用指南
+## 🎯 它能用来干什么？
 
-### 第一步：下载并启动
-1. 前往本仓库的 [Releases](../../releases) 页面，下载最新的 **`AppleMusicImporter.exe`**；
-2. 将其放置在电脑任意常用文件夹中，**直接双击运行 `AppleMusicImporter.exe`**；
-3. 程序会自动拉起轻量桌面独立应用窗口（若窗口未弹出，可在浏览器直接访问 `http://127.0.0.1:8000`）。
+### 1. 跨平台歌单秒速搬家
+- 支持粘贴 **网易云音乐**、**QQ 音乐**、**Spotify** 的歌单分享链接或口令。
+- 支持直接导入本地 **TXT / CSV** 歌单文件，一键快速解析数百首歌曲。
 
----
+### 2. 智能高精度匹配 & 原声在线试听
+- 自动识别歌曲与歌手，精确区分 **原版 / Live 现场版 / 伴奏版 / Remix 混音**。
+- 提供 **30 秒官方原声在线试听** 与 **自由换版本** 功能，不确定的歌曲听完再决定，拒绝张冠李戴。
 
-### 第二步：连接 Apple ID（全自动提取 Token）
-在将歌曲写入个人资料库前，需要完成一次性账号连接：
-1. 点击界面右上角的 **“连接 Apple ID”**；
-2. 点击 **“启动 Edge 自动抓取 Token”** 按钮；
-3. 此时系统会自动唤起浏览器打开 Apple Music 官方网页，您只需正常扫码或输入密码登录您的 Apple ID；
-4. 登录成功后，程序会在**后台秒级自动捕获 Token 并保存**，客户端提示“Apple ID 已连接”。
+### 3. B 站音源无损自动补漏（核心特色 🌟）
+- 对于 Apple Music 没有版权或下架的歌曲，支持 **一键从 B 站检索原唱音源**。
+- 自动转码为高品质音频，自动嵌入**高清专辑封面、歌手信息与 ID3 标签**。
+- 自动加入 Apple Music 导入目录并同步至 **iCloud 个人云端资料库**，手机、平板、电脑全端随时听。
 
-> 💡 **安全说明**：Token 仅保存在您本地电脑的用户目录（`~/.applemusic/`），采用动态随机端口传输，绝不上报任何第三方服务器。
-
----
-
-### 第三步：解析并提取歌单
-1. 在主界面选择您的来源平台：**网易云音乐** / **QQ 音乐** / **Spotify** / **本地文件**；
-2. 将复制好的歌单链接、分享文本粘贴到输入框中（或选择本地 TXT/CSV 文件）；
-3. 点击 **“开始解析歌单”**，系统将在数秒内展示歌单中所有曲目、歌手、专辑与封面。
+### 4. Apple Music 资料库全功能管家
+- **歌单管理**：查看、修改歌单名与描述，支持歌单单项与多选批量删除。
+- **曲目管理（突破 100 首限制）**：完美支持上千首超大歌单全量浏览与批量移除。
+- **歌曲加入时间排序**：默认按 **最新加入时间** 排序，新导入的歌曲一秒就能找到，同时支持按歌名、歌手升降序切换。
+- **本地音源管理**：扫描电脑本地音乐文件，支持在文件夹中快速定位、批量修改元数据。
 
 ---
 
-### 第四步：智能匹配与试听核对
-1. 歌单解析完成后，系统会自动在 Apple Music 曲库中并发检索对应歌曲并根据相似度分类：
-   - 🟢 **完全精准 / 高可信度**：已自动为您勾选就绪；
-   - 🟡 **待复核（中等相似度）**：可能存在版本差异或别名，建议人工确认；
-   - 🔴 **未收录**：Apple Music 官方曲库未收录该歌曲或处于下架状态。
-2. **试听与换源**：
-   - 点击曲目右侧的 **试听按钮 (▶️)** 即可在线试听 30 秒官方原声音频；
-   - 如需更改版本，点击 **“换版本”** 即可在弹窗中手动挑选其他匹配候选。
+## 🚀 3 步极速上手
+
+### 第一步：粘贴歌单链接并解析
+
+打开软件，选择来源平台（网易云/QQ/Spotify/本地文件），直接粘贴歌单链接或分享文本，点击 **“开始解析歌单”**：
+
+<p align="center">
+  <img src="docs/images/step1-parse.png" alt="步骤 1：选择来源平台并解析歌单" width="850">
+</p>
 
 ---
 
-### 第五步：处理未收录歌曲（二次检索 / B 站补全）
-- **方式 A · 二次深度重新检索**：  
-  点击上方的 **“重新检索”**，程序会自动去除歌名中的电视剧/电影/插曲等尾部噪点，并在更宽松的阈值下重新探测；也可以临时切换至“港区 (HK)”或“美区 (US)”重新检索。
-- **方式 B · 一键 B 站补齐入库**：  
-  对于确已下架的歌曲，点击顶部的 **“从 B 站补全”**（或单独点击歌曲右侧的 **“B站补全”** 按钮）：
-  1. 系统会自动检索并挑选原唱作者发布的纯净高音质音源；
-  2. 自动下载并转换为本地音频，同时注入高清封面和歌手标签；
-  3. 下载完成后点击 **“导入目录”**，将音频文件放入电脑上的 **iTunes** 或 **Apple Music App** 中即可自动同步漫游。
+### 第二步：智能匹配核对 & 一键 B 站补全
+
+系统会在数秒内完成曲库并发匹配：
+- 🟢 **100% 精确 / 高可信**：已为您默认勾选；
+- 🟡 **待复核**：可点击 ▶️ 按钮在线试听 30 秒原声，或点击「换版本」手动挑选；
+- 🔴 **未收录歌曲**：点击顶部的 **「从 B 站补全」**，系统自动寻找优质音源下载并放入 Apple Music 资料库！
+
+<p align="center">
+  <img src="docs/images/step2-match.png" alt="步骤 2：智能匹配核对与 B 站补全" width="850">
+</p>
 
 ---
 
-### 第六步：一键同步到 Apple Music
-1. 在底部输入您期望在 Apple Music 中创建的**歌单名称**；
-2. 点击 **“一键同步至 Apple Music”**；
-3. 导入完成后，打开 iPhone / iPad / Mac / Windows 上的 Apple Music App，即可在您的资料库播放列表中看到完整的新歌单！
+### 第三步：一键导入 Apple Music 个人资料库
+
+确认勾选的歌曲，输入歌单名称，点击 **“导入到 Apple Music”**，稍等片刻即可同步完成！打开手机上的 Apple Music App，新歌单已经出现在您的资料库中。
+
+<p align="center">
+  <img src="docs/images/step3-import.png" alt="步骤 3：一键导入到 Apple Music" width="850">
+</p>
+
+---
+
+## 💻 首次使用：连接 Apple ID（30 秒搞定）
+
+在首次导入前，需要连接一次您的 Apple ID（无需开发者账号，普通订阅用户即可）：
+
+1. 点击软件界面右上角的 **“连接 Apple ID”**；
+2. 点击 **“启动 Edge 自动抓取 Token”**；
+3. 软件会自动调起浏览器打开 Apple Music 网页版，您只需正常扫码或登录您的 Apple ID；
+4. 登录成功后，软件将在**后台秒级自动捕获 Token**，客户端提示“已连接”即可开始使用。
+
+> 🔒 **隐私安全承诺**：所有数据均仅在您的本地设备（`127.0.0.1`）运行，Token 仅保存在本地配置文件中，**绝不会上传到任何第三方服务器**。
 
 ---
 
 ## ❓ 常见问题 (FAQ)
 
-#### Q1：需要购买付费的 Apple Developer 开发者账号吗？
-**不需要！** 本项目通过官方网页端会话授权机制，任何拥有普通 Apple Music 订阅的 Apple ID 均可直接一键抓取 Token 并同步写入个人资料库。
+<details>
+<summary><b>Q1：我需要购买苹果开发者账号（Apple Developer）吗？</b></summary>
+<br>
+<b>完全不需要！</b> 本项目通过 Apple Music 官方网页端的安全授权机制，只要您的 Apple ID 拥有 Apple Music 订阅即可正常使用。
+</details>
 
-#### Q2：Token 的有效期是多久？失效后怎么办？
-`media-user-token` 的有效期通常为数周至数月。如果后续提示 `401 Unauthorized` 或 `Token 已失效`，只需再次点击右上角 **“连接 Apple ID”** 重新登录一次即可刷新。
+<details>
+<summary><b>Q2：从 B 站补全的歌曲，手机（iPhone/iPad）上能听吗？</b></summary>
+<br>
+<b>可以！</b> 程序下载并转码音频后，会自动放入 Apple Music 的自动导入目录。只要您的电脑端 Apple Music 或 iTunes 开启了「iCloud 音乐资料库」，文件就会自动上传到苹果云端，手机端随之自动同步。
+</details>
 
-#### Q3：为什么会提示“频控保护中”？
-当短时间内并发检索大量歌曲时，Apple Music 官方接口可能会触发 429 频控。程序内置了智能自愈机制，通常只需**等待 8 ~ 18 秒**倒计时结束即可自动恢复，无需重启软件。
+<details>
+<summary><b>Q3：大歌单导入时提示“频控限制”怎么办？</b></summary>
+<br>
+当连续检索大量歌曲时，Apple Music 官方接口可能会返回 429 频控。软件内置了智能保护机制，只需等待几秒倒计时结束即可自动恢复并继续，无需手动干预。
+</details>
 
-#### Q4：B 站下载的歌曲如何同步到 iPhone / iPad 上的 Apple Music？
-1. 在客户端点击 **“导入目录”**；
-2. 打开电脑上的 **iTunes**（Windows）或 **Apple Music App**；
-3. 将下载好的音乐文件直接拖入 iTunes 的“歌曲”或“资料库”中；
-4. 在 iTunes 设置中确保勾选了 **“iCloud 音乐资料库”**，稍等片刻云端同步完成后，全设备即可随时收听！
+<details>
+<summary><b>Q4：为什么歌单导入后在手机上没看到？</b></summary>
+<br>
+1. 请确保手机和电脑登录的是同一个 Apple ID；<br>
+2. 在手机「设置」->「音乐」中，确保开启了<b>「同步资料库」</b>（或「iCloud 音乐资料库」）；<br>
+3. 在手机 Apple Music 资料库下拉刷新一下即可。
+</details>
+
+---
+
+## 💖 支持与 Star
+
+如果这个小工具帮您解决了歌单迁移的烦恼，欢迎给本项目点一个 **⭐️ Star**！  
+您的支持是项目持续维护和迭代的最大动力！
+
+[![Star History Chart](https://api.star-history.com/svg?repos=RoxyLLL/Apple-Music-Playlist-Importer&type=Date)](https://star-history.com/#RoxyLLL/Apple-Music-Playlist-Importer&Date)
 
 ---
 
 ## 📄 开源许可证
 
-本项目采用 [MIT License](LICENSE) 开源许可证。
-
-> **免责声明**：本项目仅供学习交流与个人音乐库备份整理使用。所解析之多媒体内容版权均归原平台及唱片公司所有。请勿将本项目用于任何商业用途。
+本项目基于 [MIT License](LICENSE) 开源发布。  
+*免责声明：本项目仅供个人音乐备份与学习交流使用，解析内容版权均归各音乐平台及唱片公司所有。*
