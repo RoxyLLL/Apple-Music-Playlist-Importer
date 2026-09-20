@@ -314,6 +314,31 @@ class TestLocalManager(unittest.TestCase):
         self.assertEqual(len(failed), 0)
         self.assertTrue(os.path.exists(os.path.join(dest_dir, "song1.mp3")))
 
+    def test_local_tracks_deduplication(self):
+        # Two files with the same artist and title in different subfolders
+        sub1 = os.path.join(self.test_dir, "dir1")
+        sub2 = os.path.join(self.test_dir, "dir2")
+        os.makedirs(sub1, exist_ok=True)
+        os.makedirs(sub2, exist_ok=True)
+        file1 = os.path.join(sub1, "Jay Chou - Sunny Day.m4a")
+        file2 = os.path.join(sub2, "Jay Chou - Sunny Day.m4a")
+        with open(file1, "w", encoding="utf-8") as f:
+            f.write("dummy audio 1")
+        with open(file2, "w", encoding="utf-8") as f:
+            f.write("dummy audio 2")
+
+        tracks = list_local_tracks(self.test_dir)
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual(tracks[0]["title"], "Sunny Day")
+        self.assertEqual(tracks[0]["artist"], "Jay Chou")
+
+    @patch("applemusic.extractors.local_manager.get_apple_music_library_media_dir")
+    def test_get_default_local_dirs_prioritizes_am(self, mock_am_dir):
+        from applemusic.extractors.local_manager import get_default_local_dirs
+        mock_am_dir.return_value = self.test_dir
+        dirs = get_default_local_dirs()
+        self.assertEqual(dirs, [self.test_dir])
+
 
 try:
     from fastapi.testclient import TestClient

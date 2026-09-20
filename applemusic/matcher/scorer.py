@@ -9,6 +9,7 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import List, Optional, Tuple
 from applemusic.matcher.artist_aliases import are_artists_equivalent
+from applemusic.matcher.title_aliases import are_titles_equivalent
 from applemusic.matcher.cleaner import TextCleaner
 from applemusic.models import AppleMusicTrack, ConfidenceLevel, DecisionStatus, MatchCandidate, Track
 
@@ -64,23 +65,47 @@ def _calculate_title_similarity_cached(source_title: str, candidate_title: str) 
         return 0.98
 
     # Compare ignoring all punctuation
-    p1 = re.sub(r"[^\w\u4e00-\u9fa5]", "", c1)
-    p2 = re.sub(r"[^\w\u4e00-\u9fa5]", "", c2)
+    p1 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", c1)
+    p2 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", c2)
     if p1 and p1 == p2:
         return 0.99
 
-    # Japanese Kana <-> Romaji comparison
-    has_kana = bool(re.search(r"[\u3040-\u30ff]", c1) or re.search(r"[\u3040-\u30ff]", c2))
-    if has_kana:
-        r1 = TextCleaner.kana_to_romaji(c1)
-        r2 = TextCleaner.kana_to_romaji(c2)
-        rp1 = re.sub(r"[^\w]", "", r1).lower()
-        rp2 = re.sub(r"[^\w]", "", r2).lower()
-        if rp1 and rp2:
-            if rp1 == rp2:
-                return 0.99
-            if len(rp1) >= 4 and len(rp2) >= 4 and (rp1 in rp2 or rp2 in rp1):
-                return 0.92
+    # Known cross-lingual title aliases (e.g. 夜に駆ける <-> Racing into the Night)
+    if are_titles_equivalent(s1, s2) or are_titles_equivalent(c1, c2):
+        return 1.0
+
+    # Check extracted title variants (e.g. bracketed English/Romaji subtitles)
+    v1_list = TextCleaner.extract_title_variants(source_title)
+    v2_list = TextCleaner.extract_title_variants(candidate_title)
+    for v1 in v1_list:
+        for v2 in v2_list:
+            if v1 == v2 or are_titles_equivalent(v1, v2):
+                return 0.98
+            nv1 = TextCleaner.normalize(v1)
+            nv2 = TextCleaner.normalize(v2)
+            if nv1 == nv2 or are_titles_equivalent(nv1, nv2):
+                return 0.98
+
+    # Japanese Kana/Kanji <-> Romaji comparison with multi-reading and morphological analysis
+    has_japanese = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", c1) or re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", c2))
+    if has_japanese:
+        v1_romaji = TextCleaner.get_japanese_romaji_variants(c1)
+        v2_romaji = TextCleaner.get_japanese_romaji_variants(c2)
+        for r1 in v1_romaji:
+            for r2 in v2_romaji:
+                if r1 == r2 or are_titles_equivalent(r1, r2):
+                    return 0.98
+                rp1 = re.sub(r"[^\w]", "", r1).lower()
+                rp2 = re.sub(r"[^\w]", "", r2).lower()
+                if rp1 and rp2:
+                    if rp1 == rp2 or are_titles_equivalent(rp1, rp2):
+                        return 0.98
+                    if len(rp1) >= 4 and len(rp2) >= 4:
+                        if rp1 in rp2 or rp2 in rp1:
+                            return 0.92
+                        ratio = _fast_sequence_ratio(r1, r2)
+                        if ratio >= 0.80:
+                            return max(ratio, 0.90)
 
     raw_sim = _fast_sequence_ratio(s1, s2)
     clean_sim = _fast_sequence_ratio(c1, c2)
@@ -99,16 +124,51 @@ def _calculate_title_similarity_cached(source_title: str, candidate_title: str) 
         elif shorter in longer and ratio >= 0.70:
             contain_bonus = 0.80
 
-    return max(raw_sim, clean_sim, contain_bonus)
+    # If core cleaned titles have very low similarity (< 0.40),
+    # do not let shared noise/tags (e.g. '(feat. ...)', '(live)') in raw titles
+    # artificially elevate the score.
+    if clean_sim < 0.40:
+        base_sim = clean_sim
+    else:
+        base_sim = max(raw_sim, clean_sim)
+
+    return max(base_sim, contain_bonus)
 
 
 class TrackScorer:
     """Calculates match confidence scores and decision statuses for Apple Music candidates."""
 
     @classmethod
-    def calculate_title_similarity(cls, source_title: str, candidate_title: str) -> float:
-        """Calculate similarity between core titles."""
-        return _calculate_title_similarity_cached(source_title, candidate_title)
+    def calculate_title_similarity(
+        cls,
+        source_title: str,
+        candidate_title: str,
+        trans_title: Optional[str] = None,
+        aliases: Optional[List[str]] = None,
+    ) -> float:
+        """
+        Calculate similarity between core titles.
+        Also checks official translation (trans_title) and alternate aliases.
+        """
+        sim = _calculate_title_similarity_cached(source_title, candidate_title)
+        if sim >= 0.95:
+            return sim
+
+        if trans_title:
+            t_sim = _calculate_title_similarity_cached(trans_title, candidate_title)
+            sim = max(sim, t_sim)
+            if sim >= 0.95:
+                return sim
+
+        if aliases:
+            for a in aliases:
+                if a and a.strip():
+                    a_sim = _calculate_title_similarity_cached(a.strip(), candidate_title)
+                    sim = max(sim, a_sim)
+                    if sim >= 0.95:
+                        return sim
+
+        return sim
 
     @classmethod
     def calculate_artist_similarity(
@@ -131,6 +191,26 @@ class TrackScorer:
         # Primary artist exact or known cross-lingual alias match
         if norm_pri_s and norm_pri_c and (norm_pri_s == norm_pri_c or are_artists_equivalent(norm_pri_s, norm_pri_c)):
             return 1.0
+
+        # Japanese Kana/Kanji transliteration for primary artist
+        has_jp = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", norm_pri_s) or re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", norm_pri_c))
+        if has_jp:
+            s_art_vars = TextCleaner.get_japanese_romaji_variants(norm_pri_s)
+            c_art_vars = TextCleaner.get_japanese_romaji_variants(norm_pri_c)
+            for r_s in s_art_vars:
+                for r_c in c_art_vars:
+                    if r_s == r_c or are_artists_equivalent(r_s, r_c):
+                        return 1.0
+                    rsp = re.sub(r"[^\w]", "", r_s)
+                    rcp = re.sub(r"[^\w]", "", r_c)
+                    if rsp and rsp == rcp:
+                        return 1.0
+                    if len(rsp) >= 3 and len(rcp) >= 3:
+                        if rsp in rcp or rcp in rsp:
+                            return 0.95
+                        ratio = _fast_sequence_ratio(r_s, r_c)
+                        if ratio >= 0.80:
+                            return max(ratio, 0.90)
 
         # Primary artist substring or high similarity
         pri_score = 0.0
@@ -159,6 +239,20 @@ class TrackScorer:
                 if s == c or are_artists_equivalent(s, c):
                     max_cross_score = max(max_cross_score, 1.0)
                     break
+                # Romaji transliteration check across artist list
+                if bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", s) or re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", c)):
+                    for rs in TextCleaner.get_japanese_romaji_variants(s):
+                        for rc in TextCleaner.get_japanese_romaji_variants(c):
+                            if rs == rc or are_artists_equivalent(rs, rc):
+                                max_cross_score = max(max_cross_score, 1.0)
+                                break
+                            rsp = re.sub(r"[^\w]", "", rs)
+                            rcp = re.sub(r"[^\w]", "", rc)
+                            if rsp and rsp == rcp:
+                                max_cross_score = max(max_cross_score, 1.0)
+                                break
+                            elif len(rsp) >= 3 and len(rcp) >= 3 and (rsp in rcp or rcp in rsp):
+                                max_cross_score = max(max_cross_score, 0.92)
                 elif s in c or c in s:
                     max_cross_score = max(max_cross_score, 0.90)
                 else:
@@ -277,7 +371,9 @@ class TrackScorer:
                 )
 
         # 2. Individual feature similarities
-        title_score = cls.calculate_title_similarity(source.title, candidate.title)
+        title_score = cls.calculate_title_similarity(
+            source.title, candidate.title, trans_title=source.trans_title, aliases=source.aliases
+        )
         artist_score = cls.calculate_artist_similarity(source.artists, candidate.artists)
         duration_factor = cls.calculate_duration_factor(source.duration_ms, candidate.duration_ms)
         album_score = cls.calculate_album_similarity(source.album, candidate.album)
@@ -286,7 +382,19 @@ class TrackScorer:
         )
         reasons.extend(v_reasons)
 
-        # 3. Dynamic Weighting & Metadata Adequacy
+        # 3. Strict Album Track Fingerprint Fallback (for unlisted translations only)
+        # ONLY triggers when artist is verified (>= 0.85), album is verified (>= 0.85),
+        # version is consistent, and duration matches precisely within 2.0 seconds.
+        is_album_track_corroborated = False
+        if title_score < 0.45 and artist_score >= 0.85 and album_score >= 0.85 and version_factor >= 0.0:
+            if source.duration_ms and candidate.duration_ms:
+                diff_sec = abs(source.duration_ms - candidate.duration_ms) / 1000.0
+                if diff_sec <= 2.0:
+                    is_album_track_corroborated = True
+                    title_score = 0.60
+                    reasons.append(f"同专辑同艺人相同时长曲目({diff_sec:.1f}s误差)，疑似跨语种译名(待人工核对)")
+
+        # 4. Dynamic Weighting & Metadata Adequacy
         has_artist = bool(source.artists and candidate.artists)
         has_album = bool(source.album and candidate.album)
         has_duration = bool(source.duration_ms and candidate.duration_ms)
@@ -311,39 +419,32 @@ class TrackScorer:
         # Apply version factor
         composite = base_score + version_factor
 
-        # 4. Hard Guards
-        # Check cross-script artist (CJK vs Latin)
-        s_cjk = any(re.search(r"[\u4e00-\u9fa5]", a) for a in (source.artists or []))
-        c_cjk = any(re.search(r"[\u4e00-\u9fa5]", a) for a in (candidate.artists or []))
-        is_cross_script = (s_cjk and not c_cjk) or (not s_cjk and c_cjk)
-
-        # Artist mismatch guard:
+        # 5. Hard Guards (Orthogonal Double-Independence Verification)
+        # Rule 1: Artist mismatch guard
         if source.artists and artist_score < 0.35:
-            if is_cross_script and title_score >= 0.80:
-                composite = min(composite, 0.78)
-                reasons.append("艺人跨语种未直接匹配(待复核)")
-            else:
-                composite *= 0.30
-                reasons.append("艺人明显不匹配")
+            composite *= 0.30
+            reasons.append("艺人明显不匹配")
 
-        # Title mismatch guard:
-        if title_score < 0.45:
+        # Rule 2: Title mismatch guard
+        if title_score < 0.45 and not is_album_track_corroborated:
             composite *= 0.30
             reasons.append("歌名相似度过低")
 
-        # Short title safety guard:
+        # Rule 3: Short title safety guard (e.g. "心海", "Lemon", "Stay", "Intro")
         clean_core, _ = TextCleaner.parse_title(source.title)
         cjk_chars = len(re.findall(r"[\u4e00-\u9fa5]", clean_core))
         is_short = (cjk_chars > 0 and len(clean_core) <= 2) or (cjk_chars == 0 and len(clean_core) <= 4)
         if is_short:
             if artist_score < 0.85:
-                composite *= 0.40
+                composite *= 0.30
                 reasons.append("短歌名缺乏高置信艺人佐证")
 
         composite = max(0.0, min(1.0, composite))
 
         # Initial confidence classification
-        if composite >= 0.88:
+        if is_album_track_corroborated:
+            confidence = ConfidenceLevel.MEDIUM
+        elif composite >= 0.88:
             confidence = ConfidenceLevel.EXACT
         elif composite >= 0.72:
             confidence = ConfidenceLevel.HIGH

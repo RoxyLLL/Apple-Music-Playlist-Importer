@@ -34,6 +34,8 @@ class Track(BaseModel):
     source: str = "unknown"
     version_tags: List[str] = Field(default_factory=list)
     clean_title: Optional[str] = None
+    trans_title: Optional[str] = None
+    aliases: List[str] = Field(default_factory=list)
     primary_artist: Optional[str] = None
     featured_artists: List[str] = Field(default_factory=list)
 

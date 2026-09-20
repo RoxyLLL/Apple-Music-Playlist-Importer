@@ -65,32 +65,35 @@ def get_apple_music_library_media_dir() -> Optional[str]:
 
 def get_default_local_dirs() -> List[str]:
     """Get list of scanned default music directories, prioritizing local Apple Music library."""
-    dirs = []
     am_dir = get_apple_music_library_media_dir()
     if am_dir and os.path.isdir(am_dir):
-        dirs.append(am_dir)
+        return [am_dir]
 
     backup_dir = get_backup_download_dir()
-    if os.path.isdir(backup_dir) and backup_dir not in dirs:
-        dirs.append(backup_dir)
+    if os.path.isdir(backup_dir):
+        return [backup_dir]
 
     userprofile = os.environ.get("USERPROFILE", "")
     standard_music = os.path.join(userprofile, "Music")
-    if os.path.isdir(standard_music) and standard_music not in dirs:
-        dirs.append(standard_music)
+    if os.path.isdir(standard_music):
+        return [standard_music]
 
-    return dirs
+    return []
 
 
 def list_local_tracks(directory: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Scan local Apple Music library directory (or specified directory) for audio files recursively.
     Extracts metadata, duration, file size, and cover availability.
+    Deduplicates tracks by normalized (title, artist) signature.
     """
+    from applemusic.matcher.cleaner import TextCleaner
+
     target_dirs = [directory] if directory and os.path.isdir(directory) else get_default_local_dirs()
 
     results: List[Dict[str, Any]] = []
     seen_paths = set()
+    seen_signatures = set()
 
     for d in target_dirs:
         if not os.path.isdir(d):
@@ -174,6 +177,15 @@ def list_local_tracks(directory: Optional[str] = None) -> List[Dict[str, Any]]:
                                     has_cover = True
                     except Exception as meta_err:
                         logger.debug("读取文件元数据跳过 (%s): %s", fname, meta_err)
+
+                    # Deduplication by (title, artist) signature
+                    clean_t = TextCleaner.clean_title(title).strip().lower() or title.strip().lower()
+                    clean_a = TextCleaner.clean_artist(artist).strip().lower() if artist else ""
+                    track_sig = (clean_t, clean_a)
+                    if track_sig in seen_signatures and clean_t:
+                        logger.debug("跳过重复本地歌曲: %s - %s (%s)", artist, title, abs_path)
+                        continue
+                    seen_signatures.add(track_sig)
 
                     results.append({
                         "file_path": abs_path,

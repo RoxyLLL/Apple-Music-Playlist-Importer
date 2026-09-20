@@ -74,6 +74,7 @@ class TextCleaner:
         if not text:
             return ""
         kana_map = {
+            # Digraphs & Combinations (2 chars)
             "きゃ": "kya", "きゅ": "kyu", "きょ": "kyo",
             "しゃ": "sha", "しゅ": "shu", "しょ": "sho",
             "ちゃ": "cha", "ちゅ": "chu", "ちょ": "cho",
@@ -85,6 +86,11 @@ class TextCleaner:
             "じゃ": "ja", "じゅ": "ju", "じょ": "jo",
             "びゃ": "bya", "びゅ": "byu", "びょ": "byo",
             "ぴゃ": "pya", "ぴゅ": "pyu", "ぴょ": "pyo",
+            "てぃ": "ti", "でぃ": "di", "ふぁ": "fa", "ふぃ": "fi",
+            "ふぇ": "fe", "ふぉ": "fo", "うぃ": "wi", "うぇ": "we", "うぉ": "wo",
+            "しぇ": "she", "じぇ": "je", "ちぇ": "che", "つぁ": "tsa", "でゅ": "dyu",
+
+            # Monographs (1 char)
             "あ": "a", "い": "i", "う": "u", "え": "e", "お": "o",
             "か": "ka", "き": "ki", "く": "ku", "け": "ke", "こ": "ko",
             "さ": "sa", "し": "shi", "す": "su", "せ": "se", "そ": "so",
@@ -100,6 +106,8 @@ class TextCleaner:
             "だ": "da", "ぢ": "ji", "づ": "zu", "で": "de", "ど": "do",
             "ば": "ba", "び": "bi", "ぶ": "bu", "べ": "be", "ぼ": "bo",
             "ぱ": "pa", "ぴ": "pi", "ぷ": "pu", "ぺ": "pe", "ぽ": "po",
+            "ゔ": "vu",
+            "ぁ": "a", "ぃ": "i", "ぅ": "u", "ぇ": "e", "ぉ": "o", "ゎ": "wa",
         }
         hira = []
         for c in text:
@@ -108,6 +116,8 @@ class TextCleaner:
                 hira.append(chr(code - 0x60))
             elif c in ("ー", "〜", "～"):
                 continue
+            elif c == "ヴ":
+                hira.append("ゔ")
             else:
                 hira.append(c)
         s = "".join(hira)
@@ -131,6 +141,96 @@ class TextCleaner:
                 out.append(s[i])
                 i += 1
         return "".join(out)
+
+    @staticmethod
+    def japanese_to_romaji(text: str) -> str:
+        """
+        Convert Japanese text (Kanji + Kana) to lowercase Hepburn Romaji.
+        Uses curated Kanji compound mappings first, then converts remaining Kana.
+        """
+        if not text:
+            return ""
+        from applemusic.matcher.title_aliases import KANJI_TO_ROMAJI_COMPOUNDS
+        s = text
+        for kanji, romaji in KANJI_TO_ROMAJI_COMPOUNDS:
+            if kanji in s:
+                s = s.replace(kanji, f" {romaji} ")
+
+        romaji_s = TextCleaner.kana_to_romaji(s)
+        romaji_s = re.sub(r"\s+", " ", romaji_s).strip().lower()
+        return romaji_s
+
+    @staticmethod
+    def get_japanese_romaji_variants(text: str) -> List[str]:
+        """
+        Generate all plausible Romaji transliterations for Japanese text,
+        accounting for Kana, morphological analysis (pykakasi), curated compounds,
+        and On'yomi/Kun'yomi multi-readings for Kanji.
+        """
+        if not text:
+            return []
+
+        import itertools
+        from typing import Set
+        variants: Set[str] = set()
+
+        # 1. Base curated compound replacement + Kana conversion
+        base = TextCleaner.japanese_to_romaji(text)
+        if base:
+            clean_b = re.sub(r"\s+", " ", base).strip().lower()
+            if clean_b:
+                variants.add(clean_b)
+                variants.add(re.sub(r"[^\w]", "", clean_b))
+
+        # 2. pykakasi conversion (if available)
+        try:
+            import pykakasi
+            k = pykakasi.kakasi()
+            res = k.convert(text)
+            if res:
+                hep = " ".join(item.get("hepburn", "") for item in res if item.get("hepburn")).strip().lower()
+                if hep:
+                    clean_hep = re.sub(r"\s+", " ", hep).strip().lower()
+                    variants.add(clean_hep)
+                    variants.add(re.sub(r"[^\w]", "", clean_hep))
+        except Exception:
+            pass
+
+        # 3. On'yomi and Kun'yomi multi-reading combinations
+        from applemusic.matcher.title_aliases import KANJI_MULTI_READINGS
+        c_text = TextCleaner.clean_title(text)
+        kanji_in_text = [ch for ch in c_text if ch in KANJI_MULTI_READINGS]
+        if kanji_in_text and len(kanji_in_text) <= 4:
+            slots = []
+            for ch in c_text:
+                if ch in KANJI_MULTI_READINGS:
+                    slots.append(KANJI_MULTI_READINGS[ch])
+                elif re.search(r"[\u3040-\u30ff]", ch):
+                    slots.append([TextCleaner.kana_to_romaji(ch)])
+                elif ch.isspace():
+                    slots.append([" "])
+                elif re.match(r"[a-zA-Z0-9]", ch):
+                    slots.append([ch.lower()])
+                else:
+                    slots.append([""])
+
+            total_combos = 1
+            for s in slots:
+                total_combos *= len(s)
+                if total_combos > 32:
+                    break
+
+            if total_combos <= 32:
+                for combo in itertools.product(*slots):
+                    raw = "".join(combo)
+                    clean_v = re.sub(r"\s+", " ", raw).strip().lower()
+                    clean_np = re.sub(r"[^\w]", "", raw).lower()
+                    if clean_v:
+                        variants.add(clean_v)
+                    if clean_np:
+                        variants.add(clean_np)
+
+        return [v for v in variants if v]
 
     @staticmethod
     def normalize(text: str) -> str:
@@ -223,6 +323,48 @@ class TextCleaner:
         return core
 
     @classmethod
+    def extract_title_variants(cls, title: str) -> List[str]:
+        """
+        Extract title and any bracketed or dash-separated alternate titles.
+        Useful for cross-lingual matches like '打上花火 (Uchiage Hanabi)' or
+        '夜に駆ける - Racing into the Night'.
+        """
+        if not title:
+            return []
+        variants = [cls.clean_title(title)]
+
+        # Check bracketed segments
+        bracket_pattern = r"[\(（【\[]([^()（）【\]]*)[\)）】\]]"
+        for m in re.findall(bracket_pattern, title):
+            m_clean = m.strip()
+            # Ignore if it's purely a version tag
+            is_version = False
+            for keywords in VERSION_MAP.values():
+                if any(kw in m_clean.lower() for kw in keywords):
+                    is_version = True
+                    break
+            if not is_version and len(m_clean) >= 2:
+                variants.append(m_clean)
+
+        # Check dash / slash separators: e.g. "Song - English Title"
+        parts = re.split(r"\s*[-–—/]\s*", title)
+        if len(parts) > 1:
+            for p in parts:
+                p_clean = cls.clean_title(p)
+                if p_clean and p_clean not in variants and len(p_clean) >= 2:
+                    variants.append(p_clean)
+
+        return [v for v in variants if v]
+
+    @classmethod
+    def clean_artist(cls, artist: str) -> str:
+        """Extract primary artist and clean delimiters."""
+        if not artist:
+            return ""
+        pri, _ = cls.parse_artists([artist])
+        return pri if pri else artist.strip()
+
+    @classmethod
     def parse_artists(cls, artists: List[str]) -> Tuple[str, List[str]]:
         """
         Extract primary artist and list of featured/collaborative artists.
@@ -292,6 +434,16 @@ class TextCleaner:
                 tag_label = all_tags[0]
                 add_q(1, f"{core_t} {primary_artist} {tag_label}")
 
+            # Cross-lingual alias / Romaji variant
+            from applemusic.matcher.artist_aliases import get_artist_aliases
+            for alias in get_artist_aliases(primary_artist):
+                if alias.lower() != primary_artist.lower():
+                    add_q(2, f"{core_t} {alias}")
+                    break
+            romaji_artist = cls.japanese_to_romaji(primary_artist)
+            if romaji_artist and romaji_artist != primary_artist.lower():
+                add_q(2, f"{core_t} {romaji_artist}")
+
         # Tier 2: Collaborator variants
         if featured:
             add_q(2, f"{core_t} {primary_artist} {featured[0]}")
@@ -337,6 +489,14 @@ class TextCleaner:
         # 1. Clean Core Title + Primary Artist
         if primary_artist:
             add_q(1, f"{core_t} {primary_artist}")
+            from applemusic.matcher.artist_aliases import get_artist_aliases
+            for alias in get_artist_aliases(primary_artist):
+                if alias.lower() != primary_artist.lower():
+                    add_q(2, f"{core_t} {alias}")
+                    break
+            romaji_artist = cls.japanese_to_romaji(primary_artist)
+            if romaji_artist and romaji_artist != primary_artist.lower():
+                add_q(2, f"{core_t} {romaji_artist}")
 
         # If core title contains ' - ' (e.g. 'Song - Artist' or 'Song - Fluff')
         if " - " in core_t:

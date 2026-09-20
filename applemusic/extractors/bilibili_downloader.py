@@ -126,7 +126,7 @@ def sanitize_filename(name: str) -> str:
 
 def find_existing_bilibili_audio(title: str, artist: str = "") -> Optional[str]:
     """
-    Search local directories (backup download folder, Apple Music auto-add folder)
+    Search local directories (Apple Music official media library, backup download folder, Apple Music auto-add folder)
     for an already downloaded audio file corresponding to title & artist.
     """
     from applemusic.matcher.cleaner import TextCleaner
@@ -136,8 +136,32 @@ def find_existing_bilibili_audio(title: str, artist: str = "") -> Optional[str]:
     if not clean_t and not norm_t:
         return None
 
-    clean_a = TextCleaner.clean_artist(artist).lower().strip() if artist else ""
+    try:
+        clean_a = TextCleaner.clean_artist(artist).lower().strip() if artist else ""
+    except Exception:
+        clean_a = artist.lower().strip() if artist else ""
 
+    # Priority 1: Search Apple Music official media library (where imported files live)
+    try:
+        from applemusic.extractors.local_manager import get_apple_music_library_media_dir
+        am_media_dir = get_apple_music_library_media_dir()
+        if am_media_dir and os.path.isdir(am_media_dir):
+            for root, _, filenames in os.walk(am_media_dir):
+                for fname in filenames:
+                    if fname.lower().endswith((".m4a", ".mp3", ".flac", ".wav", ".aac")):
+                        fname_norm = TextCleaner.normalize(fname).lower()
+                        if (clean_t and clean_t in fname_norm) or (norm_t and norm_t in fname_norm):
+                            if clean_a:
+                                rel_path = os.path.relpath(os.path.join(root, fname), am_media_dir).lower()
+                                if clean_a not in rel_path and clean_a not in fname_norm:
+                                    continue
+                            file_path = os.path.join(root, fname)
+                            if os.path.getsize(file_path) > 102400:
+                                return file_path
+    except Exception as e:
+        logger.warning("扫描 Apple Music 媒体库异常: %s", e)
+
+    # Priority 2: Backup download directory & auto-add directory
     dirs_to_check = [get_backup_download_dir()]
     auto_dir = get_apple_music_auto_add_dir()
     if auto_dir and os.path.isdir(auto_dir):
@@ -170,6 +194,16 @@ def ensure_auto_imported(file_path: str, target_title: str, target_artist: str) 
     if not auto_dir or not os.path.isdir(auto_dir):
         return False
     try:
+        from applemusic.extractors.local_manager import get_apple_music_library_media_dir
+        am_media_dir = get_apple_music_library_media_dir()
+        if am_media_dir and os.path.isdir(am_media_dir):
+            try:
+                # If file_path is already inside Apple Music's media library, no need to copy
+                if os.path.commonpath([os.path.abspath(file_path), os.path.abspath(am_media_dir)]) == os.path.abspath(am_media_dir):
+                    return True
+            except Exception:
+                pass
+
         safe_title = sanitize_filename(target_title or "未知曲目")
         safe_artist = sanitize_filename(target_artist or "未知歌手")
         dest_filename = f"{safe_artist} - {safe_title}.m4a"

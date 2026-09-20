@@ -373,7 +373,23 @@ class MatchingEngine:
                     # Candidates found but not auto-accepted: schedule 1 refined fallback if available
                     raw_title = source.title.strip()
                     if best is None or best.score < self.config.min_review_score:
-                        if not single_query_budget and primary_artist and core_title:
+                        if source.trans_title and primary_artist:
+                            queries_to_run.append(f"{source.trans_title} {primary_artist}")
+                        elif source.trans_title:
+                            queries_to_run.append(source.trans_title)
+
+                        from applemusic.matcher.artist_aliases import get_artist_aliases
+                        aliases = get_artist_aliases(primary_artist) if primary_artist else []
+                        alt_artist = next((a for a in aliases if a.lower() != (primary_artist or "").lower()), None)
+                        romaji_artist = TextCleaner.japanese_to_romaji(primary_artist) if primary_artist else ""
+
+                        if alt_artist:
+                            queries_to_run.append(f"{core_title} {alt_artist}")
+                        elif romaji_artist and romaji_artist != (primary_artist or "").lower():
+                            queries_to_run.append(f"{core_title} {romaji_artist}")
+                        elif not single_query_budget and primary_artist and core_title:
+                            queries_to_run.append(core_title)
+                        elif core_title:
                             queries_to_run.append(core_title)
                     elif version_tags and primary_artist:
                         queries_to_run.append(f"{core_title} {primary_artist} {version_tags[0]}")
@@ -385,11 +401,26 @@ class MatchingEngine:
                         queries_to_run.append(f"{raw_title} {primary_artist}")
             elif outcome.kind == "no_hits":
                 # Primary query returned 0 hits.
-                # Only expand in rematch mode or if raw title has substantial extra keywords
+                if source.trans_title and primary_artist:
+                    queries_to_run.append(f"{source.trans_title} {primary_artist}")
+                elif source.trans_title:
+                    queries_to_run.append(source.trans_title)
+
+                from applemusic.matcher.artist_aliases import get_artist_aliases
+                aliases = get_artist_aliases(primary_artist) if primary_artist else []
+                alt_artist = next((a for a in aliases if a.lower() != (primary_artist or "").lower()), None)
+                romaji_artist = TextCleaner.japanese_to_romaji(primary_artist) if primary_artist else ""
+
                 raw_title = source.title.strip()
-                if raw_title and raw_title.lower() != core_title.lower() and primary_artist:
+                if alt_artist:
+                    queries_to_run.append(f"{core_title} {alt_artist}")
+                elif romaji_artist and romaji_artist != (primary_artist or "").lower():
+                    queries_to_run.append(f"{core_title} {romaji_artist}")
+                elif raw_title and raw_title.lower() != core_title.lower() and primary_artist:
                     queries_to_run.append(f"{raw_title} {primary_artist}")
                 elif not single_query_budget and primary_artist and core_title:
+                    queries_to_run.append(core_title)
+                elif core_title:
                     queries_to_run.append(core_title)
                 elif not primary_artist and raw_title and raw_title.lower() != core_title.lower():
                     queries_to_run.append(raw_title)

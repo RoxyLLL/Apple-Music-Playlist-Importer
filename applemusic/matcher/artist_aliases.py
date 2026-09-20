@@ -237,7 +237,8 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"藤井风", "藤井風", "fujii kaze", "kaze fujii"},
     {"Eve", "eve"},
     {"Yorushika", "ヨルシカ", "yorushika"},
-    {"ZUTOMAYO", "ずっと真夜中でいいのに。", "zutomayo"},
+    {"ZUTOMAYO", "ずっと真夜中でいいのに。", "ずっと真夜中でいいのに", "zutomayo", "ずとまよ"},
+    {"あたらよ", "atarayo"},
     {"美波", "minami"},
     {"绿黄色社会", "緑黄色社会", "ryokuoushoku shaken"},
     {"ONE OK ROCK", "one ok rock", "oor"},
@@ -250,6 +251,72 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"X JAPAN", "x japan"},
     {"GLAY", "glay"},
     {"LUNA SEA", "luna sea"},
+    {"高桥洋子", "高橋洋子", "yoko takahashi", "takahashi yoko"},
+    {"DAOKO", "daoko"},
+    {"優里", "yuuri", "yuri"},
+    {"DISH//", "dish//", "dish"},
+    {"瑛人", "eito"},
+    {"Creepy Nuts", "creepy nuts"},
+    {"Mrs. GREEN APPLE", "mrs. green apple", "mrs green apple"},
+    {"SEKAI NO OWARI", "sekai no owari", "世界末日"},
+    {"B'z", "b'z"},
+    {"桑田佳祐", "keisuke kuwata"},
+    {"福山雅治", "masaharu fukuyama"},
+    {"平井坚", "平井堅", "ken hirai"},
+    {"小田和正", "kazumasa oda"},
+    {"德永英明", "徳永英明", "hideaki tokunaga"},
+    {"谷村新司", "shinji tanimura"},
+    {"细野晴臣", "細野晴臣", "haruomi hosono"},
+    {"山下达郎", "山下達郎", "tatsuro yamashita"},
+    {"竹内玛莉亚", "竹内まりや", "mariya takeuchi"},
+    {"大贯妙子", "大貫妙子", "taeko onuki"},
+    {"杏里", "anri"},
+    {"具岛直子", "具島直子", "naoko gushima"},
+    {"supercell", "supercell"},
+    {"EGOIST", "egoist"},
+    {"Goose house", "goose house"},
+    {"ClariS", "claris"},
+    {"fripSide", "fripside"},
+    {"GARNiDELiA", "garnidelia"},
+    {"Kalafina", "kalafina"},
+    {"TrySail", "trysail"},
+    {"茅原实里", "茅原実里", "minori chihara"},
+    {"早见沙织", "早見沙織", "saori hayami"},
+    {"悠木碧", "aoi yuki"},
+    {"雨宫天", "雨宮天", "sora amamiya"},
+    {"高桥李依", "高橋李依", "rie takahashi"},
+    {"鬼头明里", "鬼頭明里", "akari kito"},
+    {"楠木灯", "楠木ともり", "tomori kusunoki"},
+    {"铃木爱奈", "鈴木愛奈", "aina suzuki"},
+    {"齐藤壮马", "斉藤壮馬", "soma saito"},
+    {"宫野真守", "宮野真守", "mamoru miyano"},
+    {"神谷浩史", "hiroshi kamiya"},
+    {"小野大辅", "小野大輔", "daisuke ono"},
+    {"梶裕贵", "梶裕貴", "yuki kaji"},
+    {"内田真礼", "maaya uchida"},
+    {"内田雄马", "内田雄馬", "yuma uchida"},
+    {"冈崎体育", "岡崎体育", "okazaki taiiku"},
+    {"须田景凪", "須田景凪", "keina suda", "balloon", "バルーン"},
+    {"wacci", "wacci"},
+    {"sumika", "sumika"},
+    {"Saucy Dog", "saucy dog"},
+    {"マカロニえんぴつ", "macaroni empitsu"},
+    {"WANIMA", "wanima"},
+    {"[Alexandros]", "alexandros"},
+    {"MY FIRST STORY", "my first story"},
+    {"THE ORAL CIGARETTES", "the oral cigarettes"},
+    {"UVERworld", "uverworld"},
+    {"SCANDAL", "scandal"},
+    {"CHiCO with HoneyWorks", "honeyworks", "chico with honeyworks"},
+    {"ReoNa", "reona"},
+    {"milet", "milet"},
+    {"yama", "yama"},
+    {"Tani Yuuki", "tani yuuki"},
+    {"なとり", "natori"},
+    {"imase", "imase"},
+    {"Atarashii Gakko!", "新しい学校のリーダーズ", "atarashii gakko"},
+    {"幾田りら", "ikura", "幾田莉拉"},
+    {"DAZBEE", "dazbee"},
 
     # Korean Artists (K-Pop)
     {"IU", "iu", "李知恩", "lee ji eun"},
@@ -274,6 +341,7 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"Super Junior", "super junior", "suju"},
     {"SHINee", "shinee"},
     {"东方神起", "tvxq!", "tvxq", "dbsk"},
+    {"倚水", "isui"},
 ]
 
 # Build lookup index from normalized alias -> group_id
@@ -315,3 +383,19 @@ def are_artists_equivalent(a1: str, a2: str) -> bool:
         return True
 
     return False
+
+
+def get_artist_aliases(artist: str) -> List[str]:
+    """
+    Get all known alias representations for an artist.
+    Returns a list of aliases if found, otherwise empty list.
+    """
+    if not artist:
+        return []
+    n = artist.lower().strip()
+    p = re.sub(r"[^\w\s]", "", n).strip()
+    gid = _ALIAS_TO_GROUP.get(n) or _ALIAS_TO_GROUP.get(p)
+    if gid is not None:
+        return list(ARTIST_GROUPS[gid])
+    return []
+

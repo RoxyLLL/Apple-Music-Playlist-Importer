@@ -71,11 +71,11 @@
         <div class="flex items-center justify-between" :class="sidebarExpanded ? 'px-1' : 'flex-col space-y-3 items-center'">
           <!-- Logo & Title -->
           <div class="flex items-center space-x-3 overflow-hidden">
-            <img src="/static/app_icon.png" class="w-9 h-9 rounded-2xl shadow-sm shadow-applered/25 object-cover flex-shrink-0" alt="Logo" :title="sidebarExpanded ? '' : 'Apple Music v2.0.2'">
+            <img src="/static/app_icon.png" class="w-9 h-9 rounded-2xl shadow-sm shadow-applered/25 object-cover flex-shrink-0" alt="Logo" :title="sidebarExpanded ? '' : 'Apple Music v2.0.3'">
             <div v-if="sidebarExpanded" class="min-w-0 transition-opacity duration-200">
               <div class="flex items-center space-x-1.5">
                 <span class="font-extrabold text-base text-appledark tracking-tight truncate">Apple Music</span>
-                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200">v2.0.2</span>
+                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200">v2.0.3</span>
               </div>
               <div class="text-[11px] text-neutral-400 font-medium truncate">曲库导入与管理</div>
             </div>
@@ -3530,7 +3530,12 @@
                     auto_import: true,
                   })
                 });
-                const data = await res.json();
+                let data;
+                if (!res.ok) {
+                  const errText = await res.text();
+                  throw new Error(errText || `服务器响应异常 (HTTP ${res.status})`);
+                }
+                data = await res.json();
                 item.bilibili_downloading = false;
                 if (data.success) {
                   item.bilibili_downloaded = true;
@@ -4319,7 +4324,12 @@
           loadingLocalSongs.value = true;
           try {
             const res = await fetch('/api/local/songs');
-            const data = await res.json();
+            let data;
+            if (!res.ok) {
+              const errText = await res.text();
+              throw new Error(errText || `服务器响应异常 (HTTP ${res.status})`);
+            }
+            data = await res.json();
             if (data.success) {
               localSongs.value = data.songs || [];
               localDirectory.value = data.directory || '';

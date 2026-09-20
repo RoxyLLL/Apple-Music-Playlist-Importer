@@ -50,6 +50,8 @@ pyinstaller_args = [
     "--hidden-import=mutagen.flac",
     "--hidden-import=mutagen.easyid3",
     "--hidden-import=av",
+    "--hidden-import=pykakasi",
+    "--collect-data=pykakasi",
     str(ROOT_DIR / "exe_entry.py"),
 ]
 

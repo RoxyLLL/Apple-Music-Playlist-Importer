@@ -664,6 +664,7 @@ from applemusic.extractors.bilibili_downloader import (
     find_existing_bilibili_audio,
     ensure_auto_imported,
 )
+from applemusic.extractors.local_manager import get_apple_music_library_media_dir
 
 
 class BilibiliSearchRequest(BaseModel):
@@ -717,75 +718,98 @@ async def api_bilibili_download(req: BilibiliDownloadRequest):
 @app.post("/api/bilibili/batch-download")
 async def api_bilibili_batch_download(req: BilibiliBatchDownloadRequest):
     def _do_batch():
-        client, _ = get_shared_engine()
-        results = []
-        for t in req.tracks:
-            # 1. Personal iCloud Music Library fast-path
-            if client.config.is_authorized():
-                lib_id = client.find_library_song_id(t.title, t.artist_str or "")
-                if lib_id:
+        try:
+            client, _ = get_shared_engine()
+            results = []
+            for t in req.tracks:
+                try:
+                    # 1. Personal iCloud Music Library fast-path
+                    if client.config.is_authorized():
+                        lib_id = client.find_library_song_id(t.title, t.artist_str or "")
+                        if lib_id:
+                            results.append({
+                                "success": True,
+                                "title": t.title,
+                                "artist": t.artist_str,
+                                "already_in_library": True,
+                                "lib_id": lib_id,
+                                "message": "已在 Apple Music 个人资料库中找到本地音源",
+                            })
+                            continue
+
+                    # 2. Local audio files fast-path
+                    local_file = find_existing_bilibili_audio(t.title, t.artist_str or "")
+                    if local_file:
+                        am_media_dir = get_apple_music_library_media_dir()
+                        is_in_am = False
+                        if am_media_dir and os.path.exists(local_file):
+                            try:
+                                is_in_am = os.path.commonpath([os.path.abspath(local_file), os.path.abspath(am_media_dir)]) == os.path.abspath(am_media_dir)
+                            except Exception:
+                                pass
+
+                        if not is_in_am and req.auto_import is not False:
+                            ensure_auto_imported(local_file, t.title, t.artist_str or "")
+
+                        msg = "Apple Music 资料库中已存在该本地音源" if is_in_am else "本地已存在该歌曲音频，已放入 Apple Music 自动导入目录"
+                        results.append({
+                            "success": True,
+                            "title": t.title,
+                            "artist": t.artist_str,
+                            "already_downloaded": True,
+                            "local_path": local_file,
+                            "message": msg,
+                        })
+                        continue
+
+                    # 3. Search Bilibili
+                    cands = search_bilibili(t.title, t.artist_str, limit=3)
+                    if not cands:
+                        results.append({
+                            "success": False,
+                            "title": t.title,
+                            "artist": t.artist_str,
+                            "error": "B 站未检索到相关视频",
+                        })
+                        continue
+                    top = cands[0]
+                    # BUG-09: Tier gate: only auto-download Tier 1 or clean Tier 2. Tier 3/4 require user manual confirmation.
+                    if top.get("tier", 4) > 2:
+                        results.append({
+                            "success": False,
+                            "title": t.title,
+                            "artist": t.artist_str,
+                            "minimum_quality_met": False,
+                            "tier": top.get("tier"),
+                            "match_reason": top.get("match_reason"),
+                            "error": "最高候选为翻唱或杂音视频（未达自动下载标准），请点击候选弹窗手动选择",
+                            "requires_manual_confirmation": True,
+                            "candidates": cands,
+                        })
+                        continue
+
+                    best_bvid = top["bvid"]
+                    res = download_bilibili_audio(
+                        bvid=best_bvid,
+                        target_title=t.title,
+                        target_artist=t.artist_str,
+                        target_album=t.album or "Bilibili 视频提取",
+                        cover_url="",
+                        auto_import_to_apple_music=req.auto_import if req.auto_import is not None else True,
+                    )
+                    results.append(res)
+                except Exception as e:
+                    logger.exception("Batch single track error (%s): %s", t.title, e)
                     results.append({
-                        "success": True,
+                        "success": False,
                         "title": t.title,
                         "artist": t.artist_str,
-                        "already_in_library": True,
-                        "lib_id": lib_id,
-                        "message": "已在 Apple Music 个人资料库中找到本地音源",
+                        "error": f"处理异常: {str(e)}",
                     })
-                    continue
-
-            # 2. Local audio files fast-path
-            local_file = find_existing_bilibili_audio(t.title, t.artist_str or "")
-            if local_file:
-                if req.auto_import is not False:
-                    ensure_auto_imported(local_file, t.title, t.artist_str or "")
-                results.append({
-                    "success": True,
-                    "title": t.title,
-                    "artist": t.artist_str,
-                    "already_downloaded": True,
-                    "local_path": local_file,
-                    "message": "本地已存在该歌曲音频，已放入 Apple Music 自动导入目录",
-                })
-                continue
-
-            # 3. Search Bilibili
-            cands = search_bilibili(t.title, t.artist_str, limit=3)
-            if not cands:
-                results.append({
-                    "success": False,
-                    "title": t.title,
-                    "artist": t.artist_str,
-                    "error": "B 站未检索到相关视频",
-                })
-                continue
-            top = cands[0]
-            # BUG-09: Tier gate: only auto-download Tier 1 or clean Tier 2. Tier 3/4 require user manual confirmation.
-            if top.get("tier", 4) > 2:
-                results.append({
-                    "success": False,
-                    "title": t.title,
-                    "artist": t.artist_str,
-                    "minimum_quality_met": False,
-                    "tier": top.get("tier"),
-                    "match_reason": top.get("match_reason"),
-                    "error": "最高候选为翻唱或杂音视频（未达自动下载标准），请点击候选弹窗手动选择",
-                    "requires_manual_confirmation": True,
-                    "candidates": cands,
-                })
-                continue
-
-            best_bvid = top["bvid"]
-            res = download_bilibili_audio(
-                bvid=best_bvid,
-                target_title=t.title,
-                target_artist=t.artist_str,
-                target_album=t.album or "Bilibili 视频提取",
-                cover_url="",
-                auto_import_to_apple_music=req.auto_import if req.auto_import is not None else True,
-            )
-            results.append(res)
-        return results
+            return results
+        except Exception as e:
+            logger.exception("Bilibili batch download error: %s", e)
+            return [{"success": False, "title": "批量处理异常", "error": str(e)}]
 
     results = await asyncio.to_thread(_do_batch)
     return {"success": True, "results": results}
@@ -801,70 +825,89 @@ class BilibiliSingleAutoRequest(BaseModel):
 @app.post("/api/bilibili/download-single-auto")
 async def api_bilibili_download_single_auto(req: BilibiliSingleAutoRequest):
     def _do():
-        client, _ = get_shared_engine()
+        try:
+            client, _ = get_shared_engine()
 
-        # 1. Personal iCloud Music Library fast-path
-        if client.config.is_authorized():
-            lib_id = client.find_library_song_id(req.title, req.artist or "")
-            if lib_id:
+            # 1. Personal iCloud Music Library fast-path
+            if client.config.is_authorized():
+                lib_id = client.find_library_song_id(req.title, req.artist or "")
+                if lib_id:
+                    return {
+                        "success": True,
+                        "title": req.title,
+                        "artist": req.artist,
+                        "already_in_library": True,
+                        "lib_id": lib_id,
+                        "message": "已在 Apple Music 个人资料库中找到本地音源",
+                    }
+
+            # 2. Local audio files fast-path
+            local_file = find_existing_bilibili_audio(req.title, req.artist or "")
+            if local_file:
+                am_media_dir = get_apple_music_library_media_dir()
+                is_in_am = False
+                if am_media_dir and os.path.exists(local_file):
+                    try:
+                        is_in_am = os.path.commonpath([os.path.abspath(local_file), os.path.abspath(am_media_dir)]) == os.path.abspath(am_media_dir)
+                    except Exception:
+                        pass
+
+                if not is_in_am and req.auto_import is not False:
+                    ensure_auto_imported(local_file, req.title, req.artist or "")
+
+                msg = "Apple Music 资料库中已存在该本地音源" if is_in_am else "本地已存在该歌曲音频，已放入 Apple Music 自动导入目录"
                 return {
                     "success": True,
                     "title": req.title,
                     "artist": req.artist,
-                    "already_in_library": True,
-                    "lib_id": lib_id,
-                    "message": "已在 Apple Music 个人资料库中找到本地音源",
+                    "already_downloaded": True,
+                    "local_path": local_file,
+                    "message": msg,
                 }
 
-        # 2. Local audio files fast-path
-        local_file = find_existing_bilibili_audio(req.title, req.artist or "")
-        if local_file:
-            if req.auto_import is not False:
-                ensure_auto_imported(local_file, req.title, req.artist or "")
-            return {
-                "success": True,
-                "title": req.title,
-                "artist": req.artist,
-                "already_downloaded": True,
-                "local_path": local_file,
-                "message": "本地已存在该歌曲音频，已放入 Apple Music 自动导入目录",
-            }
+            # 3. Search Bilibili
+            cands = search_bilibili(req.title, req.artist or "", limit=3)
+            if not cands:
+                return {
+                    "success": False,
+                    "title": req.title,
+                    "artist": req.artist,
+                    "error": "B 站未检索到相关视频",
+                }
+            top = cands[0]
+            # BUG-09: Tier gate: only auto-download Tier 1 or clean Tier 2. Tier 3/4 require user manual confirmation.
+            if top.get("tier", 4) > 2:
+                return {
+                    "success": False,
+                    "title": req.title,
+                    "artist": req.artist,
+                    "minimum_quality_met": False,
+                    "tier": top.get("tier"),
+                    "match_reason": top.get("match_reason"),
+                    "error": "最高候选为翻唱或非官方杂音视频，未达自动导入标准，请手动打开候选窗口确认",
+                    "requires_manual_confirmation": True,
+                    "candidates": cands,
+                }
 
-        # 3. Search Bilibili
-        cands = search_bilibili(req.title, req.artist or "", limit=3)
-        if not cands:
+            best_bvid = top["bvid"]
+            cover_url = top.get("pic", "")
+            res = download_bilibili_audio(
+                bvid=best_bvid,
+                target_title=req.title,
+                target_artist=req.artist or "",
+                target_album=req.album or "Bilibili 视频提取",
+                cover_url=cover_url,
+                auto_import_to_apple_music=req.auto_import if req.auto_import is not None else True,
+            )
+            return res
+        except Exception as e:
+            logger.exception("Bilibili download single auto error: %s", e)
             return {
                 "success": False,
                 "title": req.title,
                 "artist": req.artist,
-                "error": "B 站未检索到相关视频",
+                "error": f"补全异常: {str(e)}",
             }
-        top = cands[0]
-        # BUG-09: Tier gate: only auto-download Tier 1 or clean Tier 2. Tier 3/4 require user manual confirmation.
-        if top.get("tier", 4) > 2:
-            return {
-                "success": False,
-                "title": req.title,
-                "artist": req.artist,
-                "minimum_quality_met": False,
-                "tier": top.get("tier"),
-                "match_reason": top.get("match_reason"),
-                "error": "最高候选为翻唱或非官方杂音视频，未达自动导入标准，请手动打开候选窗口确认",
-                "requires_manual_confirmation": True,
-                "candidates": cands,
-            }
-
-        best_bvid = top["bvid"]
-        cover_url = top.get("pic", "")
-        res = download_bilibili_audio(
-            bvid=best_bvid,
-            target_title=req.title,
-            target_artist=req.artist or "",
-            target_album=req.album or "Bilibili 视频提取",
-            cover_url=cover_url,
-            auto_import_to_apple_music=req.auto_import if req.auto_import is not None else True,
-        )
-        return res
 
     result = await asyncio.to_thread(_do)
     return result
@@ -1089,9 +1132,13 @@ class BatchLocalTracksRequest(BaseModel):
 
 @app.get("/api/local/songs")
 async def api_list_local_songs(directory: Optional[str] = None):
-    songs = await asyncio.to_thread(list_local_tracks, directory)
-    active_dir = directory or get_apple_music_library_media_dir() or ""
-    return {"success": True, "songs": songs, "directory": active_dir}
+    try:
+        songs = await asyncio.to_thread(list_local_tracks, directory)
+        active_dir = directory or get_apple_music_library_media_dir() or ""
+        return {"success": True, "songs": songs, "directory": active_dir}
+    except Exception as e:
+        logger.exception("List local songs error: %s", e)
+        return {"success": False, "detail": str(e), "songs": [], "directory": ""}
 
 
 @app.post("/api/local/open-folder")

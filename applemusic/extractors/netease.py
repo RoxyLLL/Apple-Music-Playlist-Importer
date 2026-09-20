@@ -115,6 +115,9 @@ class NetEaseExtractor(BaseExtractor):
                     for s in songs:
                         artists = [a["name"].strip() for a in s.get("ar", []) if a.get("name")]
                         album_name = s.get("al", {}).get("name")
+                        tns = s.get("tns") or []
+                        trans_title = tns[0].strip() if (tns and isinstance(tns, list) and tns[0]) else None
+                        alias_list = [a.strip() for a in (s.get("alia") or []) if isinstance(a, str) and a.strip()]
                         track = Track(
                             title=s.get("name", "").strip(),
                             artists=artists,
@@ -122,6 +125,8 @@ class NetEaseExtractor(BaseExtractor):
                             duration_ms=s.get("dt"),
                             original_id=str(s.get("id")),
                             source="netease",
+                            trans_title=trans_title,
+                            aliases=alias_list,
                         )
                         tracks.append(track)
             except Exception as e:
