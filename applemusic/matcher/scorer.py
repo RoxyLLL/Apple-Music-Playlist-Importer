@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple
 from applemusic.matcher.artist_aliases import are_artists_equivalent
 from applemusic.matcher.title_aliases import are_titles_equivalent
 from applemusic.matcher.cleaner import TextCleaner
+from applemusic.matcher.evidence import MatchEvidence, VerificationLevel, MATCH_RULE_VERSION, ALIAS_VERSION
 from applemusic.models import AppleMusicTrack, ConfidenceLevel, DecisionStatus, MatchCandidate, Track
 
 
@@ -50,7 +51,7 @@ def _fast_sequence_ratio(s1: str, s2: str) -> float:
 
 
 @lru_cache(maxsize=8192)
-def _calculate_title_similarity_cached(source_title: str, candidate_title: str) -> float:
+def _calculate_title_similarity_cached(source_title: str, candidate_title: str, artist: Optional[str] = None) -> float:
     """Core cached implementation of title similarity."""
     s1 = TextCleaner.normalize(source_title)
     s2 = TextCleaner.normalize(candidate_title)
@@ -71,7 +72,7 @@ def _calculate_title_similarity_cached(source_title: str, candidate_title: str) 
         return 0.99
 
     # Known cross-lingual title aliases (e.g. 夜に駆ける <-> Racing into the Night)
-    if are_titles_equivalent(s1, s2) or are_titles_equivalent(c1, c2):
+    if are_titles_equivalent(s1, s2, artist=artist) or are_titles_equivalent(c1, c2, artist=artist):
         return 1.0
 
     # Check extracted title variants (e.g. bracketed English/Romaji subtitles)
@@ -79,16 +80,16 @@ def _calculate_title_similarity_cached(source_title: str, candidate_title: str) 
     v2_list = TextCleaner.extract_title_variants(candidate_title)
     for v1 in v1_list:
         for v2 in v2_list:
-            if v1 == v2 or are_titles_equivalent(v1, v2):
+            if v1 == v2 or are_titles_equivalent(v1, v2, artist=artist):
                 return 0.98
             nv1 = TextCleaner.normalize(v1)
             nv2 = TextCleaner.normalize(v2)
-            if nv1 == nv2 or are_titles_equivalent(nv1, nv2):
+            if nv1 == nv2 or are_titles_equivalent(nv1, nv2, artist=artist):
                 return 0.98
             # Punctuation-stripped comparison (e.g. "Miss Elf's" vs "Miss Elf''s" / "Miss Elf s")
             p_nv1 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", nv1)
             p_nv2 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", nv2)
-            if p_nv1 and p_nv2 and (p_nv1 == p_nv2 or are_titles_equivalent(p_nv1, p_nv2)):
+            if p_nv1 and p_nv2 and (p_nv1 == p_nv2 or are_titles_equivalent(p_nv1, p_nv2, artist=artist)):
                 return 0.98
             # Fuzzy variant ratio for minor typos or official metadata discrepancies
             if len(nv1) >= 4 and len(nv2) >= 4:
@@ -103,24 +104,27 @@ def _calculate_title_similarity_cached(source_title: str, candidate_title: str) 
                         return max(p_ratio, 0.95)
 
     # Japanese Kana/Kanji <-> Romaji comparison with multi-reading and morphological analysis
-    has_japanese = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", c1) or re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", c2))
+    from applemusic.matcher.title_aliases import KANJI_TO_ROMAJI_COMPOUNDS
+    has_japanese = bool(
+        re.search(r"[\u3040-\u30ff]", c1) or re.search(r"[\u3040-\u30ff]", c2)
+        or any(k in c1 for k, _ in KANJI_TO_ROMAJI_COMPOUNDS)
+        or any(k in c2 for k, _ in KANJI_TO_ROMAJI_COMPOUNDS)
+    )
     if has_japanese:
-        v1_romaji = TextCleaner.get_japanese_romaji_variants(c1)
-        v2_romaji = TextCleaner.get_japanese_romaji_variants(c2)
+        v1_romaji = TextCleaner.get_japanese_romaji_variants(c1, is_artist=False)
+        v2_romaji = TextCleaner.get_japanese_romaji_variants(c2, is_artist=False)
         for r1 in v1_romaji:
             for r2 in v2_romaji:
-                if r1 == r2 or are_titles_equivalent(r1, r2):
+                if r1 == r2 or are_titles_equivalent(r1, r2, artist=artist):
                     return 0.98
                 rp1 = re.sub(r"[^\w]", "", r1).lower()
                 rp2 = re.sub(r"[^\w]", "", r2).lower()
                 if rp1 and rp2:
-                    if rp1 == rp2 or are_titles_equivalent(rp1, rp2):
+                    if rp1 == rp2 or are_titles_equivalent(rp1, rp2, artist=artist):
                         return 0.98
                     if len(rp1) >= 4 and len(rp2) >= 4:
-                        if rp1 in rp2 or rp2 in rp1:
-                            return 0.92
                         ratio = _fast_sequence_ratio(r1, r2)
-                        if ratio >= 0.80:
+                        if ratio >= 0.85:
                             return max(ratio, 0.90)
 
     # Katakana loanword phonetic alignment (e.g. ミラージュ <-> mirage)
@@ -178,17 +182,18 @@ class TrackScorer:
         candidate_title: str,
         trans_title: Optional[str] = None,
         aliases: Optional[List[str]] = None,
+        artist: Optional[str] = None,
     ) -> float:
         """
         Calculate similarity between core titles.
         Also checks official translation (trans_title) and alternate aliases.
         """
-        sim = _calculate_title_similarity_cached(source_title, candidate_title)
+        sim = _calculate_title_similarity_cached(source_title, candidate_title, artist=artist)
         if sim >= 0.95:
             return sim
 
         if trans_title:
-            t_sim = _calculate_title_similarity_cached(trans_title, candidate_title)
+            t_sim = _calculate_title_similarity_cached(trans_title, candidate_title, artist=artist)
             sim = max(sim, t_sim)
             if sim >= 0.95:
                 return sim
@@ -196,7 +201,7 @@ class TrackScorer:
         if aliases:
             for a in aliases:
                 if a and a.strip():
-                    a_sim = _calculate_title_similarity_cached(a.strip(), candidate_title)
+                    a_sim = _calculate_title_similarity_cached(a.strip(), candidate_title, artist=artist)
                     sim = max(sim, a_sim)
                     if sim >= 0.95:
                         return sim
@@ -231,11 +236,11 @@ class TrackScorer:
                 if s_words[0] == c_words[1] and s_words[1] == c_words[0]:
                     return 1.0
 
-        # Japanese Kana/Kanji transliteration for primary artist
-        has_jp = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", norm_pri_s) or re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", norm_pri_c))
+        # Japanese Kana transliteration for primary artist (requires Kana to avoid pure Hanzi false match)
+        has_jp = bool(re.search(r"[\u3040-\u30ff]", norm_pri_s) or re.search(r"[\u3040-\u30ff]", norm_pri_c))
         if has_jp:
-            s_art_vars = TextCleaner.get_japanese_romaji_variants(norm_pri_s)
-            c_art_vars = TextCleaner.get_japanese_romaji_variants(norm_pri_c)
+            s_art_vars = TextCleaner.get_japanese_romaji_variants(norm_pri_s, is_artist=True) or [norm_pri_s]
+            c_art_vars = TextCleaner.get_japanese_romaji_variants(norm_pri_c, is_artist=True) or [norm_pri_c]
             for r_s in s_art_vars:
                 for r_c in c_art_vars:
                     if r_s == r_c or are_artists_equivalent(r_s, r_c):
@@ -255,13 +260,28 @@ class TrackScorer:
                         if ratio >= 0.80:
                             return max(ratio, 0.90)
 
-        # Primary artist substring or high similarity
+        # Primary artist substring or high similarity (conservative on short names)
         pri_score = 0.0
         if norm_pri_s and norm_pri_c:
-            if norm_pri_s in norm_pri_c or norm_pri_c in norm_pri_s:
-                pri_score = 0.95
+            if norm_pri_s == norm_pri_c:
+                pri_score = 1.0
             else:
-                pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
+                s_cjk = len(re.findall(r"[\u4e00-\u9fa5]", norm_pri_s))
+                c_cjk = len(re.findall(r"[\u4e00-\u9fa5]", norm_pri_c))
+                shorter, longer = (norm_pri_s, norm_pri_c) if len(norm_pri_s) <= len(norm_pri_c) else (norm_pri_c, norm_pri_s)
+                short_cjk = s_cjk if len(norm_pri_s) <= len(norm_pri_c) else c_cjk
+                if shorter in longer:
+                    if short_cjk <= 2 or len(shorter) <= 3:
+                        # Short name cannot be validated by substring alone (e.g. "十明" vs "李杰明")
+                        pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
+                    else:
+                        ratio = len(shorter) / max(1, len(longer))
+                        if ratio >= 0.75:
+                            pri_score = 0.90
+                        else:
+                            pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
+                else:
+                    pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
 
         # Fast exit if primary artist already exact
         if pri_score >= 1.0:
@@ -287,10 +307,12 @@ class TrackScorer:
                 if len(s_w) == 2 and len(c_w) == 2 and s_w[0] == c_w[1] and s_w[1] == c_w[0]:
                     max_cross_score = max(max_cross_score, 1.0)
                     break
-                # Romaji transliteration check across artist list
-                if bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", s) or re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", c)):
-                    for rs in TextCleaner.get_japanese_romaji_variants(s):
-                        for rc in TextCleaner.get_japanese_romaji_variants(c):
+                # Romaji transliteration check across artist list (requires Kana)
+                if bool(re.search(r"[\u3040-\u30ff]", s) or re.search(r"[\u3040-\u30ff]", c)):
+                    rs_list = TextCleaner.get_japanese_romaji_variants(s, is_artist=True) or [s]
+                    rc_list = TextCleaner.get_japanese_romaji_variants(c, is_artist=True) or [c]
+                    for rs in rs_list:
+                        for rc in rc_list:
                             if rs == rc or are_artists_equivalent(rs, rc):
                                 max_cross_score = max(max_cross_score, 1.0)
                                 break
@@ -302,7 +324,13 @@ class TrackScorer:
                             elif len(rsp) >= 3 and len(rcp) >= 3 and (rsp in rcp or rcp in rsp):
                                 max_cross_score = max(max_cross_score, 0.92)
                 elif s in c or c in s:
-                    max_cross_score = max(max_cross_score, 0.90)
+                    s_shorter, s_longer = (s, c) if len(s) <= len(c) else (c, s)
+                    s_cjk_cnt = len(re.findall(r"[\u4e00-\u9fa5]", s_shorter))
+                    if s_cjk_cnt <= 2 or len(s_shorter) <= 3:
+                        ratio = _fast_sequence_ratio(s, c)
+                        max_cross_score = max(max_cross_score, ratio)
+                    else:
+                        max_cross_score = max(max_cross_score, 0.85)
                 else:
                     max_possible = (2.0 * min(len(s), len(c))) / max(1, (len(s) + len(c)))
                     if max_possible <= max_cross_score:
@@ -396,31 +424,15 @@ class TrackScorer:
 
     @classmethod
     def score(cls, source: Track, candidate: AppleMusicTrack) -> MatchCandidate:
-        """Compute composite score and return MatchCandidate."""
+        """Compute composite score, evidence, and return MatchCandidate."""
         reasons: List[str] = []
+        conflicts: List[str] = []
+        matched_fields: List[str] = []
 
-        # 1. ISRC Exact Match Check
-        if source.isrc and candidate.isrc:
-            s_isrc = source.isrc.strip().upper()
-            c_isrc = candidate.isrc.strip().upper()
-            if s_isrc and s_isrc == c_isrc:
-                reasons.append("ISRC精确匹配")
-                return MatchCandidate(
-                    track=candidate,
-                    score=1.0,
-                    title_score=1.0,
-                    artist_score=1.0,
-                    album_score=1.0,
-                    duration_score=0.05,
-                    version_score=0.1,
-                    confidence=ConfidenceLevel.EXACT,
-                    decision=DecisionStatus.AUTO_ACCEPT.value,
-                    decision_reasons=reasons,
-                )
-
-        # 2. Individual feature similarities
+        # 1. Feature similarities
+        pri_s_for_title = source.artists[0] if source.artists else None
         title_score = cls.calculate_title_similarity(
-            source.title, candidate.title, trans_title=source.trans_title, aliases=source.aliases
+            source.title, candidate.title, trans_title=source.trans_title, aliases=source.aliases, artist=pri_s_for_title
         )
         artist_score = cls.calculate_artist_similarity(source.artists, candidate.artists)
         duration_factor = cls.calculate_duration_factor(source.duration_ms, candidate.duration_ms)
@@ -429,6 +441,74 @@ class TrackScorer:
             source.title, candidate.title, candidate.album
         )
         reasons.extend(v_reasons)
+
+        # 2. ISRC Exact Match Check
+        isrc_match = False
+        isrc_conflict = False
+        if source.isrc and candidate.isrc:
+            s_isrc = source.isrc.strip().upper()
+            c_isrc = candidate.isrc.strip().upper()
+            if s_isrc and s_isrc == c_isrc:
+                isrc_match = True
+                matched_fields.append("isrc")
+                # N08 check: If explicit artist conflict or version conflict, demote to review!
+                if source.artists and candidate.artists and artist_score < 0.40:
+                    isrc_conflict = True
+                    conflicts.append("isrc_artist_conflict: ISRC相同但艺人明显不符")
+                    reasons.append("ISRC相同但艺人明显不符")
+                if version_factor < 0:
+                    isrc_conflict = True
+                    conflicts.append("isrc_version_conflict: ISRC相同但版本不一致")
+                    reasons.append("ISRC相同但版本不一致")
+
+                if not isrc_conflict:
+                    reasons.append("ISRC精确匹配")
+                    evidence = MatchEvidence(
+                        evidence_type="isrc",
+                        verification_level=VerificationLevel.STRONG.value,
+                        matched_fields=["isrc"],
+                        conflicts=[],
+                        provenance="isrc",
+                        rule_version=MATCH_RULE_VERSION,
+                        alias_version=ALIAS_VERSION,
+                    )
+                    return MatchCandidate(
+                        track=candidate,
+                        score=1.0,
+                        title_score=1.0,
+                        artist_score=1.0,
+                        album_score=1.0,
+                        duration_score=0.05,
+                        version_score=0.1,
+                        confidence=ConfidenceLevel.EXACT,
+                        decision=DecisionStatus.AUTO_ACCEPT.value,
+                        decision_reasons=reasons,
+                        evidence=evidence,
+                    )
+                else:
+                    # N08: ISRC match with artist/version conflict demoted to REVIEW
+                    evidence = MatchEvidence(
+                        evidence_type="isrc_conflict",
+                        verification_level=VerificationLevel.CONFLICT.value,
+                        matched_fields=["isrc"],
+                        conflicts=conflicts,
+                        provenance="isrc",
+                        rule_version=MATCH_RULE_VERSION,
+                        alias_version=ALIAS_VERSION,
+                    )
+                    return MatchCandidate(
+                        track=candidate,
+                        score=0.65,
+                        title_score=round(title_score, 3),
+                        artist_score=round(artist_score, 3),
+                        album_score=round(album_score, 3),
+                        duration_score=round(duration_factor, 3),
+                        version_score=round(version_factor, 3),
+                        confidence=ConfidenceLevel.MEDIUM,
+                        decision=DecisionStatus.REVIEW.value,
+                        decision_reasons=reasons,
+                        evidence=evidence,
+                    )
 
         # 3. Strict Album Track Fingerprint Fallback (for unlisted translations only)
         # Triggers when artist is verified (>= 0.85), version is consistent, duration matches precisely (<= 2.5s),
@@ -446,14 +526,9 @@ class TrackScorer:
                 diff_sec = abs(source.duration_ms - candidate.duration_ms) / 1000.0
                 if diff_sec <= 2.5:
                     is_album_track_corroborated = True
-                    # Only auto-accept if album name also matches (>= 0.70)
-                    if cand_album_is_single and album_score >= 0.70:
-                        title_score = 0.85
-                        album_score = max(album_score, 0.85)
-                        reasons.append(f"同Single/EP同艺人相同时长曲目({diff_sec:.1f}s误差)，跨语种版本佐证")
-                    else:
-                        title_score = 0.60
-                        reasons.append(f"同专辑/Single同艺人相同时长曲目({diff_sec:.1f}s误差)，疑似跨语种译名(待人工核对)")
+                    # Set title_score to 0.60 for review (never >= 0.80, so title_ok is False and is_strong is False)
+                    title_score = 0.60
+                    reasons.append(f"同专辑/Single同艺人相同时长曲目({diff_sec:.1f}s误差)，疑似跨语种译名(待人工核对)")
 
         # 4. Dynamic Weighting & Metadata Adequacy
         has_artist = bool(source.artists and candidate.artists)
@@ -482,14 +557,16 @@ class TrackScorer:
 
         # 5. Hard Guards (Orthogonal Double-Independence Verification)
         # Rule 1: Artist mismatch guard
-        if source.artists and artist_score < 0.35:
+        if source.artists and candidate.artists and artist_score < 0.35:
             composite *= 0.30
             reasons.append("艺人明显不匹配")
+            conflicts.append("artist_mismatch: 艺人明显不匹配")
 
         # Rule 2: Title mismatch guard
         if title_score < 0.45 and not is_album_track_corroborated:
             composite *= 0.30
             reasons.append("歌名相似度过低")
+            conflicts.append("title_mismatch: 歌名相似度过低")
 
         # Rule 3: Short title safety guard (e.g. "心海", "Lemon", "Stay", "Intro")
         clean_core, _ = TextCleaner.parse_title(source.title)
@@ -499,8 +576,50 @@ class TrackScorer:
             if artist_score < 0.85:
                 composite *= 0.30
                 reasons.append("短歌名缺乏高置信艺人佐证")
+                conflicts.append("short_title_low_artist: 短歌名缺乏高置信艺人佐证")
 
         composite = max(0.0, min(1.0, composite))
+
+        # 5. Populate matched_fields & evidence
+        if title_score >= 0.80:
+            matched_fields.append("title")
+        if artist_score >= 0.70:
+            matched_fields.append("artist")
+        if album_score >= 0.85:
+            matched_fields.append("album")
+        if has_duration and abs(source.duration_ms - candidate.duration_ms) <= 3000:
+            matched_fields.append("duration")
+        if version_factor >= 0.0:
+            matched_fields.append("version")
+        else:
+            conflicts.append("version_conflict: 版本不一致")
+
+        # Determine verification level
+        if isrc_conflict:
+            v_level = VerificationLevel.CONFLICT.value
+            ev_type = "isrc_conflict"
+        elif conflicts:
+            v_level = VerificationLevel.CONFLICT.value
+            ev_type = "conflict"
+        elif "title" in matched_fields and "artist" in matched_fields:
+            v_level = VerificationLevel.STRONG.value
+            ev_type = "title_and_artist"
+        elif "title" in matched_fields or "artist" in matched_fields:
+            v_level = VerificationLevel.MEDIUM.value
+            ev_type = "partial"
+        else:
+            v_level = VerificationLevel.WEAK.value
+            ev_type = "weak"
+
+        evidence = MatchEvidence(
+            evidence_type=ev_type,
+            verification_level=v_level,
+            matched_fields=matched_fields,
+            conflicts=conflicts,
+            provenance="search",
+            rule_version=MATCH_RULE_VERSION,
+            alias_version=ALIAS_VERSION,
+        )
 
         # Initial confidence classification
         if is_album_track_corroborated:
@@ -525,6 +644,7 @@ class TrackScorer:
             confidence=confidence,
             decision=DecisionStatus.REVIEW.value,
             decision_reasons=reasons,
+            evidence=evidence,
         )
 
     @classmethod
@@ -550,18 +670,23 @@ class TrackScorer:
         reasons = list(best.decision_reasons)
 
         if best.score < min_review_score:
+            best.decision = DecisionStatus.NO_MATCH.value
             return None, ConfidenceLevel.NOT_FOUND, DecisionStatus.NO_MATCH.value, ["无达到及格分的候选"], score_gap
 
         # Check auto_accept requirements:
-        # 1. Score reaches threshold
-        # 2. Score gap >= min_score_gap (or top candidates are multiple editions of the same song)
-        # 3. Artist score >= 0.70 (if source has artists)
-        # 4. Title score >= 0.80
-        # 5. Version score >= 0.0 (no version conflict)
+        # 1. Verification level is STRONG (two independent strong evidences or consistent ISRC)
+        # 2. No conflicts
+        # 3. Score reaches threshold
+        # 4. Score gap >= min_score_gap (or top candidates are same song variant)
+        # 5. Artist score >= 0.70 (if source has artists)
+        # 6. Title score >= 0.80
+        # 7. Version score >= 0.0
         has_artist = bool(source.artists)
         artist_ok = best.artist_score >= 0.70 if has_artist else False
         title_ok = best.title_score >= 0.80
         version_ok = best.version_score >= 0.0
+        is_strong = bool(best.evidence and best.evidence.verification_level == VerificationLevel.STRONG.value)
+        has_conflicts = bool(best.evidence and best.evidence.conflicts)
 
         # Check if second candidate is actually the same song variant (same title core & primary artist)
         is_same_song_variant = False
@@ -573,13 +698,27 @@ class TrackScorer:
 
         gap_ok = True if is_same_song_variant else ((score_gap >= min_score_gap) if (second and second.score >= 0.65) else True)
 
-        if best.score >= auto_accept_threshold and artist_ok and title_ok and gap_ok and version_ok:
-            reasons.append("各项校验完全通过，自动采纳")
+        if (
+            best.score >= auto_accept_threshold
+            and is_strong
+            and not has_conflicts
+            and artist_ok
+            and title_ok
+            and gap_ok
+            and version_ok
+        ):
+            reasons.append("独立双强证据校验完全通过，自动采纳")
             best.decision = DecisionStatus.AUTO_ACCEPT.value
             return best, ConfidenceLevel.EXACT if best.score >= 0.92 else ConfidenceLevel.HIGH, DecisionStatus.AUTO_ACCEPT.value, reasons, score_gap
 
-        # If candidate is acceptable but has ambiguity (e.g. small gap, slight version difference)
-        reasons.append("置信度较高但存在微小歧义或分差较小，建议人工复核")
+        # If candidate is acceptable but has ambiguity or conflicts
+        if has_conflicts:
+            reasons.append(f"存在冲突项({', '.join(best.evidence.conflicts)})，转人工复核")
+        elif not is_strong:
+            reasons.append("缺乏两项独立强证据佐证，转人工复核")
+        else:
+            reasons.append("置信度较高但存在微小歧义或分差较小，建议人工复核")
+
         best.decision = DecisionStatus.REVIEW.value
         conf = ConfidenceLevel.HIGH if best.score >= 0.75 else ConfidenceLevel.MEDIUM
         return best, conf, DecisionStatus.REVIEW.value, reasons, score_gap

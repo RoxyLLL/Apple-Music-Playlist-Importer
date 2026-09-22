@@ -162,7 +162,7 @@ class TextCleaner:
         return romaji_s
 
     @staticmethod
-    def get_japanese_romaji_variants(text: str) -> List[str]:
+    def get_japanese_romaji_variants(text: str, is_artist: bool = False) -> List[str]:
         """
         Generate all plausible Romaji transliterations for Japanese text,
         accounting for Kana, morphological analysis (pykakasi), curated compounds,
@@ -171,17 +171,25 @@ class TextCleaner:
         if not text:
             return []
 
+        # Pure Hanzi guard: if text contains NO Kana ([\u3040-\u30ff]) and no curated compound,
+        # do not run pykakasi or multi-readings. Returning empty list.
+        has_kana = bool(re.search(r"[\u3040-\u30ff]", text))
+        from applemusic.matcher.title_aliases import KANJI_TO_ROMAJI_COMPOUNDS
+        has_compound = any(k in text for k, _ in KANJI_TO_ROMAJI_COMPOUNDS)
+
+        if not has_kana and not has_compound:
+            return []
+
         import itertools
-        from typing import Set
-        variants: Set[str] = set()
+        variants: dict = {}
 
         # 1. Base curated compound replacement + Kana conversion
         base = TextCleaner.japanese_to_romaji(text)
         if base:
             clean_b = re.sub(r"\s+", " ", base).strip().lower()
             if clean_b:
-                variants.add(clean_b)
-                variants.add(re.sub(r"[^\w]", "", clean_b))
+                variants[clean_b] = None
+                variants[re.sub(r"[^\w]", "", clean_b)] = None
 
         # 2. pykakasi conversion (if available)
         try:
@@ -192,8 +200,8 @@ class TextCleaner:
                 hep = " ".join(item.get("hepburn", "") for item in res if item.get("hepburn")).strip().lower()
                 if hep:
                     clean_hep = re.sub(r"\s+", " ", hep).strip().lower()
-                    variants.add(clean_hep)
-                    variants.add(re.sub(r"[^\w]", "", clean_hep))
+                    variants[clean_hep] = None
+                    variants[re.sub(r"[^\w]", "", clean_hep)] = None
         except Exception:
             pass
 
@@ -231,20 +239,24 @@ class TextCleaner:
                     clean_v = re.sub(r"\s+", " ", raw).strip().lower()
                     clean_np = re.sub(r"[^\w]", "", raw).lower()
                     if clean_v and not re.search(r"[\u4e00-\u9fa5]", clean_v):
-                        variants.add(clean_v)
+                        variants[clean_v] = None
                     if clean_np and not re.search(r"[\u4e00-\u9fa5]", clean_np):
-                        variants.add(clean_np)
+                        variants[clean_np] = None
 
         # Add inverted order for multi-word Romaji (e.g. Last First vs First Last: fujita akane <-> akane fujita)
-        inverted_variants: Set[str] = set()
-        for v in variants:
-            parts = v.split()
-            if len(parts) == 2:
-                inverted_variants.add(f"{parts[1]} {parts[0]}")
-                inverted_variants.add(f"{parts[1]}{parts[0]}")
-        variants.update(inverted_variants)
+        # Only when is_artist=True (not for song titles)
+        if is_artist:
+            for v in list(variants.keys()):
+                parts = v.split()
+                if len(parts) == 2:
+                    inv1 = f"{parts[1]} {parts[0]}"
+                    inv2 = f"{parts[1]}{parts[0]}"
+                    if inv1 not in variants:
+                        variants[inv1] = None
+                    if inv2 not in variants:
+                        variants[inv2] = None
 
-        return [v for v in variants if v]
+        return [v for v in variants.keys() if v]
 
     @staticmethod
     def phonetic_loanword_stem(s: str) -> str:

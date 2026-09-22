@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 from applemusic.config import Config, get_config
 from applemusic.matcher.cleaner import TextCleaner
 from applemusic.matcher.scorer import TrackScorer
+from applemusic.matcher.query_planner import QueryPlanner, PlannedQuery
+from applemusic.matcher.evidence import SingleTrackDiagnostics, VerificationLevel, MATCH_RULE_VERSION, ALIAS_VERSION
 from applemusic.models import (
     AppleMusicTrack,
     CatalogSearchOutcome,
@@ -63,7 +65,7 @@ class MatchingEngine:
         self,
         source: Track,
         outcomes: List[CatalogSearchOutcome],
-        collected_candidates: Dict[str, AppleMusicTrack],
+        collected_candidates: Dict[Any, AppleMusicTrack],
         query_attempts: int,
         failures: List[str],
         has_partial_failures: bool,
@@ -71,6 +73,9 @@ class MatchingEngine:
         rate_limited_retry_after: Optional[float] = None,
         relaxed: bool = False,
         is_rematch: bool = False,
+        executed_query_records: Optional[List[Dict[str, Any]]] = None,
+        cache_status: str = "none",
+        cache_version: Optional[str] = None,
     ) -> SongMatchResult:
         sf = storefront or self.config.storefront or "cn"
 
@@ -99,6 +104,17 @@ class MatchingEngine:
                 reasons.append("部分检索词请求受限或异常，已保留当前已发现候选供复核")
 
             search_status = "matched" if dec == DecisionStatus.AUTO_ACCEPT.value else "review"
+            diag = SingleTrackDiagnostics(
+                target_storefront=sf,
+                executed_queries=executed_query_records or [],
+                candidates_count=len(scored_candidates),
+                cache_status=cache_status,
+                cache_version=cache_version,
+                final_decision=dec,
+                verification_level=best.evidence.verification_level if best and best.evidence else VerificationLevel.UNVERIFIED.value,
+                matched_fields=best.evidence.matched_fields if best and best.evidence else [],
+                conflicts=best.evidence.conflicts if best and best.evidence else [],
+            )
             return SongMatchResult(
                 source_track=source,
                 candidates=scored_candidates[:10],
@@ -107,6 +123,8 @@ class MatchingEngine:
                 score_gap=gap,
                 decision=dec,
                 decision_reasons=reasons,
+                evidence=best.evidence if best else None,
+                diagnostics=diag,
                 search_status=search_status,
                 search_attempts=query_attempts,
                 search_failures=failures,
@@ -118,7 +136,16 @@ class MatchingEngine:
         # Priority: auth_failed > rate_limited > timeout > network_error > upstream_error > invalid_response > no_match
         kinds = [o.kind for o in outcomes] if outcomes else []
 
+        diag_base = SingleTrackDiagnostics(
+            target_storefront=sf,
+            executed_queries=executed_query_records or [],
+            candidates_count=0,
+            cache_status=cache_status,
+            cache_version=cache_version,
+        )
+
         if "auth_failed" in kinds:
+            diag_base.final_decision = "auth_required"
             return SongMatchResult(
                 source_track=source,
                 candidates=[],
@@ -127,6 +154,7 @@ class MatchingEngine:
                 score_gap=None,
                 decision="auth_required",
                 decision_reasons=["Apple Music 授权失效或未登录 (HTTP 401/403)，请先连接 Apple ID"],
+                diagnostics=diag_base,
                 search_status="auth_required",
                 search_attempts=query_attempts,
                 search_failures=failures,
@@ -141,6 +169,7 @@ class MatchingEngine:
                         retry_sec = o.retry_after_seconds
                         break
             retry_sec = retry_sec or 10.0
+            diag_base.final_decision = "rate_limited"
             return SongMatchResult(
                 source_track=source,
                 candidates=[],
@@ -149,6 +178,7 @@ class MatchingEngine:
                 score_gap=None,
                 decision="rate_limited",
                 decision_reasons=[f"Apple Music 暂时限制检索 (HTTP 429)，预计 {round(retry_sec, 1)} 秒后恢复，请稍后重试"],
+                diagnostics=diag_base,
                 search_status="rate_limited",
                 search_attempts=query_attempts,
                 search_failures=failures,
@@ -156,6 +186,7 @@ class MatchingEngine:
                 search_incomplete=True,
             )
         elif "timeout" in kinds:
+            diag_base.final_decision = "error"
             return SongMatchResult(
                 source_track=source,
                 candidates=[],
@@ -164,6 +195,7 @@ class MatchingEngine:
                 score_gap=None,
                 decision="error",
                 decision_reasons=["检索 Apple Music 曲库网络超时，请重试"],
+                diagnostics=diag_base,
                 search_status="timeout",
                 search_attempts=query_attempts,
                 search_failures=failures,
@@ -171,6 +203,7 @@ class MatchingEngine:
                 search_incomplete=True,
             )
         elif "network_error" in kinds:
+            diag_base.final_decision = "error"
             return SongMatchResult(
                 source_track=source,
                 candidates=[],
@@ -179,6 +212,7 @@ class MatchingEngine:
                 score_gap=None,
                 decision="error",
                 decision_reasons=["网络连接异常，未能连通 Apple Music 服务器，请检查网络后重试"],
+                diagnostics=diag_base,
                 search_status="network_error",
                 search_attempts=query_attempts,
                 search_failures=failures,
@@ -186,6 +220,7 @@ class MatchingEngine:
                 search_incomplete=True,
             )
         elif "upstream_error" in kinds:
+            diag_base.final_decision = "error"
             return SongMatchResult(
                 source_track=source,
                 candidates=[],
@@ -194,6 +229,7 @@ class MatchingEngine:
                 score_gap=None,
                 decision="error",
                 decision_reasons=["Apple Music 上游曲库服务器返回 5xx 异常，请稍后重试"],
+                diagnostics=diag_base,
                 search_status="upstream_error",
                 search_attempts=query_attempts,
                 search_failures=failures,
@@ -201,6 +237,7 @@ class MatchingEngine:
                 search_incomplete=True,
             )
         elif "invalid_response" in kinds:
+            diag_base.final_decision = "error"
             return SongMatchResult(
                 source_track=source,
                 candidates=[],
@@ -209,6 +246,7 @@ class MatchingEngine:
                 score_gap=None,
                 decision="error",
                 decision_reasons=["Apple Music 响应数据解析异常，请重试"],
+                diagnostics=diag_base,
                 search_status="search_error",
                 search_attempts=query_attempts,
                 search_failures=failures,
@@ -224,22 +262,28 @@ class MatchingEngine:
                     if lib_id:
                         lib_track = AppleMusicTrack(
                             id=lib_id,
-                            title=source.title,
+                            title=f"[资料库] {source.title}",
                             artists=source.artists or ([source.primary_artist] if source.primary_artist else []),
                             album=source.album or "个人资料库",
                             storefront=sf,
                             url=None,
                         )
-                        cand = MatchCandidate(track=lib_track, score=1.0)
+                        cand = TrackScorer.score(source, lib_track)
+                        cand.decision = DecisionStatus.REVIEW.value
+                        cand.decision_reasons.append("匹配至个人资料库，转待复核")
+                        diag_base.candidates_count = 1
+                        diag_base.final_decision = DecisionStatus.REVIEW.value
                         return SongMatchResult(
                             source_track=source,
                             candidates=[cand],
                             selected_candidate=cand,
-                            status=ConfidenceLevel.EXACT,
+                            status=ConfidenceLevel.HIGH,
                             score_gap=1.0,
-                            decision=DecisionStatus.AUTO_ACCEPT.value,
-                            decision_reasons=["已收录于个人资料库 (本地音源)"],
-                            search_status="matched",
+                            decision=DecisionStatus.REVIEW.value,
+                            decision_reasons=["已收录于个人资料库 (本地音源，待复核)"],
+                            evidence=cand.evidence,
+                            diagnostics=diag_base,
+                            search_status="review",
                             search_attempts=query_attempts,
                             search_failures=[],
                             retry_after_seconds=None,
@@ -249,6 +293,7 @@ class MatchingEngine:
                     pass
 
             prefix = "重试检索在" if is_rematch else "在"
+            diag_base.final_decision = DecisionStatus.NO_MATCH.value
             return SongMatchResult(
                 source_track=source,
                 candidates=[],
@@ -257,6 +302,7 @@ class MatchingEngine:
                 score_gap=None,
                 decision=DecisionStatus.NO_MATCH.value,
                 decision_reasons=[f"{prefix} Apple Music [{sf.upper()}] 区域曲库中未检索到匹配歌曲"],
+                diagnostics=diag_base,
                 search_status="no_match",
                 search_attempts=query_attempts,
                 search_failures=[],
@@ -281,8 +327,9 @@ class MatchingEngine:
         source.primary_artist = primary_artist
         source.featured_artists = featured_artists
 
-        collected_candidates: Dict[str, AppleMusicTrack] = {}
+        collected_candidates: Dict[Any, AppleMusicTrack] = {}
         outcomes: List[CatalogSearchOutcome] = []
+        executed_query_records: List[Dict[str, Any]] = []
         query_attempts = 0
         failures: List[str] = []
         has_partial_failures = False
@@ -296,9 +343,17 @@ class MatchingEngine:
             query_attempts += 1
             isrc_outcome = self.client.search_by_isrc(source.isrc.strip(), storefront=sf)
             outcomes.append(isrc_outcome)
+            executed_query_records.append({
+                "query": source.isrc.strip(),
+                "provenance": "isrc",
+                "storefront": sf,
+                "kind": isrc_outcome.kind,
+                "hits": len(isrc_outcome.tracks) if isrc_outcome.tracks else 0,
+            })
             if isrc_outcome.kind == "ok":
                 for r in isrc_outcome.tracks:
-                    collected_candidates[r.id] = r
+                    cand_key = (r.storefront or sf, r.id)
+                    collected_candidates[cand_key] = r
 
                 # Check if ISRC candidate achieves auto_accept
                 scored_isrc = [TrackScorer.score(source, cand) for cand in collected_candidates.values()]
@@ -311,6 +366,15 @@ class MatchingEngine:
                     min_score_gap=self.config.min_score_gap,
                 )
                 if dec == DecisionStatus.AUTO_ACCEPT.value:
+                    diag = SingleTrackDiagnostics(
+                        target_storefront=sf,
+                        executed_queries=executed_query_records,
+                        candidates_count=len(scored_isrc),
+                        final_decision=dec,
+                        verification_level=best.evidence.verification_level if best and best.evidence else VerificationLevel.UNVERIFIED.value,
+                        matched_fields=best.evidence.matched_fields if best and best.evidence else [],
+                        conflicts=best.evidence.conflicts if best and best.evidence else [],
+                    )
                     return SongMatchResult(
                         source_track=source,
                         candidates=scored_isrc[:5],
@@ -319,6 +383,8 @@ class MatchingEngine:
                         score_gap=gap,
                         decision=dec,
                         decision_reasons=reasons,
+                        evidence=best.evidence if best else None,
+                        diagnostics=diag,
                         search_status="matched",
                         search_attempts=query_attempts,
                         search_failures=[],
@@ -337,118 +403,44 @@ class MatchingEngine:
                     stop_expansion = True
 
         # -------------------------------------------------------------
-        # Streamlined Query Budget for Initial Matching (Max 1-2 targeted queries)
+        # Streamlined Query Budget for Initial Matching (Max 2 targeted queries)
         # -------------------------------------------------------------
-        tiered_queries = TextCleaner.generate_tiered_queries(
-            source.title, source.artists, album=source.album, version_tags=version_tags
-        )
-        queries_to_run: List[str] = [q[1] for q in tiered_queries[:3]] if tiered_queries else []
-        if not queries_to_run:
-            primary_q = f"{core_title} {primary_artist}".strip() if primary_artist else core_title
-            queries_to_run = [primary_q] if primary_q else []
+        planned_queries = QueryPlanner.plan_first_round(source)
 
-        def _evaluate_current():
-            if not collected_candidates:
-                return None, ConfidenceLevel.NOT_FOUND, DecisionStatus.NO_MATCH.value, [], None
-            temp_scored = [TrackScorer.score(source, cand) for cand in collected_candidates.values()]
-            temp_scored.sort(key=lambda x: x.score, reverse=True)
-            return TrackScorer.evaluate_candidates(
-                source,
-                temp_scored,
-                auto_accept_threshold=self.config.auto_accept_threshold,
-                min_review_score=self.config.min_review_score,
-                min_score_gap=self.config.min_score_gap,
-            )
-
-        # 1. Primary Query: core_title + primary_artist
-        if not stop_expansion and queries_to_run:
-            q_str = queries_to_run[0]
+        for pq in planned_queries:
+            if stop_expansion:
+                break
+            q_str = pq.query
             query_attempts += 1
             outcome = self.client.search_catalog(q_str, storefront=sf, limit=self.config.search_limit)
             outcomes.append(outcome)
+            executed_query_records.append({
+                "query": q_str,
+                "provenance": pq.provenance,
+                "storefront": sf,
+                "kind": outcome.kind,
+                "hits": len(outcome.tracks) if outcome.tracks else 0,
+            })
 
             if outcome.kind == "ok":
                 for r in outcome.tracks:
-                    if r.id not in collected_candidates:
-                        collected_candidates[r.id] = r
-                best, conf, dec, reasons, gap = _evaluate_current()
+                    cand_key = (r.storefront or sf, r.id)
+                    if cand_key not in collected_candidates:
+                        collected_candidates[cand_key] = r
+
+                # Check if candidates achieve auto_accept
+                temp_scored = [TrackScorer.score(source, cand) for cand in collected_candidates.values()]
+                temp_scored.sort(key=lambda x: x.score, reverse=True)
+                best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
+                    source,
+                    temp_scored,
+                    auto_accept_threshold=self.config.auto_accept_threshold,
+                    min_review_score=self.config.min_review_score,
+                    min_score_gap=self.config.min_score_gap,
+                )
                 if dec == DecisionStatus.AUTO_ACCEPT.value:
                     stop_expansion = True
-                else:
-                    # Candidates found but not auto-accepted: schedule 1 refined fallback if available
-                    raw_title = source.title.strip()
-                    if best is None or best.score < self.config.min_review_score:
-                        if source.trans_title and primary_artist:
-                            queries_to_run.append(f"{source.trans_title} {primary_artist}")
-                        elif source.trans_title:
-                            queries_to_run.append(source.trans_title)
-
-                        from applemusic.matcher.artist_aliases import get_artist_aliases
-                        aliases = get_artist_aliases(primary_artist) if primary_artist else []
-                        alt_artist = next((a for a in aliases if a.lower() != (primary_artist or "").lower()), None)
-                        romaji_artist = TextCleaner.japanese_to_romaji(primary_artist) if primary_artist else ""
-
-                        if alt_artist:
-                            queries_to_run.append(f"{core_title} {alt_artist}")
-                        elif romaji_artist and romaji_artist != (primary_artist or "").lower():
-                            queries_to_run.append(f"{core_title} {romaji_artist}")
-                        elif not single_query_budget and primary_artist and core_title:
-                            queries_to_run.append(core_title)
-                        elif core_title:
-                            queries_to_run.append(core_title)
-                    elif version_tags and primary_artist:
-                        queries_to_run.append(f"{core_title} {primary_artist} {version_tags[0]}")
-                    elif source.album and primary_artist:
-                        clean_alb = TextCleaner.clean_title(source.album)
-                        if clean_alb:
-                            queries_to_run.append(f"{core_title} {primary_artist} {clean_alb}")
-                    elif raw_title and raw_title.lower() != core_title.lower() and primary_artist:
-                        queries_to_run.append(f"{raw_title} {primary_artist}")
-            elif outcome.kind == "no_hits":
-                # Primary query returned 0 hits.
-                if source.trans_title and primary_artist:
-                    queries_to_run.append(f"{source.trans_title} {primary_artist}")
-                elif source.trans_title:
-                    queries_to_run.append(source.trans_title)
-
-                from applemusic.matcher.artist_aliases import get_artist_aliases
-                aliases = get_artist_aliases(primary_artist) if primary_artist else []
-                alt_artist = next((a for a in aliases if a.lower() != (primary_artist or "").lower()), None)
-                romaji_artist = TextCleaner.japanese_to_romaji(primary_artist) if primary_artist else ""
-
-                raw_title = source.title.strip()
-                if alt_artist:
-                    queries_to_run.append(f"{core_title} {alt_artist}")
-                elif romaji_artist and romaji_artist != (primary_artist or "").lower():
-                    queries_to_run.append(f"{core_title} {romaji_artist}")
-                elif raw_title and raw_title.lower() != core_title.lower() and primary_artist:
-                    queries_to_run.append(f"{raw_title} {primary_artist}")
-                elif not single_query_budget and primary_artist and core_title:
-                    queries_to_run.append(core_title)
-                elif core_title:
-                    queries_to_run.append(core_title)
-                elif not primary_artist and raw_title and raw_title.lower() != core_title.lower():
-                    queries_to_run.append(raw_title)
-            else:
-                has_partial_failures = True
-                failures.append(f"{q_str}: {outcome.safe_message or outcome.kind}")
-                if outcome.kind == "auth_failed":
-                    stop_expansion = True
-                elif outcome.kind == "rate_limited":
-                    rate_limited_retry_after = outcome.retry_after_seconds
-                    stop_expansion = True
-
-        # 2. Secondary Query (executed only if needed and scheduled, max 1 extra query)
-        if not stop_expansion and len(queries_to_run) > 1:
-            q_str = queries_to_run[1]
-            query_attempts += 1
-            outcome = self.client.search_catalog(q_str, storefront=sf, limit=self.config.search_limit)
-            outcomes.append(outcome)
-
-            if outcome.kind == "ok":
-                for r in outcome.tracks:
-                    if r.id not in collected_candidates:
-                        collected_candidates[r.id] = r
+                    break
             elif outcome.kind == "no_hits":
                 pass
             else:
@@ -471,6 +463,7 @@ class MatchingEngine:
             rate_limited_retry_after=rate_limited_retry_after,
             relaxed=False,
             is_rematch=False,
+            executed_query_records=executed_query_records,
         )
 
     def match_playlist(
@@ -698,38 +691,11 @@ class MatchingEngine:
         source.primary_artist = primary_artist
         source.featured_artists = featured_artists
 
-        # Collect queries: Standard tiered queries + Relaxed queries
-        queries: List[Tuple[int, str]] = []
-        if relaxed:
-            queries.extend(
-                TextCleaner.generate_relaxed_queries(
-                    title=source.title,
-                    artists=source.artists,
-                    album=source.album,
-                    version_tags=version_tags,
-                )
-            )
-        queries.extend(
-            TextCleaner.generate_tiered_queries(
-                title=source.title,
-                artists=source.artists,
-                album=source.album,
-                version_tags=version_tags,
-            )
-        )
+        # Collect planned queries from QueryPlanner
+        planned_queries = QueryPlanner.plan_deep_retry(source, max_budget=QueryPlanner.RETRY_TOTAL_BUDGET)
+        executed_query_records: List[Dict[str, Any]] = []
 
-        seen_q = set()
-        deduped_queries: List[Tuple[int, str]] = []
-        for tier, q_str in queries:
-            q_norm = q_str.strip().lower()
-            if q_norm and q_norm not in seen_q:
-                seen_q.add(q_norm)
-                deduped_queries.append((tier, q_str.strip()))
-
-        # Cap rematch queries to at most 3 targeted queries to prevent rate limits
-        deduped_queries = deduped_queries[:3]
-
-        collected_candidates: Dict[str, AppleMusicTrack] = {}
+        collected_candidates: Dict[Any, AppleMusicTrack] = {}
         outcomes: List[CatalogSearchOutcome] = []
         query_attempts = 0
         failures: List[str] = []
@@ -742,30 +708,56 @@ class MatchingEngine:
             query_attempts += 1
             isrc_outcome = self.client.search_by_isrc(source.isrc.strip(), storefront=sf)
             outcomes.append(isrc_outcome)
+            executed_query_records.append({
+                "query": source.isrc.strip(),
+                "provenance": "isrc",
+                "storefront": sf,
+                "kind": isrc_outcome.kind,
+                "hits": len(isrc_outcome.tracks) if isrc_outcome.tracks else 0,
+            })
             if isrc_outcome.kind == "ok":
                 for r in isrc_outcome.tracks:
-                    collected_candidates[r.id] = r
+                    cand_key = (r.storefront or sf, r.id)
+                    collected_candidates[cand_key] = r
             elif isrc_outcome.kind != "no_hits":
                 has_partial_failures = True
                 failures.append(f"ISRC: {isrc_outcome.safe_message or isrc_outcome.kind}")
 
-        # Try searching catalog
+        # Try searching catalog with strict query budgets
+        total_queries_run = 0
         for cur_sf in storefronts_to_try:
-            if stop_expansion:
+            if stop_expansion or total_queries_run >= QueryPlanner.RETRY_TOTAL_BUDGET:
                 break
 
-            for tier, q_str in deduped_queries:
-                if stop_expansion:
+            sf_queries_run = 0
+            for pq in planned_queries:
+                if (
+                    stop_expansion
+                    or total_queries_run >= QueryPlanner.RETRY_TOTAL_BUDGET
+                    or sf_queries_run >= QueryPlanner.RETRY_PER_STOREFRONT_BUDGET
+                ):
                     break
 
+                q_str = pq.query
                 query_attempts += 1
+                total_queries_run += 1
+                sf_queries_run += 1
+
                 outcome = self.client.search_catalog(q_str, storefront=cur_sf, limit=12)
                 outcomes.append(outcome)
+                executed_query_records.append({
+                    "query": q_str,
+                    "provenance": pq.provenance,
+                    "storefront": cur_sf,
+                    "kind": outcome.kind,
+                    "hits": len(outcome.tracks) if outcome.tracks else 0,
+                })
 
                 if outcome.kind == "ok":
                     for r in outcome.tracks:
-                        if r.id not in collected_candidates:
-                            collected_candidates[r.id] = r
+                        cand_key = (r.storefront or cur_sf, r.id)
+                        if cand_key not in collected_candidates:
+                            collected_candidates[cand_key] = r
                 elif outcome.kind == "no_hits":
                     pass
                 else:
@@ -803,6 +795,7 @@ class MatchingEngine:
             rate_limited_retry_after=rate_limited_retry_after,
             relaxed=relaxed,
             is_rematch=True,
+            executed_query_records=executed_query_records,
         )
 
     def rematch_playlist(

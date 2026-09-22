@@ -347,6 +347,8 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"Goose house", "goosehouse", "グースハウス"},
     {"MyGO!!!!!", "mygo", "mygo!!!!!"},
     {"Reol", "れをる"},
+    # Toaka (十明) - Source: Universal Music Japan (https://www.universal-music.co.jp/toaka/)
+    {"十明", "toaka"},
 ]
 
 # Build lookup index from normalized alias -> group_id

@@ -215,6 +215,7 @@ class PersistentCache:
     def get_match(self, storefront: str, track_hash: str) -> Optional[SongMatchResult]:
         """
         Retrieve cached SongMatchResult if present and not expired.
+        Automatically re-evaluates auto_accept results if rule_version or alias_version is outdated.
         """
         sf = (storefront or "cn").lower()
         now = time.time()
@@ -239,7 +240,43 @@ class PersistentCache:
                 return None
 
             data = json.loads(result_json)
-            return SongMatchResult(**data)
+            result = SongMatchResult(**data)
+
+            # Check rule version / alias version
+            from applemusic.matcher.evidence import MATCH_RULE_VERSION, ALIAS_VERSION
+            cached_rule_ver = getattr(result.evidence, "rule_version", None) if result.evidence else None
+            cached_alias_ver = getattr(result.evidence, "alias_version", None) if result.evidence else None
+
+            # If user manually confirmed, preserve user_confirmed decision
+            if result.decision == "user_confirmed":
+                return result
+
+            # If cached auto_accept has outdated rule_version or alias_version, re-evaluate!
+            if result.decision == "auto_accept":
+                if cached_rule_ver != MATCH_RULE_VERSION or cached_alias_ver != ALIAS_VERSION:
+                    cands_to_eval = result.candidates if result.candidates else ([result.selected_candidate] if result.selected_candidate else [])
+                    if cands_to_eval and result.source_track:
+                        from applemusic.matcher.scorer import TrackScorer
+                        scored = [TrackScorer.score(result.source_track, c.track) for c in cands_to_eval]
+                        scored.sort(key=lambda x: x.score, reverse=True)
+                        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
+                            result.source_track,
+                            scored,
+                        )
+                        result.candidates = scored
+                        result.selected_candidate = best if dec in ("auto_accept", "review") else None
+                        result.status = conf
+                        result.decision = dec
+                        result.decision_reasons = [f"规则版本升级({cached_rule_ver}->{MATCH_RULE_VERSION})重新评估: {', '.join(reasons)}"]
+                        result.evidence = best.evidence if best else None
+                        result.score_gap = gap
+                    else:
+                        from applemusic.models import ConfidenceLevel
+                        result.decision = "review"
+                        result.status = ConfidenceLevel.MEDIUM
+                        result.decision_reasons = [f"旧版本({cached_rule_ver})缓存已废弃，需人工复核"]
+
+            return result
         except Exception as e:
             logger.debug("Failed to read from persistent match cache: %s", e)
             return None
@@ -249,7 +286,8 @@ class PersistentCache:
         Multi-index lookup for cached SongMatchResult across:
         1. ISRC: 'isrc:{isrc}'
         2. Source Original ID: '{source}:{original_id}'
-        3. Canonical Text: 'text:{clean_title}:{clean_artist}'
+        3. Canonical Text: 'text:{clean_title}:{clean_artist}:{version_tags}'
+        Loose text hits are re-verified against the query track before accepting.
         """
         if track is None:
             return None
@@ -268,21 +306,46 @@ class PersistentCache:
         if orig_id and str(orig_id).strip() and str(orig_id).lower() not in ("none", "null", "unknown", "undefined") and src:
             keys_to_try.append(f"{src}:{str(orig_id).strip()}")
 
-        # 3. Canonical text index
+        # 3. Canonical text index with version tags
         title = getattr(track, "title", None)
         artists = getattr(track, "artists", [])
+        version_tags = getattr(track, "version_tags", None) or []
         if title:
             from applemusic.matcher.cleaner import TextCleaner
-            clean_t = TextCleaner.clean_title(title).lower()
+            clean_t, parsed_tags = TextCleaner.parse_title(title)
+            all_v_tags = sorted(list(set(version_tags + parsed_tags)))
+            v_tag_str = ",".join(all_v_tags) if all_v_tags else "standard"
             pri_a, _ = TextCleaner.parse_artists(artists)
             norm_a = TextCleaner.normalize(pri_a).lower()
             if clean_t:
-                keys_to_try.append(f"text:{clean_t}:{norm_a}")
+                keys_to_try.append(f"text:{clean_t.lower()}:{norm_a}:{v_tag_str}")
 
         for k in keys_to_try:
             m = self.get_match(sf, k)
-            if m and m.decision in ("auto_accept", "user_confirmed") and not m.search_incomplete:
-                return m
+            if m and not m.search_incomplete:
+                if k.startswith("text:"):
+                    # Loose text matches must be re-verified against caller's actual track!
+                    if m.candidates and track:
+                        from applemusic.matcher.scorer import TrackScorer
+                        scored = [TrackScorer.score(track, c.track) for c in m.candidates]
+                        scored.sort(key=lambda x: x.score, reverse=True)
+                        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
+                            track,
+                            scored,
+                        )
+                        if dec == "auto_accept":
+                            m_copy = m.model_copy(deep=True)
+                            m_copy.source_track = track
+                            m_copy.candidates = scored
+                            m_copy.selected_candidate = best
+                            m_copy.status = conf
+                            m_copy.decision = dec
+                            m_copy.evidence = best.evidence if best else None
+                            m_copy.score_gap = gap
+                            return m_copy
+                    continue
+                elif m.decision in ("auto_accept", "user_confirmed"):
+                    return m
 
         return None
 
@@ -323,13 +386,16 @@ class PersistentCache:
 
             title = getattr(t, "title", None)
             artists = getattr(t, "artists", [])
+            version_tags = getattr(t, "version_tags", None) or []
             if title:
                 from applemusic.matcher.cleaner import TextCleaner
-                clean_t = TextCleaner.clean_title(title).lower()
+                clean_t, parsed_tags = TextCleaner.parse_title(title)
+                all_v_tags = sorted(list(set(version_tags + parsed_tags)))
+                v_tag_str = ",".join(all_v_tags) if all_v_tags else "standard"
                 pri_a, _ = TextCleaner.parse_artists(artists)
                 norm_a = TextCleaner.normalize(pri_a).lower()
                 if clean_t:
-                    keys_to_save.append(f"text:{clean_t}:{norm_a}")
+                    keys_to_save.append(f"text:{clean_t.lower()}:{norm_a}:{v_tag_str}")
 
         try:
             json_str = match_result.model_dump_json()

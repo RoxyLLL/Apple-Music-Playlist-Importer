@@ -625,22 +625,19 @@
               </div>
 
               <!-- Match Confidence Badge -->
-              <div class="w-24 text-center flex-shrink-0">
+              <div class="w-36 text-center flex-shrink-0">
                 <template v-if="item.selected_candidate">
-                  <span v-if="item.selected_candidate.track && item.selected_candidate.track.id && item.selected_candidate.track.id.startsWith('i.')" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-violet-50 text-violet-700 border border-violet-200" title="已收录于个人资料库 (本地音源)">
+                  <span v-if="item.selected_candidate.track && item.selected_candidate.track.id && item.selected_candidate.track.id.startsWith('i.')" class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-violet-50 text-violet-700 border border-violet-200" title="已收录于个人资料库 (本地音源)">
                     个人资料库
                   </span>
-                  <span v-else-if="item.status === 'user_confirmed'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
+                  <span v-else-if="item.decision === 'user_confirmed' || item.status === 'user_confirmed'" class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
                     人工确认
                   </span>
-                  <span v-else-if="item.status === 'exact'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    100% 精确
+                  <span v-else-if="item.decision === 'auto_accept'" class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200" :title="item.decision_reasons ? item.decision_reasons.join('\n') : '自动匹配'">
+                    匹配分 {{ Math.round(item.selected_candidate.score * 100) }}/100 自动匹配
                   </span>
-                  <span v-else-if="item.decision === 'auto_accept' || item.status === 'high'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
-                    {{ Math.round(item.selected_candidate.score * 100) }}% 高可信
-                  </span>
-                  <span v-else class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 cursor-help" :title="item.decision_reasons ? item.decision_reasons.join('\n') : '建议复核'">
-                    {{ Math.round(item.selected_candidate.score * 100) }}% 待复核
+                  <span v-else class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 cursor-help" :title="item.decision_reasons ? item.decision_reasons.join('\n') : '建议复核'">
+                    匹配分 {{ Math.round(item.selected_candidate.score * 100) }}/100 待复核
                   </span>
                 </template>
                 <template v-else-if="item.status === 'matching'">
@@ -675,7 +672,7 @@
               </div>
 
               <!-- Actions: Preview & Change Candidate OR Rematch / Search / Bilibili -->
-              <div class="w-56 flex items-center justify-end space-x-2 flex-shrink-0">
+              <div class="w-64 flex items-center justify-end space-x-1.5 flex-shrink-0">
                 <template v-if="item.status === 'matching'">
                   <span class="text-xs text-neutral-300">--</span>
                 </template>
@@ -693,6 +690,13 @@
                   <button @click="openCandidateModal(item)"
                     class="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-neutral-600 hover:text-applered hover:bg-neutral-100 transition">
                     换版本
+                  </button>
+
+                  <!-- Diagnostics button -->
+                  <button @click="openDiagnosticsModal(item)"
+                    class="px-2 py-1.5 rounded-lg text-xs font-medium text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition"
+                    title="查看单曲诊断信息与排查报告">
+                    诊断
                   </button>
                 </template>
                 <template v-else>
@@ -717,6 +721,13 @@
                     class="px-2 py-1.5 rounded-lg text-xs font-medium text-neutral-500 hover:text-sky-600 hover:bg-neutral-100 transition"
                     title="手动输入关键词搜索 Apple Music">
                     搜曲库
+                  </button>
+
+                  <!-- Diagnostics button -->
+                  <button @click="openDiagnosticsModal(item)"
+                    class="px-2 py-1.5 rounded-lg text-xs font-medium text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition"
+                    title="查看单曲诊断信息与排查报告">
+                    诊断
                   </button>
 
                   <!-- Single Bilibili auto-download / modal button -->
@@ -1630,6 +1641,93 @@
           </div>
         </div>
 
+    <!-- ==================== MODAL: SINGLE TRACK DIAGNOSTICS ==================== -->
+    <div v-if="diagnosticsModalItem" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-appleborder space-y-4 animate-in fade-in zoom-in duration-200">
+        <div class="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-appledark flex items-center gap-2">
+              <i class="fa-solid fa-stethoscope text-applered"></i>
+              <span>单曲匹配诊断</span>
+            </h3>
+            <p class="text-xs text-applegray mt-0.5">
+              {{ diagnosticsModalItem.source_track.title }} · {{ (diagnosticsModalItem.source_track.artists || []).join(' / ') }}
+            </p>
+          </div>
+          <button @click="diagnosticsModalItem = null" class="w-7 h-7 rounded-full flex items-center justify-center text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition">
+            <i class="fa-solid fa-xmark text-sm"></i>
+          </button>
+        </div>
+
+        <div class="space-y-3 max-h-96 overflow-y-auto text-xs">
+          <!-- Metadata Table -->
+          <div class="grid grid-cols-2 gap-2 bg-neutral-50 p-3 rounded-xl border border-neutral-200/60 font-mono text-[11px]">
+            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.4' }}</div>
+            <div><span class="text-neutral-400">构建标识:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.build_id) || 'unknown' }}</div>
+            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.09.v1' }}</div>
+            <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.09.v1' }}</div>
+            <div><span class="text-neutral-400">目标区域:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.target_storefront) || 'cn' }}</div>
+            <div><span class="text-neutral-400">最终决策:</span> <span class="font-bold">{{ diagnosticsModalItem.decision }}</span></div>
+            <div><span class="text-neutral-400">证据级别:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.verification_level) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.verification_level) || 'unverified' }}</div>
+            <div><span class="text-neutral-400">候选数量:</span> {{ (diagnosticsModalItem.candidates || []).length }}</div>
+          </div>
+
+          <!-- Matched Fields & Conflicts -->
+          <div v-if="diagnosticsModalItem.evidence" class="space-y-1">
+            <div class="font-semibold text-neutral-700">证据与冲突:</div>
+            <div class="flex flex-wrap gap-1">
+              <span v-for="f in (diagnosticsModalItem.evidence.matched_fields || [])" :key="f" class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px]">
+                ✓ {{ f }}
+              </span>
+              <span v-for="c in (diagnosticsModalItem.evidence.conflicts || [])" :key="c" class="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px]">
+                ✗ {{ c }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Decision Reasons -->
+          <div v-if="diagnosticsModalItem.decision_reasons && diagnosticsModalItem.decision_reasons.length" class="space-y-1">
+            <div class="font-semibold text-neutral-700">决策依据:</div>
+            <ul class="list-disc list-inside text-neutral-600 space-y-0.5 text-[11px]">
+              <li v-for="(r, ri) in diagnosticsModalItem.decision_reasons" :key="ri">{{ r }}</li>
+            </ul>
+          </div>
+
+          <!-- Executed Queries -->
+          <div class="space-y-1">
+            <div class="font-semibold text-neutral-700">实际执行查询:</div>
+            <div class="divide-y divide-neutral-100 border border-neutral-200/60 rounded-xl overflow-hidden font-mono text-[11px]">
+              <div v-for="(q, qi) in ((diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.executed_queries) || [])" :key="qi"
+                class="p-2 bg-white flex items-center justify-between">
+                <div>
+                  <span class="text-neutral-400">#{{ qi + 1 }} [{{ q.provenance || 'query' }}]</span>
+                  <span class="font-semibold text-neutral-800 ml-1.5">"{{ q.query }}"</span>
+                </div>
+                <div class="text-neutral-500">
+                  <span>{{ q.kind }}</span>
+                  <span class="ml-1 text-neutral-400">({{ q.hits || 0 }} 命中)</span>
+                </div>
+              </div>
+              <div v-if="!diagnosticsModalItem.diagnostics || !diagnosticsModalItem.diagnostics.executed_queries || !diagnosticsModalItem.diagnostics.executed_queries.length"
+                class="p-2 text-neutral-400 italic">
+                无独立查询记录 (缓存直接命中或批次解析)
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer: Export JSON button -->
+        <div class="flex items-center justify-between border-t border-neutral-100 pt-3">
+          <button @click="exportSingleDiagnosticsJson(diagnosticsModalItem)"
+            class="px-4 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer">
+            <i class="fa-solid fa-download"></i>
+            <span>导出单曲诊断 JSON</span>
+          </button>
+          <button @click="diagnosticsModalItem = null"
+            class="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-black text-white font-semibold text-xs transition">
+            关闭
+          </button>
+        </div>
       </div>
     </div>
 
@@ -2157,6 +2255,7 @@
         const candidateModalItem = ref(null);
         const modalCandidates = ref([]);
         const modalSearchQuery = ref('');
+        const diagnosticsModalItem = ref(null);
 
         // Fetch user config on start
         const fetchConfig = async () => {
@@ -2860,11 +2959,59 @@
           }
           candidateModalItem.value = null;
         };
+        const openDiagnosticsModal = (item) => {
+          diagnosticsModalItem.value = item;
+        };
+
+        const exportSingleDiagnosticsJson = (item) => {
+          if (!item) return;
+          const sanitized = {
+            source_track: {
+              title: item.source_track.title,
+              artists: item.source_track.artists,
+              album: item.source_track.album,
+              duration_ms: item.source_track.duration_ms,
+              isrc: item.source_track.isrc,
+            },
+            selected_candidate: item.selected_candidate ? {
+              track: {
+                id: item.selected_candidate.track.id,
+                title: item.selected_candidate.track.title,
+                artists: item.selected_candidate.track.artists,
+                album: item.selected_candidate.track.album,
+                duration_ms: item.selected_candidate.track.duration_ms,
+                isrc: item.selected_candidate.track.isrc,
+                storefront: item.selected_candidate.track.storefront,
+              },
+              score: item.selected_candidate.score,
+              title_score: item.selected_candidate.title_score,
+              artist_score: item.selected_candidate.artist_score,
+              album_score: item.selected_candidate.album_score,
+              duration_score: item.selected_candidate.duration_score,
+              version_score: item.selected_candidate.version_score,
+              confidence: item.selected_candidate.confidence,
+              decision: item.selected_candidate.decision,
+            } : null,
+            decision: item.decision,
+            decision_reasons: item.decision_reasons,
+            status: item.status,
+            evidence: item.evidence || (item.selected_candidate && item.selected_candidate.evidence) || null,
+            diagnostics: item.diagnostics || null,
+          };
+          const blob = new Blob([JSON.stringify(sanitized, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          const safeName = (item.source_track.title || 'track').replace(/[^\w\u4e00-\u9fa5]/g, '_');
+          a.download = `diagnostic_${safeName}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+        };
 
         // Computed Filters & Stats helpers (mutually exclusive partitioning)
         const isConfirmed = (r) => r.status === 'user_confirmed' || r.decision === 'user_confirmed';
-        const isAutoAccepted = (r) => !isConfirmed(r) && (r.decision === 'auto_accept' || (!r.decision && (r.status === 'exact' || r.status === 'high')));
-        const isReview = (r) => !isConfirmed(r) && !isAutoAccepted(r) && (r.decision === 'review' || (!r.decision && r.status === 'medium'));
+        const isAutoAccepted = (r) => !isConfirmed(r) && (r.decision === 'auto_accept' || (!r.decision && r.status === 'exact' && r.selected_candidate && r.selected_candidate.score >= 0.99));
+        const isReview = (r) => !isConfirmed(r) && !isAutoAccepted(r) && (r.decision === 'review' || (!r.decision && r.selected_candidate));
         const retrySet = new Set(['rate_limited', 'auth_required', 'timeout', 'network_error', 'upstream_error', 'search_error', 'unprocessed']);
         const isNoMatch = (r) => !r.selected_candidate && !r.bilibili_downloaded && !isConfirmed(r) && (r.search_status === 'no_match' || r.decision === 'no_match' || (r.status === 'not_found' && !r.search_status));
         const isFailed = (r) => !r.selected_candidate && !r.bilibili_downloaded && !isConfirmed(r) && retrySet.has(r.search_status || r.decision);
@@ -3222,7 +3369,7 @@
               item.retry_after_seconds = matchResult.retry_after_seconds;
               item.search_incomplete = matchResult.search_incomplete;
               if (matchResult.selected_candidate) {
-                item.selected = true;
+                item.selected = (matchResult.decision === 'auto_accept' || matchResult.decision === 'user_confirmed');
               }
             }
           } catch (e) {
@@ -3315,7 +3462,7 @@
                       }
 
                       if (matchRes.selected_candidate) {
-                        originalItem.selected = true;
+                        originalItem.selected = (matchRes.decision === 'auto_accept' || matchRes.decision === 'user_confirmed');
                       }
                     }
                   });
@@ -4614,6 +4761,9 @@
           openCandidateModal,
           searchAlternative,
           selectCandidateForModal,
+          diagnosticsModalItem,
+          openDiagnosticsModal,
+          exportSingleDiagnosticsJson,
           openBilibiliModal,
           downloadBilibiliCandidate,
           batchDownloadBilibili,

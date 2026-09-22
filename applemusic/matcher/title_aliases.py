@@ -4,7 +4,7 @@ Handles English, Romaji, Kanji, and Kana title variations between streaming plat
 (NetEase, QQ Music, Spotify) and Apple Music regional catalogs.
 """
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 import re
 
 # Curated bidirectional title alias groups for Japanese & Anime songs:
@@ -371,9 +371,45 @@ for gid, group in enumerate(TITLE_GROUPS):
             _TITLE_TO_GROUP[p_clean] = gid
 
 
-def are_titles_equivalent(t1: str, t2: str) -> bool:
+# Artist-scoped title aliases:
+# Key: (normalized_artist, normalized_title) -> List[alias_in_preferred_display_case]
+# Guarantees that specific translations/aliases are ONLY valid within the specified artist scope.
+# Source: Universal Music Japan (https://www.universal-music.co.jp/toaka/products/uu1as-01729/)
+ARTIST_SCOPED_TITLE_ALIASES: Dict[Tuple[str, str], List[str]] = {
+    ("十明", "灰かぶり"): ["Cinder ella", "cinderella", "灰姑娘"],
+    ("toaka", "灰かぶり"): ["Cinder ella", "cinderella", "灰姑娘"],
+    ("十明", "cinder ella"): ["灰かぶり", "灰姑娘"],
+    ("toaka", "cinder ella"): ["灰かぶり", "灰姑娘"],
+    ("十明", "cinderella"): ["灰かぶり", "灰姑娘"],
+    ("toaka", "cinderella"): ["灰かぶり", "灰姑娘"],
+    ("十明", "灰姑娘"): ["灰かぶり", "Cinder ella", "cinderella"],
+    ("toaka", "灰姑娘"): ["灰かぶり", "Cinder ella", "cinderella"],
+}
+
+
+def get_scoped_title_aliases(artist: Optional[str], title: str) -> List[str]:
+    """Retrieve artist-scoped title aliases if a verified mapping exists."""
+    if not artist or not title:
+        return []
+    n_art = artist.lower().strip()
+    n_title = title.lower().strip()
+    p_title = re.sub(r"[^\w\s\u4e00-\u9fa5\u3040-\u30ff]", "", n_title).strip()
+
+    aliases = []
+    seen = set()
+    for (a_scope, t_scope), target_list in ARTIST_SCOPED_TITLE_ALIASES.items():
+        if a_scope.lower() == n_art and (t_scope.lower() == n_title or t_scope.lower() == p_title):
+            for item in target_list:
+                if item.lower() not in seen:
+                    seen.add(item.lower())
+                    aliases.append(item)
+    return aliases
+
+
+def are_titles_equivalent(t1: str, t2: str, artist: Optional[str] = None) -> bool:
     """
     Check if two song titles are identical or known cross-lingual/romanized aliases.
+    If artist is provided, also checks artist-scoped title aliases.
     """
     if not t1 or not t2:
         return False
@@ -390,11 +426,24 @@ def are_titles_equivalent(t1: str, t2: str) -> bool:
     if p1 and p1 == p2:
         return True
 
+    # 1. Global Japanese/Anime title groups
     g1 = _TITLE_TO_GROUP.get(n1) or _TITLE_TO_GROUP.get(p1)
     g2 = _TITLE_TO_GROUP.get(n2) or _TITLE_TO_GROUP.get(p2)
 
     if g1 is not None and g2 is not None and g1 == g2:
         return True
+
+    # 2. Artist-scoped title aliases (e.g. 十明: 灰かぶり <-> Cinder ella)
+    if artist:
+        n_art = artist.lower().strip()
+        for (a_scope, t_scope), target_list in ARTIST_SCOPED_TITLE_ALIASES.items():
+            if a_scope.lower() == n_art:
+                t_lower = t_scope.lower()
+                targets_lower = {x.lower() for x in target_list}
+                if (n1 == t_lower or p1 == t_lower) and (n2 in targets_lower or p2 in targets_lower):
+                    return True
+                if (n2 == t_lower or p2 == t_lower) and (n1 in targets_lower or p1 in targets_lower):
+                    return True
 
     return False
 

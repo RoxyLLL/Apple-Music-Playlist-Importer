@@ -91,18 +91,22 @@ class CatalogSearchOutcome(BaseModel):
     safe_message: Optional[str] = None
 
 
+from applemusic.matcher.evidence import MatchEvidence, SingleTrackDiagnostics
+
+
 class MatchCandidate(BaseModel):
     """Candidate match with scoring details."""
     track: AppleMusicTrack
     score: float
-    title_score: float
-    artist_score: float
+    title_score: float = 0.0
+    artist_score: float = 0.0
     album_score: float = 0.0
     duration_score: float = 0.0
     version_score: float = 0.0
-    confidence: ConfidenceLevel
+    confidence: ConfidenceLevel = ConfidenceLevel.LOW
     decision: str = "review"
     decision_reasons: List[str] = Field(default_factory=list)
+    evidence: Optional[MatchEvidence] = None
 
 
 class SongMatchResult(BaseModel):
@@ -122,6 +126,8 @@ class SongMatchResult(BaseModel):
     search_failures: List[str] = Field(default_factory=list)
     retry_after_seconds: Optional[float] = None
     search_incomplete: bool = False
+    evidence: Optional[MatchEvidence] = None
+    diagnostics: Optional[SingleTrackDiagnostics] = None
 
     @property
     def is_matched(self) -> bool:
