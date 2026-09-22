@@ -342,6 +342,11 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"SHINee", "shinee"},
     {"东方神起", "tvxq!", "tvxq", "dbsk"},
     {"倚水", "isui"},
+    {"トゲナシトゲアリ", "togenashi togeari"},
+    {"結束バンド", "kessoku band"},
+    {"Goose house", "goosehouse", "グースハウス"},
+    {"MyGO!!!!!", "mygo", "mygo!!!!!"},
+    {"Reol", "れをる"},
 ]
 
 # Build lookup index from normalized alias -> group_id

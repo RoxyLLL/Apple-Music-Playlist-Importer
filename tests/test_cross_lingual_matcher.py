@@ -359,8 +359,135 @@ class TestCrossLingualMatcher(unittest.TestCase):
         )
         self.assertLess(sim, 0.30)
 
+    def test_togenashi_togeari_zattou_wrong_world(self):
+        # 雑踏、僕らの街 (熙熙攘攘我们的城市) / トゲナシトゲアリ (TOGENASHI TOGEARI) vs Wrong World / TOGENASHI TOGEARI
+        src = Track(
+            title="雑踏、僕らの街 (熙熙攘攘我们的城市)",
+            artists=["トゲナシトゲアリ (TOGENASHI TOGEARI)"],
+            album="雑踏、僕らの街",
+        )
+        cand = AppleMusicTrack(
+            id="gbr_1",
+            title="Wrong World",
+            artists=["TOGENASHI TOGEARI"],
+            album="Wrong World - Single",
+            duration_ms=184000,
+        )
+        s = TrackScorer.score(src, cand)
+        self.assertGreaterEqual(s.score, 0.88)
+        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [s])
+        self.assertEqual(dec, DecisionStatus.AUTO_ACCEPT.value)
+
+    def test_goose_house_hikaru_nara_composer_role(self):
+        # 光るなら (若能绽放光芒) / Goose house (グースハウス) vs 光るなら / Goose house (Composer / Lyricist)
+        src = Track(
+            title="光るなら (若能绽放光芒)",
+            artists=["Goose house (グースハウス)"],
+            album="光るなら",
+        )
+        cand = AppleMusicTrack(
+            id="gh_1",
+            title="光るなら",
+            artists=["Goose house (Composer / Lyricist)"],
+            album="光るなら - EP",
+            duration_ms=252000,
+        )
+        s = TrackScorer.score(src, cand)
+        self.assertGreaterEqual(s.score, 0.88)
+        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [s])
+    def test_katakana_loanword_phonetic_stem_and_matcher(self):
+        self.assertEqual(TextCleaner.phonetic_loanword_stem("miraaju"), "mirag")
+        self.assertEqual(TextCleaner.phonetic_loanword_stem("mirage"), "mirag")
+        self.assertEqual(TextCleaner.match_katakana_loanword("ミラージュ", "mirage"), 1.0)
+        self.assertLess(TextCleaner.match_katakana_loanword("ミラージュ", "wrong world"), 0.35)
+
+    def test_reol_mirage_cross_lingual(self):
+        # User reported case: ミラージュ (海市蜃楼) - Reol (れをる) vs mirage - Reol · Jijitsujo (Special Edition)
+        src = Track(
+            title="ミラージュ (海市蜃楼)",
+            artists=["Reol (れをる)"],
+            album="事実上",
+        )
+        cand1 = AppleMusicTrack(
+            id="reol_cand_1",
+            title="mirage",
+            artists=["Reol"],
+            album="Jijitsujo (Special Edition)",
+            duration_ms=215000,
+        )
+        cand2 = AppleMusicTrack(
+            id="reol_cand_2",
+            title="平面鏡",
+            artists=["Reol"],
+            album="Jijitsujo (Special Edition)",
+            duration_ms=190000,
+        )
+        s1 = TrackScorer.score(src, cand1)
+        s2 = TrackScorer.score(src, cand2)
+
+        self.assertGreaterEqual(s1.score, 0.88)
+        self.assertLess(s2.score, 0.50)
+
+        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [s1, s2])
+        self.assertEqual(dec, DecisionStatus.AUTO_ACCEPT.value)
+        self.assertEqual(best.track.id, "reol_cand_1")
+
+    def test_single_ep_layer4_corroboration(self):
+        # Uncataloged cross-lingual title with verified artist, Single/EP album, and matching duration
+        # Retains as a plausible candidate for review (>= 0.70) without dangerous false-positive auto-accept
+        src = Track(
+            title="未収録のアニメ曲",
+            artists=["FictionJunction"],
+            album="未収録のアニメ曲",
+            duration_ms=210000,
+        )
+        cand = AppleMusicTrack(
+            id="fj_1",
+            title="Uncataloged Anime Song",
+            artists=["FictionJunction"],
+            album="Uncataloged Anime Song - Single",
+            duration_ms=210500,
+        )
+        s = TrackScorer.score(src, cand)
+        self.assertGreaterEqual(s.score, 0.70)
+        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [s])
+        self.assertEqual(dec, DecisionStatus.REVIEW.value)
+
+    def test_character_song_voice_actor_inversion(self):
+        # 夏色恋花火 藤田茜 (ふじた あかね) vs Sagiri Izumi (CV:Akane Fujita)
+        src = Track(title="夏色恋花火", artists=["藤田茜 (ふじた あかね)"])
+        cand = AppleMusicTrack(
+            id="cs_1",
+            title="夏色恋花火",
+            artists=["Sagiri Izumi (CV:Akane Fujita)"],
+            album="エロマンガ先生 Complete Collection",
+        )
+        s = TrackScorer.score(src, cand)
+        self.assertEqual(s.title_score, 1.0)
+        self.assertEqual(s.artist_score, 1.0)
+        self.assertEqual(s.score, 1.0)
+        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [s])
+        self.assertEqual(dec, DecisionStatus.AUTO_ACCEPT.value)
+
+    def test_bracket_subtitle_typo_punctuation_tolerance(self):
+        # 妖精小姐的魔法邀约 (Miss Elf's Magical Invitation) 宴宁 vs Miss Elf''s Magical Invitation HOYO-MiX & 宴寧
+        src = Track(title="妖精小姐的魔法邀约 (Miss Elf's Magical Invitation)", artists=["宴宁"])
+        cand = AppleMusicTrack(
+            id="elf_1",
+            title="Miss Elf''s Magical Invitation",
+            artists=["HOYO-MiX", "宴寧"],
+            album="故星銘於長空 (遊戲《崩壞3rd》原聲帶)",
+        )
+        s = TrackScorer.score(src, cand)
+        self.assertGreaterEqual(s.title_score, 0.95)
+        self.assertEqual(s.artist_score, 1.0)
+        self.assertGreaterEqual(s.score, 0.95)
+        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [s])
+        self.assertEqual(dec, DecisionStatus.AUTO_ACCEPT.value)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

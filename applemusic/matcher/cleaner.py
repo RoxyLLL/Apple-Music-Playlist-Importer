@@ -2,6 +2,7 @@
 Title and artist normalization and cleaning for music matching.
 """
 
+import difflib
 import re
 import unicodedata
 from typing import List, Tuple, Optional
@@ -212,7 +213,11 @@ class TextCleaner:
                 elif re.match(r"[a-zA-Z0-9]", ch):
                     slots.append([ch.lower()])
                 else:
-                    slots.append([""])
+                    romaji_ch = TextCleaner.japanese_to_romaji(ch)
+                    if romaji_ch and romaji_ch != ch.lower():
+                        slots.append([romaji_ch])
+                    else:
+                        slots.append([ch.lower()])
 
             total_combos = 1
             for s in slots:
@@ -225,12 +230,101 @@ class TextCleaner:
                     raw = "".join(combo)
                     clean_v = re.sub(r"\s+", " ", raw).strip().lower()
                     clean_np = re.sub(r"[^\w]", "", raw).lower()
-                    if clean_v:
+                    if clean_v and not re.search(r"[\u4e00-\u9fa5]", clean_v):
                         variants.add(clean_v)
-                    if clean_np:
+                    if clean_np and not re.search(r"[\u4e00-\u9fa5]", clean_np):
                         variants.add(clean_np)
 
+        # Add inverted order for multi-word Romaji (e.g. Last First vs First Last: fujita akane <-> akane fujita)
+        inverted_variants: Set[str] = set()
+        for v in variants:
+            parts = v.split()
+            if len(parts) == 2:
+                inverted_variants.add(f"{parts[1]} {parts[0]}")
+                inverted_variants.add(f"{parts[1]}{parts[0]}")
+        variants.update(inverted_variants)
+
         return [v for v in variants if v]
+
+    @staticmethod
+    def phonetic_loanword_stem(s: str) -> str:
+        """
+        Normalize Katakana-derived Romaji or English/French loanword into a simplified phonetic stem.
+        Examples:
+          'miraaju' -> 'mirag'
+          'mirage' -> 'mirag'
+          'sparkle' -> 'sparkl'
+        """
+        if not s:
+            return ""
+        # Lowercase and keep letters
+        s = re.sub(r"[^a-zA-Z]", "", s).lower()
+        if not s:
+            return ""
+
+        # Collapse repeated vowels (aa -> a, ii -> i, uu -> u, ee -> e, oo -> o)
+        s = re.sub(r"([aeiou])\1+", r"\1", s)
+
+        # Common Katakana-Romaji loanword phonetic correspondences
+        s = s.replace("ph", "f")
+        s = re.sub(r"c([eiy])", r"s\1", s)
+        s = s.replace("ck", "k").replace("c", "k").replace("q", "k")
+        s = s.replace("v", "b")
+        s = s.replace("l", "r")
+        s = s.replace("th", "s")
+
+        # Normalize soft g / French / English j:
+        # e.g., mirage -> mirag, miraju -> mirag
+        s = re.sub(r"(?:j[ui]|ge|dge|je)$", "g", s)
+        s = re.sub(r"j[ui]", "g", s)
+
+        # Drop Japanese epenthetic trailing vowels [uo] unless word is very short (<= 3)
+        if len(s) > 3:
+            s = re.sub(r"[uo]$", "", s)
+            # Drop silent trailing 'e'
+            s = re.sub(r"e$", "", s)
+
+        return s
+
+    @staticmethod
+    def match_katakana_loanword(s1: str, s2: str) -> float:
+        """
+        Phonetically compare a Katakana title with an English/Romaji title.
+        Returns similarity in [0.0, 1.0].
+        """
+        if not s1 or not s2:
+            return 0.0
+
+        has_kana_1 = bool(re.search(r"[\u30a0-\u30ff]", s1))
+        has_kana_2 = bool(re.search(r"[\u30a0-\u30ff]", s2))
+        if not (has_kana_1 or has_kana_2):
+            return 0.0
+
+        kana_str, latin_str = (s1, s2) if has_kana_1 else (s2, s1)
+        # If latin_str contains CJK or Kana, this is not a pure Katakana <-> Latin loanword pair
+        if re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", latin_str):
+            return 0.0
+
+        romaji_variants = TextCleaner.get_japanese_romaji_variants(kana_str)
+        if not romaji_variants:
+            romaji_variants = [TextCleaner.kana_to_romaji(kana_str)]
+
+        latin_stem = TextCleaner.phonetic_loanword_stem(latin_str)
+        if not latin_stem:
+            return 0.0
+
+        best_sim = 0.0
+        for r in romaji_variants:
+            r_stem = TextCleaner.phonetic_loanword_stem(r)
+            if not r_stem:
+                continue
+            if r_stem == latin_stem:
+                return 1.0
+            ratio = difflib.SequenceMatcher(None, r_stem, latin_stem).ratio()
+            if ratio > best_sim:
+                best_sim = ratio
+
+        return best_sim
 
     @staticmethod
     def normalize(text: str) -> str:
@@ -370,6 +464,8 @@ class TextCleaner:
         Extract primary artist and list of featured/collaborative artists.
         Splits delimiters such as 'feat.', 'ft.', '&', '/', '、', ','
         Filters out generic noise artists like '群星', 'Various Artists'.
+        Strips role annotations (e.g. '(Composer / Lyricist)', '(作词)')
+        and extracts bracketed aliases (e.g. 'トゲナシトゲアリ (TOGENASHI TOGEARI)').
         """
         if not artists:
             return "", []
@@ -378,12 +474,34 @@ class TextCleaner:
         for raw in artists:
             if not raw:
                 continue
-            # Split on common collaborative delimiters
-            parts = re.split(r"\s+(?:feat\.?|ft\.?|with)\s+|\s*[/\\&,，、]\s*", raw, flags=re.IGNORECASE)
-            for p in parts:
-                p_clean = p.strip()
-                if p_clean and p_clean not in all_names:
-                    all_names.append(p_clean)
+
+            # Strip Apple Music role annotations: e.g. '(Composer / Lyricist)', '(作词)'
+            cleaned_raw = re.sub(
+                r"\s*[(（]\s*(?:Composer|Lyricist|Producer|Arranger|Vocalist|Featured|Soloist|作词|作曲|编曲|演唱|制作人)[^)）]*[)）]",
+                "",
+                raw,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            # If the artist has a parenthetical alias or CV tag:
+            # e.g., Sagiri Izumi (CV:Akane Fujita), 和泉紗霧 (CV:藤田茜), トゲナシトゲアリ (TOGENASHI TOGEARI)
+            alias_m = re.match(r"^([^(（]+)[(（]([^)）]+)[)）]$", cleaned_raw)
+            raw_candidates = [cleaned_raw]
+            if alias_m:
+                main_p = alias_m.group(1).strip()
+                alias_p = alias_m.group(2).strip()
+                # Strip CV / CV: / CV. / 声优 prefix if present
+                alias_p = re.sub(r"^(?:cv[:\.\s]|voice[:\.\s]|声优[:\.\s])\s*", "", alias_p, flags=re.IGNORECASE).strip()
+                if main_p and alias_p:
+                    raw_candidates = [main_p, alias_p]
+
+            for r_cand in raw_candidates:
+                # Split on common collaborative and voice-actor delimiters
+                parts = re.split(r"\s+(?:feat\.?|ft\.?|with|cv[:\.\s]|voice[:\.\s])\s+|\s*[/\\&,，、]\s*", r_cand, flags=re.IGNORECASE)
+                for p in parts:
+                    p_clean = p.strip()
+                    if p_clean and p_clean not in all_names:
+                        all_names.append(p_clean)
 
         if not all_names:
             return "", []
@@ -417,11 +535,17 @@ class TextCleaner:
         all_tags = list(dict.fromkeys((version_tags or []) + tags))
         primary_artist, featured = cls.parse_artists(artists)
 
+        # Extract title variants (e.g. bracketed English title, translated subtitle, dash subtitle)
+        variants = cls.extract_title_variants(title)
+        sub_titles = [v for v in variants if v.lower() != core_t.lower() and len(v) >= 2]
+
         queries: List[Tuple[int, str]] = []
         seen = set()
 
         def add_q(tier: int, q_str: str):
-            clean_q = re.sub(r"\s+", " ", q_str).strip()
+            # Clean search query: strip brackets, book marks, and excess spaces
+            clean_q = re.sub(r"[()（）【】\[\]《》「」『』\"]", " ", q_str)
+            clean_q = re.sub(r"\s+", " ", clean_q).strip()
             if clean_q and clean_q.lower() not in seen:
                 seen.add(clean_q.lower())
                 queries.append((tier, clean_q))
@@ -429,6 +553,10 @@ class TextCleaner:
         # Tier 1: Strict core title + primary artist
         if primary_artist:
             add_q(1, f"{core_t} {primary_artist}")
+            # If there is an extracted subtitle (e.g. English title in brackets), also add as Tier 1
+            for sub in sub_titles:
+                add_q(1, f"{sub} {primary_artist}")
+
             # If there is a version tag (like live or remix), also create a versioned Tier 1 query
             if all_tags:
                 tag_label = all_tags[0]
@@ -439,10 +567,18 @@ class TextCleaner:
             for alias in get_artist_aliases(primary_artist):
                 if alias.lower() != primary_artist.lower():
                     add_q(2, f"{core_t} {alias}")
+                    for sub in sub_titles:
+                        add_q(2, f"{sub} {alias}")
                     break
             romaji_artist = cls.japanese_to_romaji(primary_artist)
             if romaji_artist and romaji_artist != primary_artist.lower():
                 add_q(2, f"{core_t} {romaji_artist}")
+                for sub in sub_titles:
+                    add_q(2, f"{sub} {romaji_artist}")
+
+        # Tier 2: Subtitle alone (vital when candidate has English title only)
+        for sub in sub_titles:
+            add_q(2, sub)
 
         # Tier 2: Collaborator variants
         if featured:
@@ -455,8 +591,6 @@ class TextCleaner:
 
         # Tier 4: Core title alone (fallback)
         add_q(4, core_t)
-        if title.strip() != core_t:
-            add_q(4, title.strip())
 
         return queries
 

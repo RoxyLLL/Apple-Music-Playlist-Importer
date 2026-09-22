@@ -339,8 +339,13 @@ class MatchingEngine:
         # -------------------------------------------------------------
         # Streamlined Query Budget for Initial Matching (Max 1-2 targeted queries)
         # -------------------------------------------------------------
-        primary_q = f"{core_title} {primary_artist}".strip() if primary_artist else core_title
-        queries_to_run: List[str] = [primary_q] if primary_q else []
+        tiered_queries = TextCleaner.generate_tiered_queries(
+            source.title, source.artists, album=source.album, version_tags=version_tags
+        )
+        queries_to_run: List[str] = [q[1] for q in tiered_queries[:3]] if tiered_queries else []
+        if not queries_to_run:
+            primary_q = f"{core_title} {primary_artist}".strip() if primary_artist else core_title
+            queries_to_run = [primary_q] if primary_q else []
 
         def _evaluate_current():
             if not collected_candidates:

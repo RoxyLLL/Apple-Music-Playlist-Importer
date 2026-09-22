@@ -417,7 +417,26 @@ class SearchTrackRequest(BaseModel):
 async def search_single_track(req: SearchTrackRequest):
     client, engine = get_shared_engine()
     sf = req.storefront or client.config.storefront or "cn"
-    outcome = await asyncio.to_thread(client.search_catalog, req.query, sf, req.limit)
+
+    # Intelligently clean query: strip brackets and invalid search punctuation
+    raw_q = req.query.strip()
+    clean_q = re.sub(r"[()（）【】\[\]《》「」『』\"]", " ", raw_q)
+    clean_q = re.sub(r"\s+", " ", clean_q).strip()
+    query_to_use = clean_q if len(clean_q) >= 2 else raw_q
+
+    outcome = await asyncio.to_thread(client.search_catalog, query_to_use, sf, req.limit)
+
+    # If 0 hits and original query contained brackets (e.g. English subtitle in brackets):
+    # Automatically try searching the bracketed content directly
+    if outcome.kind == "no_hits":
+        bracket_matches = re.findall(r"[\(（【\[]([^()（）【\]]*)[\)）】\]]", raw_q)
+        for b_text in bracket_matches:
+            b_clean = re.sub(r"[()（）【】\[\]《》「」『』\"]", " ", b_text).strip()
+            if len(b_clean) >= 2:
+                b_outcome = await asyncio.to_thread(client.search_catalog, b_clean, sf, req.limit)
+                if b_outcome.kind == "ok" and b_outcome.tracks:
+                    outcome = b_outcome
+                    break
 
     if outcome.kind in ("rate_limited", "auth_failed", "upstream_error", "network_error", "timeout"):
         return {

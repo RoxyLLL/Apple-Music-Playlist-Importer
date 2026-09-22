@@ -1335,7 +1335,11 @@
                 <i v-else class="fa-solid fa-music text-neutral-300 text-xs absolute inset-0 m-auto flex items-center justify-center"></i>
               </div>
               <div class="min-w-0 flex-1">
-                <div class="font-bold text-neutral-900 truncate">{{ cand.track.title }}</div>
+                <div class="font-bold text-neutral-900 truncate flex items-center flex-wrap gap-1.5">
+                  <span class="truncate">{{ cand.track.title }}</span>
+                  <span v-if="cand.score >= 0.85" class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0">推荐匹配 ({{ Math.round(cand.score * 100) }}%)</span>
+                  <span v-else-if="cand.score >= 0.50" class="px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-50 text-amber-600 border border-amber-200 shrink-0">相似 ({{ Math.round(cand.score * 100) }}%)</span>
+                </div>
                 <div class="text-xs text-neutral-500 truncate mt-0.5">
                   {{ cand.track.artists.join('/') }} · {{ cand.track.album }}
                 </div>
@@ -2801,7 +2805,22 @@
         const openCandidateModal = (item) => {
           candidateModalItem.value = item;
           modalCandidates.value = item.candidates || [];
-          modalSearchQuery.value = `${item.source_track.title} ${item.source_track.artists[0] || ''}`.trim();
+          
+          const rawTitle = (item.source_track && item.source_track.title) || '';
+          const rawArtist = (item.source_track && item.source_track.artists && item.source_track.artists[0]) || '';
+          
+          // Check for bracketed English or foreign subtitle
+          const bracketMatch = rawTitle.match(/[\(（【\[]([^()（）【\]]*)[\)）】\]]/);
+          const coreTitle = rawTitle.replace(/[\(（【\[][^()（）【\]]*[\)）】\]]/g, '').trim();
+
+          if (bracketMatch && bracketMatch[1] && /[a-zA-Z]{2,}/.test(bracketMatch[1])) {
+            modalSearchQuery.value = bracketMatch[1].trim();
+          } else if (coreTitle) {
+            modalSearchQuery.value = `${coreTitle} ${rawArtist}`.trim();
+          } else {
+            modalSearchQuery.value = `${rawTitle} ${rawArtist}`.trim();
+          }
+
           if (!modalCandidates.value.length) {
             searchAlternative();
           }

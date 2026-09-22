@@ -85,6 +85,22 @@ def _calculate_title_similarity_cached(source_title: str, candidate_title: str) 
             nv2 = TextCleaner.normalize(v2)
             if nv1 == nv2 or are_titles_equivalent(nv1, nv2):
                 return 0.98
+            # Punctuation-stripped comparison (e.g. "Miss Elf's" vs "Miss Elf''s" / "Miss Elf s")
+            p_nv1 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", nv1)
+            p_nv2 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", nv2)
+            if p_nv1 and p_nv2 and (p_nv1 == p_nv2 or are_titles_equivalent(p_nv1, p_nv2)):
+                return 0.98
+            # Fuzzy variant ratio for minor typos or official metadata discrepancies
+            if len(nv1) >= 4 and len(nv2) >= 4:
+                v_ratio = _fast_sequence_ratio(nv1, nv2)
+                if v_ratio >= 0.85:
+                    return max(v_ratio, 0.95)
+                if len(p_nv1) >= 4 and len(p_nv2) >= 4:
+                    if p_nv1 in p_nv2 or p_nv2 in p_nv1:
+                        return 0.92
+                    p_ratio = _fast_sequence_ratio(p_nv1, p_nv2)
+                    if p_ratio >= 0.85:
+                        return max(p_ratio, 0.95)
 
     # Japanese Kana/Kanji <-> Romaji comparison with multi-reading and morphological analysis
     has_japanese = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", c1) or re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", c2))
@@ -107,11 +123,28 @@ def _calculate_title_similarity_cached(source_title: str, candidate_title: str) 
                         if ratio >= 0.80:
                             return max(ratio, 0.90)
 
+    # Katakana loanword phonetic alignment (e.g. ミラージュ <-> mirage)
+    loan_sim = TextCleaner.match_katakana_loanword(c1, c2)
+    if loan_sim >= 0.85:
+        return 0.98
+
+    for v1 in v1_list:
+        for v2 in v2_list:
+            v_loan = TextCleaner.match_katakana_loanword(v1, v2)
+            if v_loan >= 0.85:
+                return 0.98
+
     raw_sim = _fast_sequence_ratio(s1, s2)
     clean_sim = _fast_sequence_ratio(c1, c2)
 
     # Prefix or substring containment bonus
     contain_bonus = 0.0
+    if loan_sim >= 0.65:
+        contain_bonus = max(contain_bonus, 0.90)
+    for v1 in v1_list:
+        for v2 in v2_list:
+            if TextCleaner.match_katakana_loanword(v1, v2) >= 0.65:
+                contain_bonus = max(contain_bonus, 0.90)
     if c1 and c2:
         shorter, longer = (c1, c2) if len(c1) <= len(c2) else (c2, c1)
         ratio = len(shorter) / max(1, len(longer))
@@ -189,8 +222,14 @@ class TrackScorer:
         norm_pri_c = TextCleaner.normalize(pri_c)
 
         # Primary artist exact or known cross-lingual alias match
-        if norm_pri_s and norm_pri_c and (norm_pri_s == norm_pri_c or are_artists_equivalent(norm_pri_s, norm_pri_c)):
-            return 1.0
+        if norm_pri_s and norm_pri_c:
+            if norm_pri_s == norm_pri_c or are_artists_equivalent(norm_pri_s, norm_pri_c):
+                return 1.0
+            s_words = norm_pri_s.split()
+            c_words = norm_pri_c.split()
+            if len(s_words) == 2 and len(c_words) == 2:
+                if s_words[0] == c_words[1] and s_words[1] == c_words[0]:
+                    return 1.0
 
         # Japanese Kana/Kanji transliteration for primary artist
         has_jp = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", norm_pri_s) or re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", norm_pri_c))
@@ -200,10 +239,14 @@ class TrackScorer:
             for r_s in s_art_vars:
                 for r_c in c_art_vars:
                     if r_s == r_c or are_artists_equivalent(r_s, r_c):
+                        if (len(norm_pri_s) >= 2 or len(norm_pri_c) >= 2) and len(r_s) < 4:
+                            continue
                         return 1.0
                     rsp = re.sub(r"[^\w]", "", r_s)
                     rcp = re.sub(r"[^\w]", "", r_c)
                     if rsp and rsp == rcp:
+                        if (len(norm_pri_s) >= 2 or len(norm_pri_c) >= 2) and len(rsp) < 4:
+                            continue
                         return 1.0
                     if len(rsp) >= 3 and len(rcp) >= 3:
                         if rsp in rcp or rcp in rsp:
@@ -237,6 +280,11 @@ class TrackScorer:
         for s in norm_s:
             for c in norm_c:
                 if s == c or are_artists_equivalent(s, c):
+                    max_cross_score = max(max_cross_score, 1.0)
+                    break
+                s_w = s.split()
+                c_w = c.split()
+                if len(s_w) == 2 and len(c_w) == 2 and s_w[0] == c_w[1] and s_w[1] == c_w[0]:
                     max_cross_score = max(max_cross_score, 1.0)
                     break
                 # Romaji transliteration check across artist list
@@ -383,16 +431,29 @@ class TrackScorer:
         reasons.extend(v_reasons)
 
         # 3. Strict Album Track Fingerprint Fallback (for unlisted translations only)
-        # ONLY triggers when artist is verified (>= 0.85), album is verified (>= 0.85),
-        # version is consistent, and duration matches precisely within 2.0 seconds.
+        # Triggers when artist is verified (>= 0.85), version is consistent, duration matches precisely (<= 2.5s),
+        # and album matches (>= 0.85) OR candidate is a Single/EP.
         is_album_track_corroborated = False
-        if title_score < 0.45 and artist_score >= 0.85 and album_score >= 0.85 and version_factor >= 0.0:
+        cand_album_is_single = False
+        if candidate.album:
+            ca_lower = candidate.album.lower()
+            cand_album_is_single = "single" in ca_lower or "ep" in ca_lower
+
+        album_ok_for_fallback = (album_score >= 0.85) or (cand_album_is_single and artist_score >= 0.85)
+
+        if title_score < 0.45 and artist_score >= 0.85 and album_ok_for_fallback and version_factor >= 0.0:
             if source.duration_ms and candidate.duration_ms:
                 diff_sec = abs(source.duration_ms - candidate.duration_ms) / 1000.0
-                if diff_sec <= 2.0:
+                if diff_sec <= 2.5:
                     is_album_track_corroborated = True
-                    title_score = 0.60
-                    reasons.append(f"同专辑同艺人相同时长曲目({diff_sec:.1f}s误差)，疑似跨语种译名(待人工核对)")
+                    # Only auto-accept if album name also matches (>= 0.70)
+                    if cand_album_is_single and album_score >= 0.70:
+                        title_score = 0.85
+                        album_score = max(album_score, 0.85)
+                        reasons.append(f"同Single/EP同艺人相同时长曲目({diff_sec:.1f}s误差)，跨语种版本佐证")
+                    else:
+                        title_score = 0.60
+                        reasons.append(f"同专辑/Single同艺人相同时长曲目({diff_sec:.1f}s误差)，疑似跨语种译名(待人工核对)")
 
         # 4. Dynamic Weighting & Metadata Adequacy
         has_artist = bool(source.artists and candidate.artists)
@@ -443,7 +504,7 @@ class TrackScorer:
 
         # Initial confidence classification
         if is_album_track_corroborated:
-            confidence = ConfidenceLevel.MEDIUM
+            confidence = ConfidenceLevel.HIGH if (cand_album_is_single and composite >= 0.88) else ConfidenceLevel.MEDIUM
         elif composite >= 0.88:
             confidence = ConfidenceLevel.EXACT
         elif composite >= 0.72:
