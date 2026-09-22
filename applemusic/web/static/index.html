@@ -615,6 +615,10 @@
                       <i class="fa-solid fa-circle-exclamation text-xs"></i>
                       <span>检索受阻</span>
                     </span>
+                    <span v-else-if="item.decision === 'unavailable_in_target_storefront' || item.availability === 'unavailable_in_target_storefront'" class="text-amber-600 font-semibold flex items-center gap-1" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
+                      <i class="fa-solid fa-earth-asia text-xs"></i>
+                      <span>目标区未上架 (日区存在)</span>
+                    </span>
                     <span v-else-if="item.decision === 'unprocessed'" class="text-neutral-400 font-medium flex items-center gap-1">
                       <i class="fa-solid fa-pause text-xs"></i>
                       <span>等待重试</span>
@@ -661,6 +665,9 @@
                   </span>
                   <span v-else-if="['timeout', 'network_error', 'upstream_error', 'search_error'].includes(item.search_status)" class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 cursor-help" :title="item.decision_reasons ? item.decision_reasons.join('\n') : ''">
                     检索失败
+                  </span>
+                  <span v-else-if="item.decision === 'unavailable_in_target_storefront' || item.availability === 'unavailable_in_target_storefront'" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 cursor-help" title="该歌曲在目标地区 Apple Music 未上架，但在日本区存在">
+                    目标区不可用
                   </span>
                   <span v-else-if="item.decision === 'unprocessed'" class="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-500 border border-neutral-200">
                     待重试
@@ -1662,7 +1669,7 @@
         <div class="space-y-3 max-h-96 overflow-y-auto text-xs">
           <!-- Metadata Table -->
           <div class="grid grid-cols-2 gap-2 bg-neutral-50 p-3 rounded-xl border border-neutral-200/60 font-mono text-[11px]">
-            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.4' }}</div>
+            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.5' }}</div>
             <div><span class="text-neutral-400">构建标识:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.build_id) || 'unknown' }}</div>
             <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.09.v1' }}</div>
             <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.09.v1' }}</div>

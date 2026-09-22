@@ -377,8 +377,9 @@ class TestLibraryApi(unittest.TestCase):
         self.assertTrue(data.get("success"))
         self.assertEqual(len(data.get("songs")), 1)
 
+    @patch("subprocess.Popen")
     @patch("os.startfile", create=True)
-    def test_open_local_folder_api(self, mock_startfile):
+    def test_open_local_folder_api(self, mock_startfile, mock_popen):
         res = self.client.post("/api/local/open-folder", headers=self.headers)
         self.assertEqual(res.status_code, 200)
         data = res.json()

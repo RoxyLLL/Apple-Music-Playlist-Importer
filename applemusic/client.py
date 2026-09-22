@@ -1,3 +1,4 @@
+import json
 import random
 import threading
 import time
@@ -311,7 +312,7 @@ class AppleMusicClient:
 
     API_URL = "https://api.music.apple.com/v1"
 
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(self, config: Optional[Config] = None, persistent_cache: Optional[PersistentCache] = None):
         self.config = config or get_config()
         self.auth = AppleMusicAuth(self.config)
         self.session = requests.Session()
@@ -322,7 +323,7 @@ class AppleMusicClient:
         self.diagnostics = ClientDiagnostics()
 
         # Persistent SQLite cache instance
-        self.persistent_cache = PersistentCache.get_instance()
+        self.persistent_cache = persistent_cache or PersistentCache.get_instance()
 
         # Singleflight in-flight query deduplication table
         self._in_flight_lock = threading.Lock()
@@ -382,36 +383,34 @@ class AppleMusicClient:
         Returns a mapping of uppercase ISRC -> CatalogSearchOutcome.
         """
         sf = storefront or self.config.storefront or "cn"
-        clean_isrcs: List[str] = []
-        seen = set()
-        for raw in isrc_list:
-            c = raw.strip().upper() if raw else ""
-            if c and len(c) >= 8 and c not in seen:
-                seen.add(c)
-                clean_isrcs.append(c)
-
-        if not clean_isrcs:
-            return {}
-
         results: Dict[str, CatalogSearchOutcome] = {}
         to_fetch: List[str] = []
 
-        # 0. Check caches for each ISRC
-        for c in clean_isrcs:
-            cached_p = self.persistent_cache.get_catalog(sf, "isrc", c)
-            if cached_p:
-                self.diagnostics.record("cache_hit")
-                results[c] = cached_p
+        # 0. Check cache first for all ISRCs
+        seen = set()
+        for raw in isrc_list:
+            clean_isrc = raw.strip().upper() if raw else ""
+            if not clean_isrc or len(clean_isrc) < 8 or clean_isrc in seen:
                 continue
+            seen.add(clean_isrc)
 
-            cache_key = ("isrc", sf, c)
+            cache_key = ("isrc", sf, clean_isrc)
+            # Check in-memory cache
             if cache_key in self._catalog_cache:
                 cache_time, cached_outcome = self._catalog_cache[cache_key]
-                if time.time() - cache_time < 3600:
-                    results[c] = cached_outcome
+                if time.time() - cache_time < 900:  # 15 mins TTL
+                    results[clean_isrc] = cached_outcome
                     continue
 
-            to_fetch.append(c)
+            # Check persistent cache
+            cached_p = self.persistent_cache.get_catalog(sf, "isrc", clean_isrc)
+            if cached_p:
+                self.diagnostics.record("cache_hit")
+                results[clean_isrc] = cached_p
+                self._catalog_cache[cache_key] = (time.time(), cached_p)
+                continue
+
+            to_fetch.append(clean_isrc)
 
         if not to_fetch:
             return results
@@ -457,23 +456,7 @@ class AppleMusicClient:
                         for item in songs_data:
                             attrs = item.get("attributes", {})
                             item_isrc = (attrs.get("isrc") or "").strip().upper()
-                            artist_name = attrs.get("artistName", "")
-                            artists = [a.strip() for a in artist_name.split(",") if a.strip()] or [artist_name]
-                            artwork = attrs.get("artwork", {})
-                            previews = attrs.get("previews") or []
-
-                            track_obj = AppleMusicTrack(
-                                id=item.get("id"),
-                                title=attrs.get("name", ""),
-                                artists=artists,
-                                album=attrs.get("albumName"),
-                                duration_ms=attrs.get("durationInMillis"),
-                                isrc=item_isrc or None,
-                                artwork_url=artwork.get("url"),
-                                preview_url=previews[0].get("url") if previews else None,
-                                storefront=sf,
-                                url=attrs.get("url"),
-                            )
+                            track_obj = self._parse_song_item(item, storefront=sf)
 
                             if item_isrc in songs_by_isrc:
                                 songs_by_isrc[item_isrc].append(track_obj)
@@ -615,12 +598,52 @@ class AppleMusicClient:
             CatalogSearchOutcome(kind="network_error", safe_message="ISRC 查询异常未完成"),
         )
 
+    @classmethod
+    def _parse_song_item(
+        cls,
+        item: Dict[str, Any],
+        storefront: str = "cn",
+        locale: Optional[str] = None,
+        discovery_storefront: Optional[str] = None,
+    ) -> AppleMusicTrack:
+        attrs = item.get("attributes", {})
+        artist_name = attrs.get("artistName", "")
+        artists = [a.strip() for a in artist_name.split(",") if a.strip()] or ([artist_name] if artist_name else [])
+        artwork = attrs.get("artwork", {})
+        previews = attrs.get("previews") or []
+        relationships = item.get("relationships", {})
+        artists_rel = relationships.get("artists", {}).get("data", [])
+        artist_ids = [str(a.get("id")) for a in artists_rel if a.get("id")]
+        albums_rel = relationships.get("albums", {}).get("data", [])
+        album_id = str(albums_rel[0].get("id")) if albums_rel and albums_rel[0].get("id") else None
+
+        return AppleMusicTrack(
+            id=str(item.get("id")),
+            title=attrs.get("name", ""),
+            artists=artists,
+            album=attrs.get("albumName"),
+            duration_ms=attrs.get("durationInMillis"),
+            isrc=attrs.get("isrc"),
+            artwork_url=artwork.get("url"),
+            preview_url=previews[0].get("url") if previews else None,
+            url=attrs.get("url"),
+            storefront=storefront,
+            artist_ids=artist_ids,
+            album_id=album_id,
+            track_number=attrs.get("trackNumber"),
+            disc_number=attrs.get("discNumber"),
+            release_date=attrs.get("releaseDate"),
+            locale=locale,
+            discovery_storefront=discovery_storefront or storefront,
+        )
+
     def search_catalog(
         self,
         query: str,
         storefront: Optional[str] = None,
         limit: int = 10,
         retries: int = 4,
+        locale: Optional[str] = None,
     ) -> CatalogSearchOutcome:
         """
         Search songs in Apple Music Catalog for a specific storefront.
@@ -631,10 +654,11 @@ class AppleMusicClient:
         if not clean_q:
             return CatalogSearchOutcome(kind="no_hits", safe_message="检索词为空")
 
-        cache_key = (sf, clean_q, limit)
+        clean_loc = (locale or "").strip().lower()
+        cache_key = (sf, clean_loc, clean_q, limit)
 
         # 0. Check persistent SQLite cache (instant 0ms resolution)
-        cached_p = self.persistent_cache.get_catalog(sf, "term", clean_q, limit_val=limit)
+        cached_p = self.persistent_cache.get_catalog(sf, "term", clean_q, limit_val=limit, locale=locale)
         if cached_p:
             self.diagnostics.record("cache_hit")
             return cached_p
@@ -643,6 +667,11 @@ class AppleMusicClient:
         if cache_key in self._catalog_cache:
             cache_time, cached_outcome = self._catalog_cache[cache_key]
             if time.time() - cache_time < 900:  # 15 minutes TTL
+                return cached_outcome
+        compat_key = (sf, clean_q, limit)
+        if not clean_loc and compat_key in self._catalog_cache:
+            cache_time, cached_outcome = self._catalog_cache[compat_key]
+            if time.time() - cache_time < 900:
                 return cached_outcome
 
         # 2. Singleflight: coalesce identical in-flight searches
@@ -671,6 +700,8 @@ class AppleMusicClient:
             "types": "songs",
             "limit": limit,
         }
+        if locale:
+            params["l"] = locale
         last_outcome: Optional[CatalogSearchOutcome] = None
 
         try:
@@ -699,24 +730,7 @@ class AppleMusicClient:
                         songs_data = data.get("results", {}).get("songs", {}).get("data", [])
                         results: List[AppleMusicTrack] = []
                         for item in songs_data:
-                            attrs = item.get("attributes", {})
-                            artist_name = attrs.get("artistName", "")
-                            artists = [a.strip() for a in artist_name.split(",") if a.strip()] or [artist_name]
-                            artwork = attrs.get("artwork", {})
-                            previews = attrs.get("previews") or []
-
-                            results.append(AppleMusicTrack(
-                                id=item.get("id"),
-                                title=attrs.get("name", ""),
-                                artists=artists,
-                                album=attrs.get("albumName"),
-                                duration_ms=attrs.get("durationInMillis"),
-                                isrc=attrs.get("isrc"),
-                                artwork_url=artwork.get("url"),
-                                preview_url=previews[0].get("url") if previews else None,
-                                storefront=sf,
-                                url=attrs.get("url"),
-                            ))
+                            results.append(self._parse_song_item(item, storefront=sf, locale=locale))
 
                         kind = "ok" if results else "no_hits"
                         outcome = CatalogSearchOutcome(
@@ -728,7 +742,9 @@ class AppleMusicClient:
                         )
                         # Cache only verified ok/no_hits
                         self._catalog_cache[cache_key] = (time.time(), outcome)
-                        self.persistent_cache.set_catalog(sf, "term", clean_q, outcome, limit_val=limit)
+                        if not clean_loc:
+                            self._catalog_cache[(sf, clean_q, limit)] = (time.time(), outcome)
+                        self.persistent_cache.set_catalog(sf, "term", clean_q, outcome, limit_val=limit, locale=locale)
                         if len(self._catalog_cache) > 4000:
                             self._catalog_cache.clear()
 
@@ -825,6 +841,267 @@ class AppleMusicClient:
                     event = self._in_flight_events.pop(cache_key, None)
                     if event:
                         event.set()
+
+    _DEFAULT_STOREFRONT_LANGUAGES = {
+        "cn": ["zh-Hans-CN", "en-US"],
+        "jp": ["ja-JP", "en-US"],
+        "us": ["en-US", "es-MX"],
+        "tw": ["zh-Hant-TW", "en-US"],
+        "hk": ["zh-Hant-HK", "en-US"],
+        "gb": ["en-GB"],
+        "ca": ["en-CA", "fr-CA"],
+        "kr": ["ko-KR", "en-US"],
+    }
+
+    def get_storefront_languages(self, storefront: str) -> List[str]:
+        """
+        Fetch supported language tags for a storefront.
+        Cached in memory to avoid repeated requests.
+        """
+        sf = (storefront or "cn").strip().lower()
+        if not hasattr(self, "_storefront_languages"):
+            self._storefront_languages = {}
+        if sf in self._storefront_languages:
+            return self._storefront_languages[sf]
+
+        fallback = self._DEFAULT_STOREFRONT_LANGUAGES.get(sf, [f"{sf}", "en-US"])
+        url = f"{self.API_URL}/storefronts/{sf}"
+        acquired = self.limiter.acquire(timeout=10.0)
+        if not acquired:
+            self._storefront_languages[sf] = fallback
+            return fallback
+
+        try:
+            headers = self._get_auth_headers(require_user=False)
+            resp = self.session.get(url, headers=headers, timeout=(4.0, 8.0))
+            if resp.status_code == 200:
+                self.limiter.record_success()
+                data = resp.json()
+                items = data.get("data", [])
+                if items:
+                    langs = items[0].get("attributes", {}).get("supportedLanguageTags", [])
+                    if langs:
+                        self._storefront_languages[sf] = langs
+                        return langs
+        except Exception:
+            pass
+        finally:
+            self.limiter.release()
+
+        self._storefront_languages[sf] = fallback
+        return fallback
+
+    def get_search_suggestions(
+        self,
+        term: str,
+        storefront: str,
+        limit: int = 10,
+        locale: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Fetch search suggestions / hints from Apple Music Catalog.
+        GET /v1/catalog/{storefront}/search/suggestions?term={term}&kinds=terms&limit={limit}
+        """
+        sf = (storefront or "cn").strip().lower()
+        clean_t = term.strip().lower()
+        if not clean_t:
+            return []
+
+        clean_loc = (locale or "").strip().lower()
+        cache_key = ("suggestions", sf, clean_loc, clean_t, limit)
+        if cache_key in self._catalog_cache:
+            c_time, c_outcome = self._catalog_cache[cache_key]
+            if time.time() - c_time < 900:
+                return [t.title for t in c_outcome.tracks]
+
+        url = f"{self.API_URL}/catalog/{sf}/search/suggestions"
+        params = {
+            "term": term,
+            "kinds": "terms",
+            "limit": limit,
+        }
+        if locale:
+            params["l"] = locale
+
+        acquired = self.limiter.acquire(timeout=30.0)
+        if not acquired:
+            return []
+
+        try:
+            headers = self._get_auth_headers(require_user=False)
+            resp = self.session.get(url, headers=headers, params=params, timeout=(4.0, 8.0))
+            if resp.status_code == 200:
+                self.limiter.record_success()
+                data = resp.json()
+                raw_suggestions = data.get("results", {}).get("suggestions", [])
+                suggestions: List[str] = []
+                for s in raw_suggestions:
+                    val = s.get("display", {}).get("term") or s.get("searchTerm") or s.get("content")
+                    if val and val not in suggestions:
+                        suggestions.append(val)
+                outcome = CatalogSearchOutcome(
+                    kind="ok" if suggestions else "no_hits",
+                    tracks=[AppleMusicTrack(id=f"sugg_{i}", title=s, artists=[]) for i, s in enumerate(suggestions)],
+                    http_status=200,
+                )
+                self._catalog_cache[cache_key] = (time.time(), outcome)
+                return suggestions
+            elif resp.status_code == 429:
+                self.limiter.record_429()
+            elif resp.status_code in (401, 403):
+                self.diagnostics.record("auth_failed")
+        except Exception:
+            pass
+        finally:
+            self.limiter.release()
+
+        return []
+
+    def get_equivalent_tracks(
+        self,
+        track_ids: List[str],
+        target_storefront: str,
+        source_storefront: str = "jp",
+        locale: Optional[str] = None,
+    ) -> Dict[str, Optional[AppleMusicTrack]]:
+        """
+        Map track IDs from source_storefront to equivalent AppleMusicTrack in target_storefront.
+        Uses persistent equivalence_cache and Apple Music API:
+        GET /v1/catalog/{target_storefront}/songs?filter[equivalents]={ids}
+        Returns a dict of source_track_id -> Optional[AppleMusicTrack].
+        """
+        tgt_sf = (target_storefront or "cn").strip().lower()
+        src_sf = (source_storefront or "jp").strip().lower()
+
+        results: Dict[str, Optional[AppleMusicTrack]] = {}
+        to_fetch: List[str] = []
+
+        for tid in track_ids:
+            clean_id = str(tid).strip()
+            if not clean_id:
+                continue
+            cached_target_id, cached_payload = self.persistent_cache.get_equivalence_with_payload(tgt_sf, clean_id, source_storefront=src_sf)
+            if cached_target_id is not None:
+                if cached_target_id:
+                    if cached_payload:
+                        try:
+                            track_data = json.loads(cached_payload)
+                            results[clean_id] = AppleMusicTrack(**track_data)
+                            continue
+                        except Exception:
+                            pass
+                    target_cached = self.persistent_cache.get_catalog(tgt_sf, "term", cached_target_id, limit_val=1, locale=locale)
+                    if target_cached and target_cached.tracks:
+                        results[clean_id] = target_cached.tracks[0]
+                    else:
+                        results[clean_id] = AppleMusicTrack(id=cached_target_id, title="", artists=[], storefront=tgt_sf)
+                else:
+                    results[clean_id] = None
+                continue
+            to_fetch.append(clean_id)
+
+        if not to_fetch:
+            return results
+
+        CHUNK_SIZE = 25
+        for i in range(0, len(to_fetch), CHUNK_SIZE):
+            chunk = to_fetch[i : i + CHUNK_SIZE]
+            url = f"{self.API_URL}/catalog/{tgt_sf}/songs"
+            params = {"filter[equivalents]": ",".join(chunk)}
+            if locale:
+                params["l"] = locale
+
+            acquired = self.limiter.acquire(timeout=30.0)
+            if not acquired:
+                for cid in chunk:
+                    if cid not in results:
+                        results[cid] = None
+                continue
+
+            req_start = time.time()
+            try:
+                headers = self._get_auth_headers(require_user=False)
+                resp = self.session.get(url, headers=headers, params=params, timeout=(6.0, 12.0))
+                latency_ms = (time.time() - req_start) * 1000.0
+
+                if resp.status_code == 200:
+                    self.limiter.record_success()
+                    data = resp.json()
+                    songs_data = data.get("data", [])
+                    meta_equivs = data.get("meta", {}).get("filters", {}).get("equivalents", {})
+
+                    tracks_by_id = {}
+                    for item in songs_data:
+                        t = self._parse_song_item(item, storefront=tgt_sf, locale=locale)
+                        tracks_by_id[t.id] = t
+
+                    for cid in chunk:
+                        equiv_val = meta_equivs.get(cid)
+                        target_id = None
+                        if isinstance(equiv_val, list) and equiv_val:
+                            first = equiv_val[0]
+                            if isinstance(first, dict):
+                                target_id = first.get("id")
+                            elif isinstance(first, str):
+                                target_id = first
+                        elif isinstance(equiv_val, dict):
+                            target_id = equiv_val.get("id")
+                        elif isinstance(equiv_val, str):
+                            target_id = equiv_val
+
+                        target_track = None
+                        if target_id and str(target_id) in tracks_by_id:
+                            target_track = tracks_by_id[str(target_id)]
+                        elif len(chunk) == 1 and songs_data:
+                            first_item = songs_data[0]
+                            first_id = first_item.get("id")
+                            if first_id and first_id in tracks_by_id:
+                                target_track = tracks_by_id[first_id]
+
+                        if target_track:
+                            results[cid] = target_track
+                            track_dump = target_track.model_dump() if hasattr(target_track, "model_dump") else target_track.dict()
+                            self.persistent_cache.set_equivalence(
+                                source_storefront=src_sf,
+                                source_song_id=cid,
+                                target_storefront=tgt_sf,
+                                target_song_id=target_track.id,
+                                payload_json=json.dumps(track_dump, ensure_ascii=False),
+                            )
+                        else:
+                            results[cid] = None
+                            self.persistent_cache.set_equivalence(
+                                source_storefront=src_sf,
+                                source_song_id=cid,
+                                target_storefront=tgt_sf,
+                                target_song_id=None,
+                                payload_json=None,
+                            )
+
+                    self.diagnostics.record("ok" if songs_data else "no_hits", latency_ms=latency_ms)
+                elif resp.status_code == 429:
+                    self.limiter.record_429()
+                    for cid in chunk:
+                        results[cid] = None
+                else:
+                    for cid in chunk:
+                        results[cid] = None
+            except Exception:
+                for cid in chunk:
+                    results[cid] = None
+            finally:
+                self.limiter.release()
+
+        return results
+
+    def get_tracks_by_isrc(self, isrcs: List[str], storefront: str) -> Dict[str, List[AppleMusicTrack]]:
+        """
+        Batch search tracks in storefront by list of ISRCs.
+        Delegates directly to search_by_isrc_batch.
+        """
+        sf = storefront or self.config.storefront or "cn"
+        batch_outcomes = self.search_by_isrc_batch(isrcs, storefront=sf)
+        return {isrc: outcome.tracks for isrc, outcome in batch_outcomes.items()}
 
     def preflight_check(self, storefront: Optional[str] = None) -> Dict[str, Any]:
         """

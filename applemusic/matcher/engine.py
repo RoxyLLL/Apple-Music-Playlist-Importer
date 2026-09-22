@@ -9,9 +9,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 from applemusic.config import Config, get_config
+from applemusic.matcher.candidate_identity import CandidateAggregator, CandidateIdentity
+from applemusic.matcher.query_models import PlannedQuery, QueryContext
 from applemusic.matcher.cleaner import TextCleaner
 from applemusic.matcher.scorer import TrackScorer
-from applemusic.matcher.query_planner import QueryPlanner, PlannedQuery
+from applemusic.matcher.query_planner import QueryPlanner
 from applemusic.matcher.evidence import SingleTrackDiagnostics, VerificationLevel, MATCH_RULE_VERSION, ALIAS_VERSION
 from applemusic.models import (
     AppleMusicTrack,
@@ -76,6 +78,10 @@ class MatchingEngine:
         executed_query_records: Optional[List[Dict[str, Any]]] = None,
         cache_status: str = "none",
         cache_version: Optional[str] = None,
+        discovery_chain: Optional[List[str]] = None,
+        budget_consumed: Optional[Dict[str, int]] = None,
+        availability: str = "available",
+        discovery_path: Optional[str] = None,
     ) -> SongMatchResult:
         sf = storefront or self.config.storefront or "cn"
 
@@ -114,6 +120,8 @@ class MatchingEngine:
                 verification_level=best.evidence.verification_level if best and best.evidence else VerificationLevel.UNVERIFIED.value,
                 matched_fields=best.evidence.matched_fields if best and best.evidence else [],
                 conflicts=best.evidence.conflicts if best and best.evidence else [],
+                discovery_chain=discovery_chain or [],
+                budget_consumed=budget_consumed or {},
             )
             return SongMatchResult(
                 source_track=source,
@@ -130,6 +138,8 @@ class MatchingEngine:
                 search_failures=failures,
                 retry_after_seconds=rate_limited_retry_after,
                 search_incomplete=has_partial_failures,
+                availability=availability,
+                discovery_path=discovery_path,
             )
 
         # Case 2: Zero candidates found. Determine EXACT reason from outcomes
@@ -327,7 +337,7 @@ class MatchingEngine:
         source.primary_artist = primary_artist
         source.featured_artists = featured_artists
 
-        collected_candidates: Dict[Any, AppleMusicTrack] = {}
+        aggregator = CandidateAggregator(target_storefront=sf)
         outcomes: List[CatalogSearchOutcome] = []
         executed_query_records: List[Dict[str, Any]] = []
         query_attempts = 0
@@ -335,28 +345,33 @@ class MatchingEngine:
         has_partial_failures = False
         rate_limited_retry_after: Optional[float] = None
         stop_expansion = False
+        discovery_chain: List[str] = []
+        budget_consumed: Dict[str, int] = {"catalog": 0, "suggestions": 0, "equivalents": 0}
 
         # -------------------------------------------------------------
         # Tier 0 (L0): ISRC Direct Exact Lookup
         # -------------------------------------------------------------
         if source.isrc and len(source.isrc.strip()) >= 8:
             query_attempts += 1
+            budget_consumed["catalog"] += 1
             isrc_outcome = self.client.search_by_isrc(source.isrc.strip(), storefront=sf)
             outcomes.append(isrc_outcome)
             executed_query_records.append({
                 "query": source.isrc.strip(),
+                "phase": "L0_isrc",
                 "provenance": "isrc",
                 "storefront": sf,
+                "locale": None,
                 "kind": isrc_outcome.kind,
                 "hits": len(isrc_outcome.tracks) if isrc_outcome.tracks else 0,
             })
+            discovery_chain.append("isrc_lookup")
             if isrc_outcome.kind == "ok":
                 for r in isrc_outcome.tracks:
-                    cand_key = (r.storefront or sf, r.id)
-                    collected_candidates[cand_key] = r
+                    aggregator.add_candidate(r, discovery_path="isrc_exact")
 
                 # Check if ISRC candidate achieves auto_accept
-                scored_isrc = [TrackScorer.score(source, cand) for cand in collected_candidates.values()]
+                scored_isrc = [TrackScorer.score(source, cand.track) for cand in aggregator.get_candidates()]
                 scored_isrc.sort(key=lambda x: x.score, reverse=True)
                 best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
                     source,
@@ -374,6 +389,8 @@ class MatchingEngine:
                         verification_level=best.evidence.verification_level if best and best.evidence else VerificationLevel.UNVERIFIED.value,
                         matched_fields=best.evidence.matched_fields if best and best.evidence else [],
                         conflicts=best.evidence.conflicts if best and best.evidence else [],
+                        discovery_chain=discovery_chain,
+                        budget_consumed=budget_consumed,
                     )
                     return SongMatchResult(
                         source_track=source,
@@ -390,6 +407,8 @@ class MatchingEngine:
                         search_failures=[],
                         retry_after_seconds=None,
                         search_incomplete=False,
+                        availability="available",
+                        discovery_path="isrc_exact",
                     )
             elif isrc_outcome.kind == "no_hits":
                 pass
@@ -402,60 +421,276 @@ class MatchingEngine:
                     rate_limited_retry_after = isrc_outcome.retry_after_seconds
                     stop_expansion = True
 
-        # -------------------------------------------------------------
-        # Streamlined Query Budget for Initial Matching (Max 2 targeted queries)
-        # -------------------------------------------------------------
-        planned_queries = QueryPlanner.plan_first_round(source)
+        # Build QueryContext and get planned phases
+        ctx = QueryContext(
+            title=source.title,
+            artists=source.artists,
+            album=source.album,
+            isrc=getattr(source, "isrc", None),
+            duration_ms=source.duration_ms,
+            target_storefront=sf,
+            supported_locales=self.client.get_storefront_languages(sf) if hasattr(self.client, "get_storefront_languages") else [],
+        )
+        planned_phases = QueryPlanner.plan_phases(ctx)
+        import inspect
+        target_fn = getattr(self.client.search_catalog, "side_effect", None)
+        if not callable(target_fn):
+            target_fn = self.client.search_catalog
+        try:
+            sig = inspect.signature(target_fn)
+            accepts_locale = "locale" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        except Exception:
+            accepts_locale = True
 
-        for pq in planned_queries:
-            if stop_expansion:
-                break
-            q_str = pq.query
+        def _execute_query(pq: PlannedQuery, disc_path: str) -> Optional[CatalogSearchOutcome]:
+            nonlocal query_attempts, has_partial_failures, rate_limited_retry_after, stop_expansion
+            if stop_expansion or budget_consumed["catalog"] >= 8:
+                return None
             query_attempts += 1
-            outcome = self.client.search_catalog(q_str, storefront=sf, limit=self.config.search_limit)
+            budget_consumed["catalog"] += 1
+            search_kwargs = {"storefront": pq.storefront, "limit": self.config.search_limit}
+            if pq.locale and accepts_locale:
+                search_kwargs["locale"] = pq.locale
+            outcome = self.client.search_catalog(pq.query, **search_kwargs)
             outcomes.append(outcome)
             executed_query_records.append({
-                "query": q_str,
+                "query": pq.query,
+                "phase": pq.phase,
                 "provenance": pq.provenance,
-                "storefront": sf,
+                "storefront": pq.storefront,
+                "locale": pq.locale,
                 "kind": outcome.kind,
                 "hits": len(outcome.tracks) if outcome.tracks else 0,
             })
-
             if outcome.kind == "ok":
                 for r in outcome.tracks:
-                    cand_key = (r.storefront or sf, r.id)
-                    if cand_key not in collected_candidates:
-                        collected_candidates[cand_key] = r
-
-                # Check if candidates achieve auto_accept
-                temp_scored = [TrackScorer.score(source, cand) for cand in collected_candidates.values()]
-                temp_scored.sort(key=lambda x: x.score, reverse=True)
-                best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
-                    source,
-                    temp_scored,
-                    auto_accept_threshold=self.config.auto_accept_threshold,
-                    min_review_score=self.config.min_review_score,
-                    min_score_gap=self.config.min_score_gap,
-                )
-                if dec == DecisionStatus.AUTO_ACCEPT.value:
-                    stop_expansion = True
-                    break
-            elif outcome.kind == "no_hits":
-                pass
-            else:
+                    aggregator.add_candidate(r, query=pq, discovery_path=disc_path)
+            elif outcome.kind != "no_hits":
                 has_partial_failures = True
-                failures.append(f"{q_str}: {outcome.safe_message or outcome.kind}")
+                failures.append(f"{pq.query}: {outcome.safe_message or outcome.kind}")
                 if outcome.kind == "auth_failed":
                     stop_expansion = True
                 elif outcome.kind == "rate_limited":
                     rate_limited_retry_after = outcome.retry_after_seconds
                     stop_expansion = True
+            return outcome
 
+        def _check_auto_accept() -> Optional[SongMatchResult]:
+            cands = aggregator.get_candidates()
+            if not cands:
+                return None
+            scored = [TrackScorer.score(source, c.track) for c in cands]
+            scored.sort(key=lambda x: x.score, reverse=True)
+            best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
+                source,
+                scored,
+                auto_accept_threshold=self.config.auto_accept_threshold,
+                min_review_score=self.config.min_review_score,
+                min_score_gap=self.config.min_score_gap,
+            )
+            if dec == DecisionStatus.AUTO_ACCEPT.value:
+                best_ident = next((c for c in cands if c.track.id == best.track.id), None)
+                d_path = best_ident.discovery_path if best_ident else "native_search"
+                diag = SingleTrackDiagnostics(
+                    target_storefront=sf,
+                    executed_queries=executed_query_records,
+                    candidates_count=len(scored),
+                    final_decision=dec,
+                    verification_level=best.evidence.verification_level if best and best.evidence else VerificationLevel.UNVERIFIED.value,
+                    matched_fields=best.evidence.matched_fields if best and best.evidence else [],
+                    conflicts=best.evidence.conflicts if best and best.evidence else [],
+                    discovery_chain=discovery_chain,
+                    budget_consumed=budget_consumed,
+                )
+                return SongMatchResult(
+                    source_track=source,
+                    candidates=scored[:5],
+                    selected_candidate=best,
+                    status=conf,
+                    score_gap=gap,
+                    decision=dec,
+                    decision_reasons=reasons,
+                    evidence=best.evidence if best else None,
+                    diagnostics=diag,
+                    search_status="matched",
+                    search_attempts=query_attempts,
+                    search_failures=[],
+                    retry_after_seconds=None,
+                    search_incomplete=False,
+                    availability="available",
+                    discovery_path=d_path,
+                )
+            return None
+
+        # -------------------------------------------------------------
+        # Phase A: Native Target Storefront
+        # -------------------------------------------------------------
+        discovery_chain.append("phase_a_native")
+        for pq in planned_phases.get("A_native", []):
+            if stop_expansion:
+                break
+            _execute_query(pq, "native_search")
+            auto_res = _check_auto_accept()
+            if auto_res:
+                return auto_res
+
+        # -------------------------------------------------------------
+        # Phase B: Universal Multi-Script Variants (beam selection, max 4)
+        # -------------------------------------------------------------
+        if not stop_expansion:
+            discovery_chain.append("phase_b_script")
+            for pq in planned_phases.get("B_script", []):
+                if stop_expansion:
+                    break
+                _execute_query(pq, "script_variant")
+                auto_res = _check_auto_accept()
+                if auto_res:
+                    return auto_res
+
+        # -------------------------------------------------------------
+        # Phase C: Apple Search Suggestions (max 2, token-aligned)
+        # -------------------------------------------------------------
+        if not stop_expansion and not aggregator.get_candidates() and budget_consumed["suggestions"] < 2:
+            discovery_chain.append("phase_c_suggestions")
+            try:
+                suggestions = self.client.get_search_suggestions(
+                    term=f"{core_title} {primary_artist}".strip(),
+                    storefront=sf,
+                    limit=5,
+                )
+                budget_consumed["suggestions"] += 1
+                filtered = QueryPlanner.filter_suggestions(suggestions, core_title, primary_artist or "", max_count=2)
+                for s_term in filtered:
+                    s_pq = PlannedQuery(
+                        query=s_term,
+                        storefront=sf,
+                        locale=None,
+                        phase="C_suggestions",
+                        provenance="apple_suggestion",
+                        weak_only=True,
+                    )
+                    _execute_query(s_pq, "apple_suggestion")
+                    auto_res = _check_auto_accept()
+                    if auto_res:
+                        return auto_res
+            except Exception:
+                pass
+
+        # -------------------------------------------------------------
+        # Phase D: Cross-Storefront JP Discovery (max 2 queries in JP)
+        # -------------------------------------------------------------
+        jp_candidates_found: List[AppleMusicTrack] = []
+        if not stop_expansion and sf.lower() != "jp":
+            discovery_chain.append("phase_d_jp_discovery")
+            jp_queries = planned_phases.get("D_jp_discovery", [])
+            for pq in jp_queries:
+                if stop_expansion or budget_consumed["catalog"] >= 8:
+                    break
+                query_attempts += 1
+                budget_consumed["catalog"] += 1
+                jp_kwargs = {"storefront": "jp", "limit": 5}
+                if accepts_locale:
+                    jp_kwargs["locale"] = "ja-JP"
+                jp_outcome = self.client.search_catalog(
+                    pq.query,
+                    **jp_kwargs,
+                )
+                outcomes.append(jp_outcome)
+                executed_query_records.append({
+                    "query": pq.query,
+                    "phase": pq.phase,
+                    "provenance": pq.provenance,
+                    "storefront": "jp",
+                    "locale": "ja-JP",
+                    "kind": jp_outcome.kind,
+                    "hits": len(jp_outcome.tracks) if jp_outcome.tracks else 0,
+                })
+                if jp_outcome.kind == "ok" and jp_outcome.tracks:
+                    for jt in jp_outcome.tracks:
+                        if jt not in jp_candidates_found:
+                            jp_candidates_found.append(jt)
+
+            # If JP candidates found, resolve to target storefront!
+            if jp_candidates_found:
+                discovery_chain.append("jp_prescreen_and_remap")
+                # 1. Conservative prescreen: score against source in JP
+                scored_jp = [TrackScorer.score(source, jt) for jt in jp_candidates_found]
+                scored_jp = [sc for sc in scored_jp if sc.score >= 0.50]
+                scored_jp.sort(key=lambda x: x.score, reverse=True)
+                top_jp = [sc.track for sc in scored_jp[:5]]
+
+                if top_jp:
+                    budget_consumed["equivalents"] += 1
+                    equiv_map = self.client.get_equivalent_tracks(
+                        [t.id for t in top_jp],
+                        target_storefront=sf,
+                        source_storefront="jp",
+                    )
+                    # ISRC fallback for tracks with no equivalent
+                    missing_isrc_tracks = [t for t in top_jp if t.isrc and (t.id not in equiv_map or equiv_map[t.id] is None)]
+                    isrc_remap = self.client.get_tracks_by_isrc([t.isrc for t in missing_isrc_tracks], storefront=sf) if missing_isrc_tracks else {}
+
+                    found_target_track = False
+                    for jt in top_jp:
+                        tgt_track = equiv_map.get(jt.id)
+                        if tgt_track:
+                            aggregator.add_candidate(
+                                tgt_track,
+                                discovery_path="jp_equivalents",
+                                is_equivalent_mapped=True,
+                                original_jp_track=jt,
+                            )
+                            found_target_track = True
+                        elif jt.isrc and jt.isrc in isrc_remap and isrc_remap[jt.isrc]:
+                            tgt_track = isrc_remap[jt.isrc][0]
+                            aggregator.add_candidate(
+                                tgt_track,
+                                discovery_path="jp_isrc_remap",
+                                is_equivalent_mapped=True,
+                                original_jp_track=jt,
+                            )
+                            found_target_track = True
+
+                    # Check if mapped candidates achieve auto accept
+                    auto_res = _check_auto_accept()
+                    if auto_res:
+                        return auto_res
+
+                    # If NO candidate was ever found in target storefront, but JP has strong candidates:
+                    if not found_target_track and not aggregator.get_candidates():
+                        diag_unavail = SingleTrackDiagnostics(
+                            target_storefront=sf,
+                            executed_queries=executed_query_records,
+                            candidates_count=0,
+                            final_decision="unavailable_in_target_storefront",
+                            discovery_chain=discovery_chain,
+                            budget_consumed=budget_consumed,
+                        )
+                        return SongMatchResult(
+                            source_track=source,
+                            candidates=[],
+                            selected_candidate=None,
+                            status=ConfidenceLevel.NOT_FOUND,
+                            score_gap=None,
+                            decision="unavailable_in_target_storefront",
+                            decision_reasons=[f"该歌曲在目标地区 Apple Music [{sf.upper()}] 曲库未上架 (在日本区存在匹配音源)"],
+                            diagnostics=diag_unavail,
+                            search_status="unavailable",
+                            search_attempts=query_attempts,
+                            search_failures=[],
+                            retry_after_seconds=None,
+                            search_incomplete=False,
+                            availability="unavailable_in_target_storefront",
+                            discovery_path="jp_discovery_unavailable",
+                        )
+
+        # Final evaluation of all collected candidates
+        final_candidates = {c.primary_id: c.track for c in aggregator.get_candidates()}
+        best_dpath = aggregator.get_candidates()[0].discovery_path if aggregator.get_candidates() else None
         return self._evaluate_and_aggregate(
             source=source,
             outcomes=outcomes,
-            collected_candidates=collected_candidates,
+            collected_candidates=final_candidates,
             query_attempts=query_attempts,
             failures=failures,
             has_partial_failures=has_partial_failures,
@@ -464,6 +699,10 @@ class MatchingEngine:
             relaxed=False,
             is_rematch=False,
             executed_query_records=executed_query_records,
+            discovery_chain=discovery_chain,
+            budget_consumed=budget_consumed,
+            availability="available",
+            discovery_path=best_dpath,
         )
 
     def match_playlist(
@@ -796,6 +1035,9 @@ class MatchingEngine:
             relaxed=relaxed,
             is_rematch=True,
             executed_query_records=executed_query_records,
+            discovery_chain=["rematch_multi_storefront"],
+            budget_consumed={"catalog": total_queries_run},
+            availability="available",
         )
 
     def rematch_playlist(

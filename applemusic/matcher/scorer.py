@@ -237,10 +237,23 @@ class TrackScorer:
                     return 1.0
 
         # Japanese Kana transliteration for primary artist (requires Kana to avoid pure Hanzi false match)
-        has_jp = bool(re.search(r"[\u3040-\u30ff]", norm_pri_s) or re.search(r"[\u3040-\u30ff]", norm_pri_c))
+        has_jp = bool(
+            re.search(r"[\u3040-\u30ff]", norm_pri_s)
+            or re.search(r"[\u3040-\u30ff]", norm_pri_c)
+            or re.search(r"[\u3040-\u30ff]", pri_s)
+            or re.search(r"[\u3040-\u30ff]", pri_c)
+        )
         if has_jp:
-            s_art_vars = TextCleaner.get_japanese_romaji_variants(norm_pri_s, is_artist=True) or [norm_pri_s]
-            c_art_vars = TextCleaner.get_japanese_romaji_variants(norm_pri_c, is_artist=True) or [norm_pri_c]
+            s_art_vars = (
+                TextCleaner.get_japanese_romaji_variants(pri_s, is_artist=True)
+                or TextCleaner.get_japanese_romaji_variants(norm_pri_s, is_artist=True)
+                or [norm_pri_s]
+            )
+            c_art_vars = (
+                TextCleaner.get_japanese_romaji_variants(pri_c, is_artist=True)
+                or TextCleaner.get_japanese_romaji_variants(norm_pri_c, is_artist=True)
+                or [norm_pri_c]
+            )
             for r_s in s_art_vars:
                 for r_c in c_art_vars:
                     if r_s == r_c or are_artists_equivalent(r_s, r_c):
@@ -254,8 +267,11 @@ class TrackScorer:
                             continue
                         return 1.0
                     if len(rsp) >= 3 and len(rcp) >= 3:
-                        if rsp in rcp or rcp in rsp:
-                            return 0.95
+                        shorter_r = rsp if len(rsp) <= len(rcp) else rcp
+                        longer_r = rcp if len(rsp) <= len(rcp) else rsp
+                        len_ratio = len(shorter_r) / max(1, len(longer_r))
+                        if (rsp in rcp or rcp in rsp) and len_ratio >= 0.75:
+                            return 0.90
                         ratio = _fast_sequence_ratio(r_s, r_c)
                         if ratio >= 0.80:
                             return max(ratio, 0.90)
@@ -321,8 +337,11 @@ class TrackScorer:
                             if rsp and rsp == rcp:
                                 max_cross_score = max(max_cross_score, 1.0)
                                 break
-                            elif len(rsp) >= 3 and len(rcp) >= 3 and (rsp in rcp or rcp in rsp):
-                                max_cross_score = max(max_cross_score, 0.92)
+                            elif len(rsp) >= 3 and len(rcp) >= 3:
+                                shorter_r = rsp if len(rsp) <= len(rcp) else rcp
+                                longer_r = rcp if len(rsp) <= len(rcp) else rsp
+                                if (rsp in rcp or rcp in rsp) and (len(shorter_r) / max(1, len(longer_r)) >= 0.75):
+                                    max_cross_score = max(max_cross_score, 0.90)
                 elif s in c or c in s:
                     s_shorter, s_longer = (s, c) if len(s) <= len(c) else (c, s)
                     s_cjk_cnt = len(re.findall(r"[\u4e00-\u9fa5]", s_shorter))
@@ -383,7 +402,11 @@ class TrackScorer:
         v_src_set = set(v_src)
         v_cand_set = set(v_cand)
 
-        critical_tags = {"live", "remix", "instrumental", "acoustic", "demo", "cover"}
+        critical_tags = {
+            "live", "remix", "instrumental", "acoustic", "demo", "cover",
+            "piano", "guitar", "orchestral", "sped_up", "slowed",
+            "tv_size", "english_ver", "alternate_cut",
+        }
         reasons = []
         score_mod = 0.0
 
@@ -434,13 +457,20 @@ class TrackScorer:
         title_score = cls.calculate_title_similarity(
             source.title, candidate.title, trans_title=source.trans_title, aliases=source.aliases, artist=pri_s_for_title
         )
-        artist_score = cls.calculate_artist_similarity(source.artists, candidate.artists)
-        duration_factor = cls.calculate_duration_factor(source.duration_ms, candidate.duration_ms)
-        album_score = cls.calculate_album_similarity(source.album, candidate.album)
         version_factor, v_reasons = cls.calculate_version_consistency(
             source.title, candidate.title, candidate.album
         )
         reasons.extend(v_reasons)
+        artist_score = cls.calculate_artist_similarity(source.artists, candidate.artists)
+        orig_jp = getattr(candidate, "original_jp_track", None)
+        if orig_jp and getattr(orig_jp, "artists", None):
+            jp_art_sim = cls.calculate_artist_similarity(source.artists, orig_jp.artists)
+            artist_score = max(artist_score, jp_art_sim)
+        elif getattr(candidate, "discovery_path", None) in ("jp_equivalents", "apple_equivalent") or getattr(candidate, "is_equivalent_mapped", False):
+            if title_score >= 0.80 and version_factor >= 0.0:
+                artist_score = max(artist_score, 0.90)
+        duration_factor = cls.calculate_duration_factor(source.duration_ms, candidate.duration_ms)
+        album_score = cls.calculate_album_similarity(source.album, candidate.album)
 
         # 2. ISRC Exact Match Check
         isrc_match = False
@@ -469,7 +499,11 @@ class TrackScorer:
                         matched_fields=["isrc"],
                         conflicts=[],
                         provenance="isrc",
+                        evidence_families=["isrc"],
                         rule_version=MATCH_RULE_VERSION,
+                        query_policy_version="2026.09.v2",
+                        romanizer_version="2026.09.v2",
+                        exception_registry_version="2026.09.v2",
                         alias_version=ALIAS_VERSION,
                     )
                     return MatchCandidate(
@@ -493,7 +527,11 @@ class TrackScorer:
                         matched_fields=["isrc"],
                         conflicts=conflicts,
                         provenance="isrc",
+                        evidence_families=["isrc"],
                         rule_version=MATCH_RULE_VERSION,
+                        query_policy_version="2026.09.v2",
+                        romanizer_version="2026.09.v2",
+                        exception_registry_version="2026.09.v2",
                         alias_version=ALIAS_VERSION,
                     )
                     return MatchCandidate(
@@ -594,6 +632,92 @@ class TrackScorer:
         else:
             conflicts.append("version_conflict: 版本不一致")
 
+        # Determine evidence families and verification level with de-correlation
+        evidence_families: List[str] = []
+        is_title_romanized = False
+        is_artist_romanized = False
+
+        norm_s_t = TextCleaner.normalize(TextCleaner.clean_title(source.title))
+        norm_c_t = TextCleaner.normalize(TextCleaner.clean_title(candidate.title))
+
+        # Check if title match is derived from romanization
+        has_jp_title_s = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", source.title))
+        has_jp_title_c = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", candidate.title))
+        if has_jp_title_s != has_jp_title_c:
+            s_title_romaji = TextCleaner.get_japanese_romaji_variants(source.title) or []
+            c_title_romaji = TextCleaner.get_japanese_romaji_variants(candidate.title) or []
+            s_title_clean = {re.sub(r"[^\w]", "", v.lower()) for v in s_title_romaji if v}
+            c_title_clean = {re.sub(r"[^\w]", "", v.lower()) for v in c_title_romaji if v}
+            cand_clean = re.sub(r"[^\w]", "", candidate.title.lower())
+            src_clean = re.sub(r"[^\w]", "", source.title.lower())
+            if (cand_clean and cand_clean in s_title_clean) or (src_clean and src_clean in c_title_clean) or (s_title_clean & c_title_clean):
+                is_title_romanized = True
+
+        if not is_title_romanized and norm_s_t != norm_c_t and not are_titles_equivalent(norm_s_t, norm_c_t, artist=pri_s_for_title):
+            v1_list = TextCleaner.extract_title_variants(source.title)
+            if source.trans_title:
+                v1_list.append(source.trans_title)
+            if source.aliases:
+                v1_list.extend(source.aliases)
+            v2_list = TextCleaner.extract_title_variants(candidate.title)
+            direct_variant_match = any(
+                TextCleaner.clean_title(v1) == TextCleaner.clean_title(v2)
+                or _fast_sequence_ratio(TextCleaner.normalize(v1), TextCleaner.normalize(v2)) >= 0.85
+                or are_titles_equivalent(v1, v2, artist=pri_s_for_title)
+                or TextCleaner.match_katakana_loanword(v1, v2) >= 0.65
+                for v1 in v1_list for v2 in v2_list
+            )
+            if not direct_variant_match:
+                is_title_romanized = True
+
+        pri_s, _ = TextCleaner.parse_artists(source.artists)
+        pri_c, _ = TextCleaner.parse_artists(candidate.artists)
+        norm_s_a = TextCleaner.normalize(pri_s)
+        norm_c_a = TextCleaner.normalize(pri_c)
+
+        # Check if artist match is derived from romanization
+        has_jp_art_s = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", pri_s))
+        has_jp_art_c = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", pri_c))
+        if has_jp_art_s != has_jp_art_c:
+            s_art_vars = TextCleaner.get_japanese_romaji_variants(norm_s_a, is_artist=True) or [norm_s_a]
+            c_art_vars = TextCleaner.get_japanese_romaji_variants(norm_c_a, is_artist=True) or [norm_c_a]
+            s_art_clean = {re.sub(r"[^\w]", "", v.lower()) for v in s_art_vars if v}
+            c_art_clean = {re.sub(r"[^\w]", "", v.lower()) for v in c_art_vars if v}
+            cand_art_clean = re.sub(r"[^\w]", "", norm_c_a.lower())
+            src_art_clean = re.sub(r"[^\w]", "", norm_s_a.lower())
+            if (cand_art_clean and cand_art_clean in s_art_clean) or (src_art_clean and src_art_clean in c_art_clean) or (s_art_clean & c_art_clean):
+                is_artist_romanized = True
+        elif norm_s_a and norm_c_a and norm_s_a != norm_c_a and not are_artists_equivalent(norm_s_a, norm_c_a):
+            if not (are_artists_equivalent(norm_s_a, norm_c_a) or are_artists_equivalent(pri_s, pri_c)):
+                s_art_vars = TextCleaner.get_japanese_romaji_variants(norm_s_a, is_artist=True) or [norm_s_a]
+                c_art_vars = TextCleaner.get_japanese_romaji_variants(norm_c_a, is_artist=True) or [norm_c_a]
+                if any(r_s == r_c for r_s in s_art_vars for r_c in c_art_vars):
+                    is_artist_romanized = True
+
+        if is_title_romanized and is_artist_romanized:
+            # De-correlation: Both relied on romanizer transliteration -> Correlated! Only 1 family!
+            evidence_families.append("romanizer_derived")
+        else:
+            if "title" in matched_fields:
+                if is_title_romanized:
+                    evidence_families.append("romanizer_derived")
+                else:
+                    evidence_families.append("text_title")
+            if "artist" in matched_fields:
+                if is_artist_romanized:
+                    if "romanizer_derived" not in evidence_families:
+                        evidence_families.append("romanizer_derived")
+                else:
+                    evidence_families.append("text_artist")
+
+        if getattr(candidate, "discovery_path", None) in ("jp_equivalents", "apple_equivalent") or getattr(candidate, "is_equivalent_mapped", False):
+            evidence_families.append("apple_equivalent")
+
+        if "album" in matched_fields:
+            evidence_families.append("album")
+        if "duration" in matched_fields:
+            evidence_families.append("duration")
+
         # Determine verification level
         if isrc_conflict:
             v_level = VerificationLevel.CONFLICT.value
@@ -601,9 +725,22 @@ class TrackScorer:
         elif conflicts:
             v_level = VerificationLevel.CONFLICT.value
             ev_type = "conflict"
-        elif "title" in matched_fields and "artist" in matched_fields:
+        elif "apple_equivalent" in evidence_families:
+            v_level = VerificationLevel.STRONG.value
+            ev_type = "apple_equivalent"
+        elif "text_title" in evidence_families and "text_artist" in evidence_families:
             v_level = VerificationLevel.STRONG.value
             ev_type = "title_and_artist"
+        elif not (is_title_romanized and is_artist_romanized) and "title" in matched_fields and "artist" in matched_fields:
+            v_level = VerificationLevel.STRONG.value
+            ev_type = "title_and_artist"
+        elif len(set(evidence_families)) >= 2 and ("text_title" in evidence_families or "text_artist" in evidence_families) and ("duration" in evidence_families or "album" in evidence_families):
+            v_level = VerificationLevel.STRONG.value
+            ev_type = "independent_corroborated"
+        elif evidence_families == ["romanizer_derived"]:
+            # De-correlation rule: purely romanizer derived title and artist is only WEAK/MEDIUM, NEVER STRONG!
+            v_level = VerificationLevel.MEDIUM.value
+            ev_type = "romanizer_derived_unverified"
         elif "title" in matched_fields or "artist" in matched_fields:
             v_level = VerificationLevel.MEDIUM.value
             ev_type = "partial"
@@ -616,8 +753,12 @@ class TrackScorer:
             verification_level=v_level,
             matched_fields=matched_fields,
             conflicts=conflicts,
-            provenance="search",
+            provenance=getattr(candidate, "discovery_path", "search") or "search",
+            evidence_families=list(set(evidence_families)),
             rule_version=MATCH_RULE_VERSION,
+            query_policy_version="2026.09.v2",
+            romanizer_version="2026.09.v2",
+            exception_registry_version="2026.09.v2",
             alias_version=ALIAS_VERSION,
         )
 

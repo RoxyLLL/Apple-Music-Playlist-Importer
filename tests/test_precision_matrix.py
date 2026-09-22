@@ -556,7 +556,7 @@ class TestPrecisionMatrix(unittest.TestCase):
         D01: 单曲诊断和JSON导出 -> 包含输入/证据/查询/地区/规则缓存版本，无Token/Cookie/认证头/用户路径.
         """
         diag = SingleTrackDiagnostics(
-            app_version="2.0.4",
+            app_version="2.0.5",
             build_id="unknown",
             rule_version=MATCH_RULE_VERSION,
             alias_version=ALIAS_VERSION,

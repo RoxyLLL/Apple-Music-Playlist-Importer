@@ -49,13 +49,16 @@ VERSION_MAP = {
     "demo": ["demo", "小样", "试听版"],
     "cover": ["cover", "翻唱"],
     "remaster": ["remaster", "remastered", "重制", "重制版", "version"],
-    "piano": ["piano", "钢琴", "钢琴版"],
+    "piano": ["piano", "钢琴", "钢琴版", "piano version", "piano ver", "piano ver."],
     "guitar": ["guitar", "吉他", "吉他版"],
-    "orchestral": ["orchestral", "交响", "管弦乐", "symphonic"],
+    "orchestral": ["orchestral", "交响", "管弦乐", "symphonic", "orchestra", "orchestra ver", "orchestra ver."],
     "radio_edit": ["radio edit", "电台版"],
     "deluxe": ["deluxe", "bonus track", "豪华版"],
     "sped_up": ["sped up", "加速版"],
-    "slowed": ["slowed", "慢速版"],
+    "slowed": ["slowed", "慢速版", "slowed + reverb", "slowed and reverb"],
+    "tv_size": ["tv size", "tv ver", "tv ver.", "tv version", "anime ver", "anime version", "tv edit"],
+    "english_ver": ["english version", "english ver", "english ver.", "eng ver", "eng version"],
+    "alternate_cut": ["director's cut", "directors cut", "ディレクターズカット", "special cut", "alternate cut"],
 }
 
 NOISE_ARTISTS = {
@@ -187,7 +190,7 @@ class TextCleaner:
         base = TextCleaner.japanese_to_romaji(text)
         if base:
             clean_b = re.sub(r"\s+", " ", base).strip().lower()
-            if clean_b:
+            if clean_b and not re.search(r"[\u4e00-\u9fa5]", clean_b):
                 variants[clean_b] = None
                 variants[re.sub(r"[^\w]", "", clean_b)] = None
 
@@ -197,11 +200,18 @@ class TextCleaner:
             k = pykakasi.kakasi()
             res = k.convert(text)
             if res:
-                hep = " ".join(item.get("hepburn", "") for item in res if item.get("hepburn")).strip().lower()
-                if hep:
-                    clean_hep = re.sub(r"\s+", " ", hep).strip().lower()
-                    variants[clean_hep] = None
-                    variants[re.sub(r"[^\w]", "", clean_hep)] = None
+                # If any token containing CJK or word characters failed to convert,
+                # do not drop it silently (which causes false substring matches like 別の歌手 -> 歌手).
+                has_unconverted = any(
+                    not item.get("hepburn") and re.search(r"[\u4e00-\u9fa5\u3040-\u30ff\w]", item.get("orig", ""))
+                    for item in res
+                )
+                if not has_unconverted:
+                    hep = " ".join(item.get("hepburn", "") for item in res if item.get("hepburn")).strip().lower()
+                    if hep and not re.search(r"[\u4e00-\u9fa5]", hep):
+                        clean_hep = re.sub(r"\s+", " ", hep).strip().lower()
+                        variants[clean_hep] = None
+                        variants[re.sub(r"[^\w]", "", clean_hep)] = None
         except Exception:
             pass
 

@@ -35,8 +35,8 @@ class PersistentCache:
     _instance: Optional["PersistentCache"] = None
     _instance_lock = threading.Lock()
 
-    def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or CACHE_DB_PATH
+    def __init__(self, db_path: Optional[Any] = None):
+        self.db_path = Path(db_path) if db_path else CACHE_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._lock = threading.Lock()
@@ -63,6 +63,10 @@ class PersistentCache:
             self._local.conn = conn
         return self._local.conn
 
+    def _get_conn(self) -> sqlite3.Connection:
+        """Alias for _get_connection for test compatibility."""
+        return self._get_connection()
+
     def close(self):
         """Close the thread-local SQLite connection."""
         if hasattr(self._local, "conn") and self._local.conn is not None:
@@ -73,39 +77,153 @@ class PersistentCache:
             self._local.conn = None
 
     def _init_db(self):
-        """Initialize database tables and indexes."""
+        """Initialize database tables and indexes with safe in-place migration."""
         with self._lock:
             conn = self._get_connection()
             with conn:
+                # Check catalog_cache schema
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='catalog_cache';")
+                cat_exists = cursor.fetchone() is not None
+                if cat_exists:
+                    cursor.execute("PRAGMA table_info(catalog_cache);")
+                    cols_info = {row[1]: row for row in cursor.fetchall()}
+                    # Check whether table structure needs to be rebuilt:
+                    # Legacy table had query_key (NOT NULL without default), tracks_json,
+                    # or lacked locale/query_policy_version in primary key.
+                    needs_rebuild = False
+                    if (
+                        "query_key" in cols_info
+                        or "tracks_json" in cols_info
+                        or "locale" not in cols_info
+                        or "query_policy_version" not in cols_info
+                    ):
+                        needs_rebuild = True
+                    else:
+                        pk_cols = [name for name, info in sorted(cols_info.items(), key=lambda x: x[1][5]) if info[5] > 0]
+                        expected_pk = ["storefront", "locale", "query_type", "query_term", "limit_val", "query_policy_version"]
+                        if pk_cols != expected_pk:
+                            needs_rebuild = True
+
+                    if needs_rebuild:
+                        conn.execute("""
+                            CREATE TABLE catalog_cache_new (
+                                storefront TEXT NOT NULL,
+                                locale TEXT NOT NULL DEFAULT '',
+                                query_type TEXT NOT NULL,
+                                query_term TEXT NOT NULL,
+                                limit_val INTEGER NOT NULL,
+                                kind TEXT NOT NULL,
+                                response_json TEXT NOT NULL,
+                                created_at REAL NOT NULL,
+                                expires_at REAL NOT NULL,
+                                query_policy_version TEXT NOT NULL DEFAULT '2026.09.v2',
+                                PRIMARY KEY (storefront, locale, query_type, query_term, limit_val, query_policy_version)
+                            );
+                        """)
+                        term_expr = "query_term" if "query_term" in cols_info else ("query_key" if "query_key" in cols_info else "''")
+                        resp_expr = "response_json" if "response_json" in cols_info else ("tracks_json" if "tracks_json" in cols_info else "'{\"tracks\":[]}'")
+                        loc_expr = "locale" if "locale" in cols_info else "''"
+                        pol_expr = "query_policy_version" if "query_policy_version" in cols_info else "'2026.09.v2'"
+                        kind_expr = "kind" if "kind" in cols_info else "'ok'"
+                        limit_expr = "limit_val" if "limit_val" in cols_info else "10"
+                        created_expr = "created_at" if "created_at" in cols_info else ("fetched_at" if "fetched_at" in cols_info else "strftime('%s', 'now')")
+                        expires_expr = "expires_at" if "expires_at" in cols_info else "strftime('%s', 'now') + 86400"
+
+                        conn.execute(f"""
+                            INSERT OR IGNORE INTO catalog_cache_new (
+                                storefront, locale, query_type, query_term, limit_val, kind, response_json, created_at, expires_at, query_policy_version
+                            )
+                            SELECT
+                                storefront,
+                                COALESCE({loc_expr}, ''),
+                                query_type,
+                                COALESCE({term_expr}, ''),
+                                COALESCE({limit_expr}, 10),
+                                COALESCE({kind_expr}, 'ok'),
+                                COALESCE({resp_expr}, '{{}}'),
+                                COALESCE({created_expr}, strftime('%s', 'now')),
+                                COALESCE({expires_expr}, strftime('%s', 'now') + 86400),
+                                COALESCE({pol_expr}, '2026.09.v2')
+                            FROM catalog_cache;
+                        """)
+                        conn.execute("DROP TABLE catalog_cache;")
+                        conn.execute("ALTER TABLE catalog_cache_new RENAME TO catalog_cache;")
+                else:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS catalog_cache (
+                            storefront TEXT NOT NULL,
+                            locale TEXT NOT NULL DEFAULT '',
+                            query_type TEXT NOT NULL,
+                            query_term TEXT NOT NULL,
+                            limit_val INTEGER NOT NULL,
+                            kind TEXT NOT NULL,
+                            response_json TEXT NOT NULL,
+                            created_at REAL NOT NULL,
+                            expires_at REAL NOT NULL,
+                            query_policy_version TEXT NOT NULL DEFAULT '2026.09.v2',
+                            PRIMARY KEY (storefront, locale, query_type, query_term, limit_val, query_policy_version)
+                        );
+                    """)
+
                 conn.execute("""
-                    CREATE TABLE IF NOT EXISTS catalog_cache (
-                        storefront TEXT NOT NULL,
-                        query_type TEXT NOT NULL,
-                        query_term TEXT NOT NULL,
-                        limit_val INTEGER NOT NULL,
-                        kind TEXT NOT NULL,
-                        response_json TEXT NOT NULL,
-                        created_at REAL NOT NULL,
-                        expires_at REAL NOT NULL,
-                        PRIMARY KEY (storefront, query_type, query_term, limit_val)
-                    );
-                """)
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_catalog_cache_expires 
+                    CREATE INDEX IF NOT EXISTS idx_catalog_cache_expires
                     ON catalog_cache (expires_at);
                 """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_catalog_cache_lookup
+                    ON catalog_cache (storefront, locale, query_type, query_term, limit_val, query_policy_version);
+                """)
+
+                # 2. equivalence_cache table
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS equivalence_cache (
+                        source_storefront TEXT NOT NULL,
+                        source_song_id TEXT NOT NULL,
+                        target_storefront TEXT NOT NULL,
+                        target_song_id TEXT,
+                        payload_json TEXT,
+                        fetched_at REAL NOT NULL,
+                        expires_at REAL NOT NULL,
+                        PRIMARY KEY (source_storefront, source_song_id, target_storefront)
+                    );
+                """)
+                cursor.execute("PRAGMA table_info(equivalence_cache);")
+                equiv_cols = {row[1] for row in cursor.fetchall()}
+                if "payload_json" not in equiv_cols:
+                    conn.execute("ALTER TABLE equivalence_cache ADD COLUMN payload_json TEXT;")
+
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_equiv_cache_expires
+                    ON equivalence_cache (expires_at);
+                """)
+
+                # 3. match_cache table
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS match_cache (
                         storefront TEXT NOT NULL,
                         track_hash TEXT NOT NULL,
+                        cache_key TEXT NOT NULL DEFAULT '',
                         result_json TEXT NOT NULL,
                         decision TEXT NOT NULL,
                         status TEXT NOT NULL,
                         created_at REAL NOT NULL,
                         expires_at REAL NOT NULL,
+                        rule_version TEXT NOT NULL DEFAULT '2026.09.v1',
+                        query_policy_version TEXT NOT NULL DEFAULT '2026.09.v1',
+                        romanizer_version TEXT NOT NULL DEFAULT '2026.09.v1',
+                        exception_registry_version TEXT NOT NULL DEFAULT '2026.09.v1',
                         PRIMARY KEY (storefront, track_hash)
                     );
                 """)
+                cursor.execute("PRAGMA table_info(match_cache);")
+                match_cols = {row[1] for row in cursor.fetchall()}
+                if "cache_key" not in match_cols:
+                    conn.execute("ALTER TABLE match_cache ADD COLUMN cache_key TEXT NOT NULL DEFAULT '';")
+                for c_name in ("rule_version", "query_policy_version", "romanizer_version", "exception_registry_version"):
+                    if c_name not in match_cols:
+                        conn.execute(f"ALTER TABLE match_cache ADD COLUMN {c_name} TEXT NOT NULL DEFAULT '2026.09.v1';")
+
                 conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_match_cache_expires 
                     ON match_cache (expires_at);
@@ -120,14 +238,19 @@ class PersistentCache:
         query_type: str,
         query_term: str,
         limit_val: int = 10,
+        locale: Optional[str] = None,
+        query_policy_version: Optional[str] = None,
     ) -> Optional[CatalogSearchOutcome]:
         """
         Retrieve cached CatalogSearchOutcome if present and not expired.
         Returns None on cache miss or expiration.
         """
+        from applemusic.matcher.evidence import QUERY_POLICY_VERSION
         sf = (storefront or "cn").lower()
+        loc = (locale or "").strip().lower()
         q_type = query_type.lower()
         q_term = query_term.strip().lower()
+        q_ver = query_policy_version or QUERY_POLICY_VERSION
         now = time.time()
 
         try:
@@ -137,9 +260,9 @@ class PersistentCache:
                 """
                 SELECT kind, response_json, expires_at 
                 FROM catalog_cache 
-                WHERE storefront = ? AND query_type = ? AND query_term = ? AND limit_val = ?
+                WHERE storefront = ? AND locale = ? AND query_type = ? AND query_term = ? AND limit_val = ? AND query_policy_version = ?
                 """,
-                (sf, q_type, q_term, limit_val),
+                (sf, loc, q_type, q_term, limit_val, q_ver),
             )
             row = cursor.fetchone()
             if not row:
@@ -151,13 +274,21 @@ class PersistentCache:
                 return None
 
             data = json.loads(response_json)
-            tracks = [AppleMusicTrack(**t) for t in data.get("tracks", [])]
+            if isinstance(data, list):
+                tracks = [AppleMusicTrack(**t) for t in data]
+                safe_message = None
+            elif isinstance(data, dict):
+                tracks = [AppleMusicTrack(**t) for t in data.get("tracks", [])]
+                safe_message = data.get("safe_message")
+            else:
+                tracks = []
+                safe_message = None
             return CatalogSearchOutcome(
                 kind=kind,
                 tracks=tracks,
                 http_status=200,
                 request_id="cache-persistent",
-                safe_message=data.get("safe_message"),
+                safe_message=safe_message,
             )
         except Exception as e:
             logger.debug("Failed to read from persistent catalog cache: %s", e)
@@ -170,6 +301,8 @@ class PersistentCache:
         query_term: str,
         outcome: CatalogSearchOutcome,
         limit_val: int = 10,
+        locale: Optional[str] = None,
+        query_policy_version: Optional[str] = None,
     ) -> None:
         """
         Persist CatalogSearchOutcome.
@@ -179,35 +312,139 @@ class PersistentCache:
         if outcome.kind not in ("ok", "no_hits"):
             return
 
+        from applemusic.matcher.evidence import QUERY_POLICY_VERSION
         sf = (storefront or "cn").lower()
+        loc = (locale or "").strip().lower()
         q_type = query_type.lower()
         q_term = query_term.strip().lower()
+        q_ver = query_policy_version or QUERY_POLICY_VERSION
         now = time.time()
 
-        ttl = TTL_CATALOG_OK if outcome.kind == "ok" else TTL_CATALOG_NO_HITS
+        # Hits cached for 7 days; no-hits cached for 24 hours (bounded negative cache TTL)
+        ttl = 7 * 86400 if outcome.kind == "ok" else 86400
         expires_at = now + ttl
 
-        payload = {
-            "kind": outcome.kind,
-            "tracks": [t.model_dump() for t in outcome.tracks],
-            "safe_message": outcome.safe_message,
-        }
-        json_str = json.dumps(payload, ensure_ascii=False)
-
         try:
+            conn = self._get_connection()
+            data = {
+                "tracks": [t.dict() for t in outcome.tracks],
+                "safe_message": outcome.safe_message,
+            }
+            json_str = json.dumps(data, ensure_ascii=False)
             with self._lock:
-                conn = self._get_connection()
                 with conn:
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO catalog_cache 
-                        (storefront, query_type, query_term, limit_val, kind, response_json, created_at, expires_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (storefront, locale, query_type, query_term, limit_val, query_policy_version, kind, response_json, created_at, expires_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (sf, q_type, q_term, limit_val, outcome.kind, json_str, now, expires_at),
+                        (sf, loc, q_type, q_term, limit_val, q_ver, outcome.kind, json_str, now, expires_at),
                     )
         except Exception as e:
             logger.debug("Failed to write to persistent catalog cache: %s", e)
+
+    # -------------------------------------------------------------------------
+    # Equivalence Cache
+    # -------------------------------------------------------------------------
+    def get_equivalence(
+        self,
+        target_storefront: str,
+        source_song_id: str,
+        source_storefront: str = "jp",
+    ) -> Optional[str]:
+        """
+        Check equivalence cache.
+        Returns target_song_id if mapped, "" if negative hit (miss),
+        or None if not cached or expired.
+        """
+        target_id, _ = self.get_equivalence_with_payload(
+            target_storefront=target_storefront,
+            source_song_id=source_song_id,
+            source_storefront=source_storefront,
+        )
+        return target_id
+
+    def get_equivalence_with_payload(
+        self,
+        target_storefront: str,
+        source_song_id: str,
+        source_storefront: str = "jp",
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Check equivalence cache.
+        Returns (target_song_id, payload_json) if cached and valid.
+        Returns ("", None) if negative hit (miss).
+        Returns (None, None) if not cached or expired.
+        """
+        src_sf = (source_storefront or "jp").lower()
+        src_id = str(source_song_id).strip()
+        tgt_sf = (target_storefront or "cn").lower()
+        now = time.time()
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT target_song_id, payload_json, expires_at
+                FROM equivalence_cache
+                WHERE source_storefront = ? AND source_song_id = ? AND target_storefront = ?
+                """,
+                (src_sf, src_id, tgt_sf),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return (None, None)
+
+            target_song_id, payload_json, expires_at = row
+            if expires_at <= now:
+                return (None, None)
+
+            ret_id = target_song_id if target_song_id is not None else ""
+            return (ret_id, payload_json)
+        except Exception as e:
+            logger.debug("Failed to read from equivalence cache: %s", e)
+            return (None, None)
+
+    def set_equivalence(
+        self,
+        source_storefront: str,
+        source_song_id: str,
+        target_storefront: str,
+        target_song_id: Optional[str],
+        payload_json: Optional[str] = None,
+        ttl: Optional[float] = None,
+    ) -> None:
+        """
+        Store equivalence mapping.
+        Valid mappings get 7-day TTL; negative misses get 1-hour TTL.
+        """
+        src_sf = (source_storefront or "jp").lower()
+        src_id = str(source_song_id).strip()
+        tgt_sf = (target_storefront or "cn").lower()
+        tgt_id = str(target_song_id).strip() if target_song_id else None
+        now = time.time()
+
+        if ttl is None:
+            ttl = 7 * 86400 if tgt_id else 3600  # 1 hour negative cache TTL
+
+        expires_at = now + ttl
+
+        try:
+            conn = self._get_connection()
+            with self._lock:
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO equivalence_cache
+                        (source_storefront, source_song_id, target_storefront, target_song_id, payload_json, fetched_at, expires_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (src_sf, src_id, tgt_sf, tgt_id, payload_json, now, expires_at),
+                    )
+        except Exception as e:
+            logger.debug("Failed to write to equivalence cache: %s", e)
 
     # -------------------------------------------------------------------------
     # Track Match Cache
@@ -215,7 +452,8 @@ class PersistentCache:
     def get_match(self, storefront: str, track_hash: str) -> Optional[SongMatchResult]:
         """
         Retrieve cached SongMatchResult if present and not expired.
-        Automatically re-evaluates auto_accept results if rule_version or alias_version is outdated.
+        Automatically re-evaluates auto_accept results if rule_version, query_policy_version,
+        romanizer_version, or exception_registry_version is outdated.
         """
         sf = (storefront or "cn").lower()
         now = time.time()
@@ -225,36 +463,54 @@ class PersistentCache:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT result_json, expires_at 
-                FROM match_cache 
-                WHERE storefront = ? AND track_hash = ?
+                SELECT result_json, expires_at, rule_version, query_policy_version, romanizer_version, exception_registry_version
+                FROM match_cache
+                WHERE storefront = ? AND (track_hash = ? OR cache_key = ?)
                 """,
-                (sf, track_hash),
+                (sf, track_hash, track_hash),
             )
             row = cursor.fetchone()
             if not row:
                 return None
 
-            result_json, expires_at = row
+            result_json, expires_at, db_rule_ver, db_policy_ver, db_romanizer_ver, db_registry_ver = row
             if expires_at <= now:
                 return None
 
             data = json.loads(result_json)
             result = SongMatchResult(**data)
 
-            # Check rule version / alias version
-            from applemusic.matcher.evidence import MATCH_RULE_VERSION, ALIAS_VERSION
+            # Check rule version / policy version / romanizer version / exception registry version
+            from applemusic.matcher.evidence import (
+                MATCH_RULE_VERSION,
+                QUERY_POLICY_VERSION,
+                ROMANIZER_VERSION,
+                EXCEPTION_REGISTRY_VERSION,
+            )
             cached_rule_ver = getattr(result.evidence, "rule_version", None) if result.evidence else None
-            cached_alias_ver = getattr(result.evidence, "alias_version", None) if result.evidence else None
+            cached_policy_ver = getattr(result.evidence, "query_policy_version", None) if result.evidence else None
+            cached_romanizer_ver = getattr(result.evidence, "romanizer_version", None) if result.evidence else None
+            cached_registry_ver = getattr(result.evidence, "exception_registry_version", None) if result.evidence else None
 
             # If user manually confirmed, preserve user_confirmed decision
             if result.decision == "user_confirmed":
                 return result
 
-            # If cached auto_accept has outdated rule_version or alias_version, re-evaluate!
+            # If cached auto_accept has outdated versions, re-evaluate!
             if result.decision == "auto_accept":
-                if cached_rule_ver != MATCH_RULE_VERSION or cached_alias_ver != ALIAS_VERSION:
+                versions_outdated = (
+                    (cached_rule_ver is not None and cached_rule_ver != MATCH_RULE_VERSION)
+                    or (cached_policy_ver is not None and cached_policy_ver != QUERY_POLICY_VERSION)
+                    or (cached_romanizer_ver is not None and cached_romanizer_ver != ROMANIZER_VERSION)
+                    or (cached_registry_ver is not None and cached_registry_ver != EXCEPTION_REGISTRY_VERSION)
+                    or db_rule_ver != MATCH_RULE_VERSION
+                    or db_policy_ver != QUERY_POLICY_VERSION
+                    or db_romanizer_ver != ROMANIZER_VERSION
+                    or db_registry_ver != EXCEPTION_REGISTRY_VERSION
+                )
+                if versions_outdated:
                     cands_to_eval = result.candidates if result.candidates else ([result.selected_candidate] if result.selected_candidate else [])
+                    old_ver = cached_rule_ver or db_rule_ver or "unknown"
                     if cands_to_eval and result.source_track:
                         from applemusic.matcher.scorer import TrackScorer
                         scored = [TrackScorer.score(result.source_track, c.track) for c in cands_to_eval]
@@ -267,14 +523,43 @@ class PersistentCache:
                         result.selected_candidate = best if dec in ("auto_accept", "review") else None
                         result.status = conf
                         result.decision = dec
-                        result.decision_reasons = [f"规则版本升级({cached_rule_ver}->{MATCH_RULE_VERSION})重新评估: {', '.join(reasons)}"]
+                        result.decision_reasons = [f"规则版本升级({old_ver}->{MATCH_RULE_VERSION})重新评估: {', '.join(reasons)}"]
                         result.evidence = best.evidence if best else None
                         result.score_gap = gap
                     else:
-                        from applemusic.models import ConfidenceLevel
-                        result.decision = "review"
+                        from applemusic.models import ConfidenceLevel, DecisionStatus
+                        result.decision = DecisionStatus.REVIEW.value
                         result.status = ConfidenceLevel.MEDIUM
-                        result.decision_reasons = [f"旧版本({cached_rule_ver})缓存已废弃，需人工复核"]
+                        result.decision_reasons = [f"旧版本({old_ver})缓存已废弃，需人工复核"]
+
+                    # Persist re-evaluated result back to DB
+                    try:
+                        json_str = result.model_dump_json()
+                        with self._lock:
+                            with conn:
+                                conn.execute(
+                                    """
+                                    UPDATE match_cache
+                                    SET result_json = ?, decision = ?, status = ?,
+                                        rule_version = ?, query_policy_version = ?,
+                                        romanizer_version = ?, exception_registry_version = ?
+                                    WHERE storefront = ? AND (track_hash = ? OR cache_key = ?)
+                                    """,
+                                    (
+                                        json_str,
+                                        result.decision,
+                                        str(result.status.value if hasattr(result.status, "value") else result.status),
+                                        MATCH_RULE_VERSION,
+                                        QUERY_POLICY_VERSION,
+                                        ROMANIZER_VERSION,
+                                        EXCEPTION_REGISTRY_VERSION,
+                                        sf,
+                                        track_hash,
+                                        track_hash,
+                                    ),
+                                )
+                    except Exception as e:
+                        logger.debug("Failed to update re-evaluated match in cache: %s", e)
 
             return result
         except Exception as e:
@@ -398,6 +683,12 @@ class PersistentCache:
                     keys_to_save.append(f"text:{clean_t.lower()}:{norm_a}:{v_tag_str}")
 
         try:
+            from applemusic.matcher.evidence import (
+                MATCH_RULE_VERSION,
+                QUERY_POLICY_VERSION,
+                ROMANIZER_VERSION,
+                EXCEPTION_REGISTRY_VERSION,
+            )
             json_str = match_result.model_dump_json()
             with self._lock:
                 conn = self._get_connection()
@@ -406,17 +697,22 @@ class PersistentCache:
                         conn.execute(
                             """
                             INSERT OR REPLACE INTO match_cache 
-                            (storefront, track_hash, result_json, decision, status, created_at, expires_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at, rule_version, query_policy_version, romanizer_version, exception_registry_version)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 sf,
+                                k,
                                 k,
                                 json_str,
                                 match_result.decision,
                                 str(match_result.status.value if hasattr(match_result.status, "value") else match_result.status),
                                 now,
                                 expires_at,
+                                MATCH_RULE_VERSION,
+                                QUERY_POLICY_VERSION,
+                                ROMANIZER_VERSION,
+                                EXCEPTION_REGISTRY_VERSION,
                             ),
                         )
         except Exception as e:

@@ -3,7 +3,7 @@ Data models for Apple Music Playlist Importer.
 """
 
 from enum import Enum
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -60,6 +60,15 @@ class AppleMusicTrack(BaseModel):
     preview_url: Optional[str] = None
     storefront: str = "cn"
     url: Optional[str] = None
+    artist_ids: List[str] = Field(default_factory=list)
+    album_id: Optional[str] = None
+    track_number: Optional[int] = None
+    disc_number: Optional[int] = None
+    release_date: Optional[str] = None
+    locale: Optional[str] = None
+    discovery_storefront: Optional[str] = None
+    discovery_path: Optional[str] = None
+    original_jp_track: Optional[Any] = None
 
     @computed_field
     @property
@@ -128,6 +137,8 @@ class SongMatchResult(BaseModel):
     search_incomplete: bool = False
     evidence: Optional[MatchEvidence] = None
     diagnostics: Optional[SingleTrackDiagnostics] = None
+    availability: str = "available"  # "available", "unavailable_in_target_storefront"
+    discovery_path: Optional[str] = None  # "native", "jp_discovery_equivalent", "jp_discovery_isrc"
 
     @property
     def is_matched(self) -> bool:
