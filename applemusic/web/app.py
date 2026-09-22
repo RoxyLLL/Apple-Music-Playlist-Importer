@@ -3,7 +3,9 @@ FastAPI Web Application backend for Apple Music Playlist Importer.
 """
 
 import asyncio
+import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -19,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from applemusic import __version__
 from applemusic.auth import AppleMusicAuth
 from applemusic.auto_token import BrowserTokenCapturer
 from applemusic.client import AppleMusicClient
@@ -27,6 +30,8 @@ from applemusic.extractors import get_extractor_for
 from applemusic.matcher.engine import MatchingEngine
 from applemusic.matcher.scorer import TrackScorer
 from applemusic.models import Playlist, SongMatchResult, Track
+
+logger = logging.getLogger(__name__)
 
 thread_pool = ThreadPoolExecutor(max_workers=8)
 
@@ -52,7 +57,7 @@ else:
 
 SESSION_API_TOKEN = secrets.token_urlsafe(32)
 
-app = FastAPI(title="Apple Music Playlist Importer", version="1.0.0")
+app = FastAPI(title="Apple Music Playlist Importer", version=__version__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -555,10 +560,12 @@ async def get_cache_stats():
 
 @app.post("/api/cache/clear")
 async def clear_cache():
+    """清理过期缓存（保留有效缓存）。"""
     client, _ = get_shared_engine()
     cat_del, mat_del = client.persistent_cache.clear_expired()
     return {
         "success": True,
+        "message": "已清理过期缓存",
         "cleared_catalog": cat_del,
         "cleared_match": mat_del,
         "stats": client.persistent_cache.get_stats(),

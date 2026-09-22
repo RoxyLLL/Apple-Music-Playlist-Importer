@@ -13,18 +13,30 @@ from applemusic.models import AppleMusicTrack, CatalogSearchOutcome, Playlist, T
 class TestBatchISRCAndMultiIndexCache(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
         self.db_path = Path(self.temp_dir.name) / "test_cache.db"
         self.cache = PersistentCache(self.db_path)
+        self.addCleanup(self.cache.close)
 
-        self.config = Config(storefront="us")
+        # Patch PersistentCache.get_instance BEFORE client or engine are constructed
+        # so neither can instantiate or touch the default user cache.db.
+        patcher = patch.object(PersistentCache, "get_instance", return_value=self.cache)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.config = Config(
+            storefront="us",
+            developer_token="mock_dev_token",
+            developer_token_exp=9999999999,
+        )
         self.client = AppleMusicClient(self.config)
         self.client.persistent_cache = self.cache
         self.engine = MatchingEngine(client=self.client, config=self.config)
         self.engine.persistent_cache = self.cache
 
     def tearDown(self):
-        self.cache.close()
-        self.temp_dir.cleanup()
+        pass
 
     def test_record_429_includes_jitter(self):
         """Verify record_429 adds positive random jitter to Retry-After backoff."""
