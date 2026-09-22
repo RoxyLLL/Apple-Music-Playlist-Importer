@@ -693,7 +693,7 @@
                   </button>
 
                   <!-- Diagnostics button -->
-                  <button @click="openDiagnosticsModal(item)"
+                  <button @click="openSingleDiagnosticsModal(item)"
                     class="px-2 py-1.5 rounded-lg text-xs font-medium text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition"
                     title="查看单曲诊断信息与排查报告">
                     诊断
@@ -724,7 +724,7 @@
                   </button>
 
                   <!-- Diagnostics button -->
-                  <button @click="openDiagnosticsModal(item)"
+                  <button @click="openSingleDiagnosticsModal(item)"
                     class="px-2 py-1.5 rounded-lg text-xs font-medium text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition"
                     title="查看单曲诊断信息与排查报告">
                     诊断
@@ -2959,7 +2959,7 @@
           }
           candidateModalItem.value = null;
         };
-        const openDiagnosticsModal = (item) => {
+        const openSingleDiagnosticsModal = (item) => {
           diagnosticsModalItem.value = item;
         };
 
@@ -4762,7 +4762,7 @@
           searchAlternative,
           selectCandidateForModal,
           diagnosticsModalItem,
-          openDiagnosticsModal,
+          openSingleDiagnosticsModal,
           exportSingleDiagnosticsJson,
           openBilibiliModal,
           downloadBilibiliCandidate,
