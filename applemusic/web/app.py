@@ -181,6 +181,7 @@ async def get_config_status():
         "is_authorized": is_valid,
         "detected_storefront": sf_info if is_valid else None,
         "auth_message": sf_info if not is_valid else "连接正常",
+        "version": f"v{__version__}",
     }
 
 
