@@ -69,6 +69,7 @@ class AppleMusicTrack(BaseModel):
     discovery_storefront: Optional[str] = None
     discovery_path: Optional[str] = None
     original_jp_track: Optional[Any] = None
+    raw_artist_name: Optional[str] = None
 
     @computed_field
     @property

@@ -130,13 +130,30 @@ class QueryPlanner:
             if pq:
                 phase_a.append(pq)
 
-        # A2. Scoped aliases & source translations
+        # A2. Scoped aliases & source translations/aliases
         if primary_artist:
+            # Source official translation if available
+            if ctx.trans_title:
+                t_core = TextCleaner.clean_title(ctx.trans_title)
+                if t_core and t_core.lower() != core_t.lower():
+                    pq = make_planned(f"{t_core} {primary_artist}", target_sf, default_loc, "A_native", "source_translation", 2)
+                    if pq:
+                        phase_a.append(pq)
+
             scoped_aliases = get_scoped_title_aliases(primary_artist, core_t)
             for sa in scoped_aliases:
                 pq = make_planned(f"{sa} {primary_artist}", target_sf, default_loc, "A_native", "scoped_alias", 2)
                 if pq:
                     phase_a.append(pq)
+
+            # Source aliases if available (bounded to top 2)
+            if ctx.aliases:
+                for al in ctx.aliases[:2]:
+                    al_core = TextCleaner.clean_title(al)
+                    if al_core and al_core.lower() != core_t.lower():
+                        pq = make_planned(f"{al_core} {primary_artist}", target_sf, default_loc, "A_native", "source_alias", 2)
+                        if pq:
+                            phase_a.append(pq)
 
             # Subtitles from brackets
             for sub in sub_titles:
@@ -152,6 +169,19 @@ class QueryPlanner:
                     if pq:
                         phase_a.append(pq)
         else:
+            if ctx.trans_title:
+                t_core = TextCleaner.clean_title(ctx.trans_title)
+                if t_core and t_core.lower() != core_t.lower():
+                    pq = make_planned(t_core, target_sf, default_loc, "A_native", "source_translation", 2)
+                    if pq:
+                        phase_a.append(pq)
+            if ctx.aliases:
+                for al in ctx.aliases[:2]:
+                    al_core = TextCleaner.clean_title(al)
+                    if al_core and al_core.lower() != core_t.lower():
+                        pq = make_planned(al_core, target_sf, default_loc, "A_native", "source_alias", 2)
+                        if pq:
+                            phase_a.append(pq)
             for sub in sub_titles:
                 pq = make_planned(sub, target_sf, default_loc, "A_native", "bracket_variant", 2)
                 if pq:

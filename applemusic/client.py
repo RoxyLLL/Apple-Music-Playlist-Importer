@@ -1,5 +1,6 @@
 import json
 import random
+import re
 import threading
 import time
 from email.utils import parsedate_to_datetime
@@ -599,6 +600,43 @@ class AppleMusicClient:
         )
 
     @classmethod
+    def _parse_artists_from_apple(
+        cls, artist_name: str, artists_rel: List[Dict[str, Any]]
+    ) -> List[str]:
+        if not artist_name:
+            return []
+        artist_name = artist_name.strip()
+        if not artist_name:
+            return []
+
+        # 1. Check if structured relationship objects contain artist names
+        rel_names = [
+            a.get("attributes", {}).get("name", "").strip()
+            for a in artists_rel
+            if isinstance(a, dict) and a.get("attributes", {}).get("name")
+        ]
+        if rel_names:
+            return rel_names
+
+        # 2. If exactly one artist relationship exists, artistName is a single artist (e.g. "Tyler, The Creator")
+        if len(artists_rel) == 1:
+            return [artist_name]
+
+        # 3. If multiple artist relationships exist (len > 1):
+        if len(artists_rel) > 1:
+            # Check if comma-split matches the exact relationship count
+            comma_parts = [p.strip() for p in artist_name.split(",") if p.strip()]
+            if len(comma_parts) == len(artists_rel):
+                return comma_parts
+
+        # 4. For no relationship or general multi-artist strings:
+        # DO NOT split on ASCII comma alone (preserves names like "Tyler, The Creator")
+        # Split on explicit collaboration delimiters: feat, ft, featuring, with, &, +, ×, 、, /, ／
+        split_pattern = r"\s+(?:feat\.?|ft\.?|featuring|with)\s+|\s*[/\\&、／+×]\s*"
+        parts = [p.strip() for p in re.split(split_pattern, artist_name, flags=re.IGNORECASE) if p.strip()]
+        return parts if parts else [artist_name]
+
+    @classmethod
     def _parse_song_item(
         cls,
         item: Dict[str, Any],
@@ -608,12 +646,12 @@ class AppleMusicClient:
     ) -> AppleMusicTrack:
         attrs = item.get("attributes", {})
         artist_name = attrs.get("artistName", "")
-        artists = [a.strip() for a in artist_name.split(",") if a.strip()] or ([artist_name] if artist_name else [])
-        artwork = attrs.get("artwork", {})
-        previews = attrs.get("previews") or []
         relationships = item.get("relationships", {})
         artists_rel = relationships.get("artists", {}).get("data", [])
         artist_ids = [str(a.get("id")) for a in artists_rel if a.get("id")]
+        artists = cls._parse_artists_from_apple(artist_name, artists_rel)
+        artwork = attrs.get("artwork", {})
+        previews = attrs.get("previews") or []
         albums_rel = relationships.get("albums", {}).get("data", [])
         album_id = str(albums_rel[0].get("id")) if albums_rel and albums_rel[0].get("id") else None
 
@@ -635,6 +673,7 @@ class AppleMusicClient:
             release_date=attrs.get("releaseDate"),
             locale=locale,
             discovery_storefront=discovery_storefront or storefront,
+            raw_artist_name=artist_name,
         )
 
     def search_catalog(

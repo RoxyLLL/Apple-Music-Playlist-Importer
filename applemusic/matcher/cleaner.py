@@ -5,6 +5,7 @@ Title and artist normalization and cleaning for music matching.
 import difflib
 import re
 import unicodedata
+from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
 # Patterns commonly appended to song titles on NetEase / QQ Music / Spotify
@@ -67,6 +68,16 @@ NOISE_ARTISTS = {
 }
 
 SUBTITLE_PATTERN = r"\s*[-–—/]\s*(?:电视剧|电影|网剧|网综|综艺|动漫|动画|游戏|广播剧|舞台剧|话剧|纪录片|短剧|OST|主题曲|插曲|片尾曲|片头曲|宣传曲|推广曲|概念曲|角色曲|原声带|插曲|同人曲|纯享版|精选版|完整版|高品质|无损|官方版|动态歌词|剪辑版|影视原声).*"
+
+
+@dataclass
+class ParsedArtistDetails:
+    primary: str = ""
+    featured: List[str] = field(default_factory=list)          # explicit feat. / ft. / featuring / with
+    character_voices: List[str] = field(default_factory=list)  # CV: / voice:
+    collaborators: List[str] = field(default_factory=list)     # & / + / / / 、 / ×
+    aliases: List[str] = field(default_factory=list)           # readings / bracketed aliases
+    all_names: List[str] = field(default_factory=list)         # all valid parsed names
 
 
 class TextCleaner:
@@ -481,23 +492,21 @@ class TextCleaner:
         return pri if pri else artist.strip()
 
     @classmethod
-    def parse_artists(cls, artists: List[str]) -> Tuple[str, List[str]]:
+    def parse_artist_details(cls, artists: List[str]) -> ParsedArtistDetails:
         """
-        Extract primary artist and list of featured/collaborative artists.
-        Splits delimiters such as 'feat.', 'ft.', '&', '/', '、', ','
-        Filters out generic noise artists like '群星', 'Various Artists'.
-        Strips role annotations (e.g. '(Composer / Lyricist)', '(作词)')
-        and extracts bracketed aliases (e.g. 'トゲナシトゲアリ (TOGENASHI TOGEARI)').
+        Structure artist information into primary, featured, character_voices,
+        collaborators, and bracketed aliases/readings.
+        Preserves non-delimited names with commas (e.g. 'Tyler, The Creator').
         """
         if not artists:
-            return "", []
+            return ParsedArtistDetails()
 
-        all_names: List[str] = []
+        details = ParsedArtistDetails()
+
         for raw in artists:
             if not raw:
                 continue
 
-            # Strip Apple Music role annotations: e.g. '(Composer / Lyricist)', '(作词)'
             cleaned_raw = re.sub(
                 r"\s*[(（]\s*(?:Composer|Lyricist|Producer|Arranger|Vocalist|Featured|Soloist|作词|作曲|编曲|演唱|制作人)[^)）]*[)）]",
                 "",
@@ -505,37 +514,69 @@ class TextCleaner:
                 flags=re.IGNORECASE,
             ).strip()
 
-            # If the artist has a parenthetical alias or CV tag:
-            # e.g., Sagiri Izumi (CV:Akane Fujita), 和泉紗霧 (CV:藤田茜), トゲナシトゲアリ (TOGENASHI TOGEARI)
+            # Check if parenthetical CV or alias:
             alias_m = re.match(r"^([^(（]+)[(（]([^)）]+)[)）]$", cleaned_raw)
-            raw_candidates = [cleaned_raw]
             if alias_m:
                 main_p = alias_m.group(1).strip()
-                alias_p = alias_m.group(2).strip()
-                # Strip CV / CV: / CV. / 声优 prefix if present
-                alias_p = re.sub(r"^(?:cv[:\.\s]|voice[:\.\s]|声优[:\.\s])\s*", "", alias_p, flags=re.IGNORECASE).strip()
-                if main_p and alias_p:
-                    raw_candidates = [main_p, alias_p]
+                inner = alias_m.group(2).strip()
+                is_cv = bool(re.search(r"^(?:cv[:\.\s]|voice[:\.\s]|声优[:\.\s])", inner, flags=re.IGNORECASE))
+                cv_name = re.sub(r"^(?:cv[:\.\s]|voice[:\.\s]|声优[:\.\s])\s*", "", inner, flags=re.IGNORECASE).strip()
+                if is_cv and cv_name:
+                    if cv_name not in details.character_voices:
+                        details.character_voices.append(cv_name)
+                    cleaned_raw = main_p
+                else:
+                    if cv_name and cv_name not in details.aliases:
+                        details.aliases.append(cv_name)
+                    cleaned_raw = main_p
 
-            for r_cand in raw_candidates:
-                # Split on common collaborative and voice-actor delimiters
-                parts = re.split(r"\s+(?:feat\.?|ft\.?|with|cv[:\.\s]|voice[:\.\s])\s+|\s*[/\\&,，、]\s*", r_cand, flags=re.IGNORECASE)
-                for p in parts:
-                    p_clean = p.strip()
-                    if p_clean and p_clean not in all_names:
-                        all_names.append(p_clean)
+            # Split on explicit featured artist keywords
+            feat_split = re.split(r"\s+(?:feat\.?|ft\.?|featuring|with)\s+", cleaned_raw, flags=re.IGNORECASE)
+            main_chunk = feat_split[0].strip()
+            feat_chunks = feat_split[1:] if len(feat_split) > 1 else []
 
-        if not all_names:
-            return "", []
+            for fc in feat_chunks:
+                f_parts = re.split(r"\s*[/\\&、／+×]\s*", fc)
+                for fp in f_parts:
+                    fp_clean = fp.strip()
+                    if fp_clean and fp_clean.lower() not in NOISE_ARTISTS and fp_clean not in details.featured:
+                        details.featured.append(fp_clean)
 
-        # Filter out noise artists
-        valid_names = [n for n in all_names if n.lower().strip() not in NOISE_ARTISTS]
-        if not valid_names:
-            return "", []
+            collab_parts = re.split(r"\s*[/\\&、／+×]\s*", main_chunk)
+            valid_collab = [p.strip() for p in collab_parts if p.strip() and p.strip().lower() not in NOISE_ARTISTS]
 
-        primary = valid_names[0]
-        featured = valid_names[1:]
-        return primary, featured
+            if valid_collab:
+                if not details.primary:
+                    details.primary = valid_collab[0]
+                    for other in valid_collab[1:]:
+                        if other not in details.collaborators:
+                            details.collaborators.append(other)
+                else:
+                    for other in valid_collab:
+                        if other not in details.collaborators and other != details.primary:
+                            details.collaborators.append(other)
+
+        names: List[str] = []
+        if details.primary:
+            names.append(details.primary)
+        for n in details.character_voices + details.collaborators + details.featured + details.aliases:
+            if n and n not in names and n.lower() not in NOISE_ARTISTS:
+                names.append(n)
+        details.all_names = names
+
+        return details
+
+    @classmethod
+    def parse_artists(cls, artists: List[str]) -> Tuple[str, List[str]]:
+        """
+        Extract primary artist and list of featured/collaborative artists.
+        """
+        details = cls.parse_artist_details(artists)
+        sec: List[str] = []
+        for n in details.collaborators + details.featured + details.character_voices + details.aliases:
+            if n and n not in sec and n != details.primary:
+                sec.append(n)
+        return details.primary, sec
 
     @classmethod
     def generate_tiered_queries(

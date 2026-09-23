@@ -9,11 +9,11 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, root_validator
 
-MATCH_RULE_VERSION = "2026.09.v2"
-ALIAS_VERSION = "2026.09.v2"
-QUERY_POLICY_VERSION = "2026.09.v2"
-ROMANIZER_VERSION = "2026.09.v2"
-EXCEPTION_REGISTRY_VERSION = "2026.09.v2"
+MATCH_RULE_VERSION = "2026.09.v3"
+ALIAS_VERSION = "2026.09.v3"
+QUERY_POLICY_VERSION = "2026.09.v3"
+ROMANIZER_VERSION = "2026.09.v3"
+EXCEPTION_REGISTRY_VERSION = "2026.09.v3"
 
 
 class VerificationLevel(str, Enum):

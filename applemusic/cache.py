@@ -117,14 +117,14 @@ class PersistentCache:
                                 response_json TEXT NOT NULL,
                                 created_at REAL NOT NULL,
                                 expires_at REAL NOT NULL,
-                                query_policy_version TEXT NOT NULL DEFAULT '2026.09.v2',
+                                query_policy_version TEXT NOT NULL DEFAULT '2026.09.v3',
                                 PRIMARY KEY (storefront, locale, query_type, query_term, limit_val, query_policy_version)
                             );
                         """)
                         term_expr = "query_term" if "query_term" in cols_info else ("query_key" if "query_key" in cols_info else "''")
                         resp_expr = "response_json" if "response_json" in cols_info else ("tracks_json" if "tracks_json" in cols_info else "'{\"tracks\":[]}'")
                         loc_expr = "locale" if "locale" in cols_info else "''"
-                        pol_expr = "query_policy_version" if "query_policy_version" in cols_info else "'2026.09.v2'"
+                        pol_expr = "query_policy_version" if "query_policy_version" in cols_info else "'2026.09.v3'"
                         kind_expr = "kind" if "kind" in cols_info else "'ok'"
                         limit_expr = "limit_val" if "limit_val" in cols_info else "10"
                         created_expr = "created_at" if "created_at" in cols_info else ("fetched_at" if "fetched_at" in cols_info else "strftime('%s', 'now')")
@@ -144,7 +144,7 @@ class PersistentCache:
                                 COALESCE({resp_expr}, '{{}}'),
                                 COALESCE({created_expr}, strftime('%s', 'now')),
                                 COALESCE({expires_expr}, strftime('%s', 'now') + 86400),
-                                COALESCE({pol_expr}, '2026.09.v2')
+                                COALESCE({pol_expr}, '2026.09.v3')
                             FROM catalog_cache;
                         """)
                         conn.execute("DROP TABLE catalog_cache;")
@@ -161,7 +161,7 @@ class PersistentCache:
                             response_json TEXT NOT NULL,
                             created_at REAL NOT NULL,
                             expires_at REAL NOT NULL,
-                            query_policy_version TEXT NOT NULL DEFAULT '2026.09.v2',
+                            query_policy_version TEXT NOT NULL DEFAULT '2026.09.v3',
                             PRIMARY KEY (storefront, locale, query_type, query_term, limit_val, query_policy_version)
                         );
                     """)

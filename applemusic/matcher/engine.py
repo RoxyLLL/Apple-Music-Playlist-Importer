@@ -430,6 +430,8 @@ class MatchingEngine:
             duration_ms=source.duration_ms,
             target_storefront=sf,
             supported_locales=self.client.get_storefront_languages(sf) if hasattr(self.client, "get_storefront_languages") else [],
+            trans_title=getattr(source, "trans_title", None),
+            aliases=getattr(source, "aliases", []) or [],
         )
         planned_phases = QueryPlanner.plan_phases(ctx)
         import inspect
@@ -442,9 +444,17 @@ class MatchingEngine:
         except Exception:
             accepts_locale = True
 
-        def _execute_query(pq: PlannedQuery, disc_path: str) -> Optional[CatalogSearchOutcome]:
+        # Determine Phase D queries and reserve catalog budget for JP discovery
+        jp_queries = planned_phases.get("D_jp_discovery", []) if sf.lower() != "jp" else []
+        reserved_for_jp = min(len(jp_queries), 1) if jp_queries else 0
+        max_target_catalog_budget = max(1, 8 - reserved_for_jp)
+        # Reserve catalog budget for Phase C suggestions so Phase A/B does not starve triggered suggestions
+        reserved_for_sugg = min(2, max_target_catalog_budget - 1) if max_target_catalog_budget > 1 else 0
+        max_ab_catalog_budget = max(1, max_target_catalog_budget - reserved_for_sugg)
+
+        def _execute_query(pq: PlannedQuery, disc_path: str, max_allowed: int = 8) -> Optional[CatalogSearchOutcome]:
             nonlocal query_attempts, has_partial_failures, rate_limited_retry_after, stop_expansion
-            if stop_expansion or budget_consumed["catalog"] >= 8:
+            if stop_expansion or budget_consumed["catalog"] >= max_allowed:
                 return None
             query_attempts += 1
             budget_consumed["catalog"] += 1
@@ -522,14 +532,31 @@ class MatchingEngine:
                 )
             return None
 
+        def _has_high_quality_candidate() -> bool:
+            cands = aggregator.get_candidates()
+            if not cands:
+                return False
+            scored = [TrackScorer.score(source, c.track) for c in cands]
+            scored.sort(key=lambda x: x.score, reverse=True)
+            best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
+                source,
+                scored,
+                auto_accept_threshold=self.config.auto_accept_threshold,
+                min_review_score=self.config.min_review_score,
+                min_score_gap=self.config.min_score_gap,
+            )
+            # Only unconflicted strong candidate that already meets auto-accept / early-stop stops expansion.
+            # Review candidates (even with high score) must NOT block suggestions / JP expansion (TEST_MATRIX Q03).
+            return dec == DecisionStatus.AUTO_ACCEPT.value
+
         # -------------------------------------------------------------
         # Phase A: Native Target Storefront
         # -------------------------------------------------------------
         discovery_chain.append("phase_a_native")
         for pq in planned_phases.get("A_native", []):
-            if stop_expansion:
+            if stop_expansion or budget_consumed["catalog"] >= max_ab_catalog_budget:
                 break
-            _execute_query(pq, "native_search")
+            _execute_query(pq, "native_search", max_allowed=max_ab_catalog_budget)
             auto_res = _check_auto_accept()
             if auto_res:
                 return auto_res
@@ -540,9 +567,9 @@ class MatchingEngine:
         if not stop_expansion:
             discovery_chain.append("phase_b_script")
             for pq in planned_phases.get("B_script", []):
-                if stop_expansion:
+                if stop_expansion or budget_consumed["catalog"] >= max_ab_catalog_budget:
                     break
-                _execute_query(pq, "script_variant")
+                _execute_query(pq, "script_variant", max_allowed=max_ab_catalog_budget)
                 auto_res = _check_auto_accept()
                 if auto_res:
                     return auto_res
@@ -550,7 +577,7 @@ class MatchingEngine:
         # -------------------------------------------------------------
         # Phase C: Apple Search Suggestions (max 2, token-aligned)
         # -------------------------------------------------------------
-        if not stop_expansion and not aggregator.get_candidates() and budget_consumed["suggestions"] < 2:
+        if not stop_expansion and not _has_high_quality_candidate() and budget_consumed["suggestions"] < 2:
             discovery_chain.append("phase_c_suggestions")
             try:
                 suggestions = self.client.get_search_suggestions(
@@ -561,6 +588,8 @@ class MatchingEngine:
                 budget_consumed["suggestions"] += 1
                 filtered = QueryPlanner.filter_suggestions(suggestions, core_title, primary_artist or "", max_count=2)
                 for s_term in filtered:
+                    if stop_expansion or budget_consumed["catalog"] >= max_target_catalog_budget:
+                        break
                     s_pq = PlannedQuery(
                         query=s_term,
                         storefront=sf,
@@ -569,7 +598,7 @@ class MatchingEngine:
                         provenance="apple_suggestion",
                         weak_only=True,
                     )
-                    _execute_query(s_pq, "apple_suggestion")
+                    _execute_query(s_pq, "apple_suggestion", max_allowed=max_target_catalog_budget)
                     auto_res = _check_auto_accept()
                     if auto_res:
                         return auto_res
@@ -582,7 +611,6 @@ class MatchingEngine:
         jp_candidates_found: List[AppleMusicTrack] = []
         if not stop_expansion and sf.lower() != "jp":
             discovery_chain.append("phase_d_jp_discovery")
-            jp_queries = planned_phases.get("D_jp_discovery", [])
             for pq in jp_queries:
                 if stop_expansion or budget_consumed["catalog"] >= 8:
                     break
@@ -609,26 +637,53 @@ class MatchingEngine:
                     for jt in jp_outcome.tracks:
                         if jt not in jp_candidates_found:
                             jp_candidates_found.append(jt)
+                elif jp_outcome.kind != "no_hits":
+                    has_partial_failures = True
+                    failures.append(f"{pq.query}: {jp_outcome.safe_message or jp_outcome.kind}")
 
             # If JP candidates found, resolve to target storefront!
             if jp_candidates_found:
                 discovery_chain.append("jp_prescreen_and_remap")
                 # 1. Conservative prescreen: score against source in JP
                 scored_jp = [TrackScorer.score(source, jt) for jt in jp_candidates_found]
-                scored_jp = [sc for sc in scored_jp if sc.score >= 0.50]
-                scored_jp.sort(key=lambda x: x.score, reverse=True)
-                top_jp = [sc.track for sc in scored_jp[:5]]
+                top_jp_candidates = [sc for sc in scored_jp if sc.score >= 0.50]
+                top_jp_candidates.sort(key=lambda x: x.score, reverse=True)
+                top_jp = [sc.track for sc in top_jp_candidates[:5]]
 
+                # Strong identity requires score >= 0.72 and no hard conflicts
+                has_strong_jp_identity = any(
+                    sc.score >= 0.72
+                    and sc.title_score >= 0.75
+                    and sc.artist_score >= 0.65
+                    and sc.version_score >= 0.0
+                    and not (sc.evidence and sc.evidence.conflicts)
+                    for sc in top_jp_candidates
+                )
+
+                equiv_failed = False
                 if top_jp:
                     budget_consumed["equivalents"] += 1
-                    equiv_map = self.client.get_equivalent_tracks(
-                        [t.id for t in top_jp],
-                        target_storefront=sf,
-                        source_storefront="jp",
-                    )
+                    try:
+                        equiv_map = self.client.get_equivalent_tracks(
+                            [t.id for t in top_jp],
+                            target_storefront=sf,
+                            source_storefront="jp",
+                        )
+                    except Exception as eq_err:
+                        has_partial_failures = True
+                        equiv_failed = True
+                        failures.append(f"equivalents_error: {eq_err}")
+                        equiv_map = {}
+
                     # ISRC fallback for tracks with no equivalent
                     missing_isrc_tracks = [t for t in top_jp if t.isrc and (t.id not in equiv_map or equiv_map[t.id] is None)]
-                    isrc_remap = self.client.get_tracks_by_isrc([t.isrc for t in missing_isrc_tracks], storefront=sf) if missing_isrc_tracks else {}
+                    try:
+                        isrc_remap = self.client.get_tracks_by_isrc([t.isrc for t in missing_isrc_tracks], storefront=sf) if missing_isrc_tracks else {}
+                    except Exception as isrc_err:
+                        has_partial_failures = True
+                        equiv_failed = True
+                        failures.append(f"isrc_remap_error: {isrc_err}")
+                        isrc_remap = {}
 
                     found_target_track = False
                     for jt in top_jp:
@@ -657,7 +712,18 @@ class MatchingEngine:
                         return auto_res
 
                     # If NO candidate was ever found in target storefront, but JP has strong candidates:
-                    if not found_target_track and not aggregator.get_candidates():
+                    # ONLY declare unavailable_in_target_storefront IF:
+                    # 1. No target track found and no other target candidates
+                    # 2. No partial search failures (clean 200/no_hits across all queries)
+                    # 3. JP had a STRONG identity match (score >= 0.72)
+                    # 4. Equivalents and ISRC lookups did not fail
+                    if (
+                        not found_target_track
+                        and not aggregator.get_candidates()
+                        and not has_partial_failures
+                        and not equiv_failed
+                        and has_strong_jp_identity
+                    ):
                         diag_unavail = SingleTrackDiagnostics(
                             target_storefront=sf,
                             executed_queries=executed_query_records,

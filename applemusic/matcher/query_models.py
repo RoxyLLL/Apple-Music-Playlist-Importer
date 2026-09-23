@@ -42,6 +42,8 @@ class QueryContext:
     duration_ms: Optional[int] = None
     target_storefront: str = "cn"
     supported_locales: List[str] = field(default_factory=list)
+    trans_title: Optional[str] = None
+    aliases: List[str] = field(default_factory=list)
     max_catalog_queries: int = 8
     max_suggestion_queries: int = 2
     max_equivalents_queries: int = 1

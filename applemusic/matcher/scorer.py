@@ -11,7 +11,15 @@ from typing import List, Optional, Tuple
 from applemusic.matcher.artist_aliases import are_artists_equivalent
 from applemusic.matcher.title_aliases import are_titles_equivalent
 from applemusic.matcher.cleaner import TextCleaner
-from applemusic.matcher.evidence import MatchEvidence, VerificationLevel, MATCH_RULE_VERSION, ALIAS_VERSION
+from applemusic.matcher.evidence import (
+    MatchEvidence,
+    VerificationLevel,
+    MATCH_RULE_VERSION,
+    ALIAS_VERSION,
+    QUERY_POLICY_VERSION,
+    ROMANIZER_VERSION,
+    EXCEPTION_REGISTRY_VERSION,
+)
 from applemusic.models import AppleMusicTrack, ConfidenceLevel, DecisionStatus, MatchCandidate, Track
 
 
@@ -220,143 +228,141 @@ class TrackScorer:
         if not source_artists or not candidate_artists:
             return 0.0
 
-        pri_s, fea_s = TextCleaner.parse_artists(source_artists)
-        pri_c, fea_c = TextCleaner.parse_artists(candidate_artists)
+        det_s = TextCleaner.parse_artist_details(source_artists)
+        det_c = TextCleaner.parse_artist_details(candidate_artists)
 
-        norm_pri_s = TextCleaner.normalize(pri_s)
-        norm_pri_c = TextCleaner.normalize(pri_c)
+        norm_pri_s = TextCleaner.normalize(det_s.primary)
+        norm_pri_c = TextCleaner.normalize(det_c.primary)
 
-        # Primary artist exact or known cross-lingual alias match
-        if norm_pri_s and norm_pri_c:
-            if norm_pri_s == norm_pri_c or are_artists_equivalent(norm_pri_s, norm_pri_c):
-                return 1.0
-            s_words = norm_pri_s.split()
-            c_words = norm_pri_c.split()
-            if len(s_words) == 2 and len(c_words) == 2:
-                if s_words[0] == c_words[1] and s_words[1] == c_words[0]:
+        # 1. Primary performer candidates (includes character voices & bracketed readings/aliases)
+        pri_cands_s = [det_s.primary] + det_s.aliases + det_s.character_voices
+        pri_cands_c = [det_c.primary] + det_c.aliases + det_c.character_voices
+
+        # Check primary performer candidates cross-match
+        for s_cand in pri_cands_s:
+            if not s_cand:
+                continue
+            ns = TextCleaner.normalize(s_cand)
+            for c_cand in pri_cands_c:
+                if not c_cand:
+                    continue
+                nc = TextCleaner.normalize(c_cand)
+                if ns == nc or are_artists_equivalent(ns, nc):
+                    return 1.0
+                sw = ns.split()
+                cw = nc.split()
+                if len(sw) == 2 and len(cw) == 2 and sw[0] == cw[1] and sw[1] == cw[0]:
                     return 1.0
 
-        # Japanese Kana transliteration for primary artist (requires Kana to avoid pure Hanzi false match)
-        has_jp = bool(
-            re.search(r"[\u3040-\u30ff]", norm_pri_s)
-            or re.search(r"[\u3040-\u30ff]", norm_pri_c)
-            or re.search(r"[\u3040-\u30ff]", pri_s)
-            or re.search(r"[\u3040-\u30ff]", pri_c)
-        )
-        if has_jp:
-            s_art_vars = (
-                TextCleaner.get_japanese_romaji_variants(pri_s, is_artist=True)
-                or TextCleaner.get_japanese_romaji_variants(norm_pri_s, is_artist=True)
-                or [norm_pri_s]
-            )
-            c_art_vars = (
-                TextCleaner.get_japanese_romaji_variants(pri_c, is_artist=True)
-                or TextCleaner.get_japanese_romaji_variants(norm_pri_c, is_artist=True)
-                or [norm_pri_c]
-            )
-            for r_s in s_art_vars:
-                for r_c in c_art_vars:
-                    if r_s == r_c or are_artists_equivalent(r_s, r_c):
-                        if (len(norm_pri_s) >= 2 or len(norm_pri_c) >= 2) and len(r_s) < 4:
-                            continue
-                        return 1.0
-                    rsp = re.sub(r"[^\w]", "", r_s)
-                    rcp = re.sub(r"[^\w]", "", r_c)
-                    if rsp and rsp == rcp:
-                        if (len(norm_pri_s) >= 2 or len(norm_pri_c) >= 2) and len(rsp) < 4:
-                            continue
-                        return 1.0
-                    if len(rsp) >= 3 and len(rcp) >= 3:
-                        shorter_r = rsp if len(rsp) <= len(rcp) else rcp
-                        longer_r = rcp if len(rsp) <= len(rcp) else rsp
-                        len_ratio = len(shorter_r) / max(1, len(longer_r))
-                        if (rsp in rcp or rcp in rsp) and len_ratio >= 0.75:
-                            return 0.90
-                        ratio = _fast_sequence_ratio(r_s, r_c)
-                        if ratio >= 0.80:
-                            return max(ratio, 0.90)
+                # Kana / Romaji transliteration
+                has_jp = bool(
+                    re.search(r"[\u3040-\u30ff]", ns)
+                    or re.search(r"[\u3040-\u30ff]", nc)
+                    or re.search(r"[\u3040-\u30ff]", s_cand)
+                    or re.search(r"[\u3040-\u30ff]", c_cand)
+                )
+                if has_jp:
+                    s_vars = TextCleaner.get_japanese_romaji_variants(s_cand, is_artist=True) or [ns]
+                    c_vars = TextCleaner.get_japanese_romaji_variants(c_cand, is_artist=True) or [nc]
+                    for rs in s_vars:
+                        for rc in c_vars:
+                            if rs == rc or are_artists_equivalent(rs, rc):
+                                return 1.0
+                            rsw = rs.split()
+                            rcw = rc.split()
+                            if len(rsw) == 2 and len(rcw) == 2 and rsw[0] == rcw[1] and rsw[1] == rcw[0]:
+                                return 1.0
+                            rsp = re.sub(r"[^\w]", "", rs)
+                            rcp = re.sub(r"[^\w]", "", rc)
+                            if rsp and rsp == rcp and (len(rsp) >= 4 or len(ns) < 2):
+                                return 1.0
 
-        # Primary artist substring or high similarity (conservative on short names)
+        # Substring / ratio check between primary artists
         pri_score = 0.0
         if norm_pri_s and norm_pri_c:
-            if norm_pri_s == norm_pri_c:
-                pri_score = 1.0
-            else:
-                s_cjk = len(re.findall(r"[\u4e00-\u9fa5]", norm_pri_s))
-                c_cjk = len(re.findall(r"[\u4e00-\u9fa5]", norm_pri_c))
-                shorter, longer = (norm_pri_s, norm_pri_c) if len(norm_pri_s) <= len(norm_pri_c) else (norm_pri_c, norm_pri_s)
-                short_cjk = s_cjk if len(norm_pri_s) <= len(norm_pri_c) else c_cjk
-                if shorter in longer:
-                    if short_cjk <= 2 or len(shorter) <= 3:
-                        # Short name cannot be validated by substring alone (e.g. "十明" vs "李杰明")
-                        pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
-                    else:
-                        ratio = len(shorter) / max(1, len(longer))
-                        if ratio >= 0.75:
-                            pri_score = 0.90
-                        else:
-                            pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
-                else:
+            s_cjk = len(re.findall(r"[\u4e00-\u9fa5]", norm_pri_s))
+            c_cjk = len(re.findall(r"[\u4e00-\u9fa5]", norm_pri_c))
+            shorter, longer = (norm_pri_s, norm_pri_c) if len(norm_pri_s) <= len(norm_pri_c) else (norm_pri_c, norm_pri_s)
+            short_cjk = s_cjk if len(norm_pri_s) <= len(norm_pri_c) else c_cjk
+            if shorter in longer:
+                if short_cjk <= 2 or len(shorter) <= 3:
                     pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
+                else:
+                    ratio = len(shorter) / max(1, len(longer))
+                    pri_score = 0.90 if ratio >= 0.75 else _fast_sequence_ratio(norm_pri_s, norm_pri_c)
+            else:
+                pri_score = _fast_sequence_ratio(norm_pri_s, norm_pri_c)
 
-        # Fast exit if primary artist already exact
         if pri_score >= 1.0:
             return 1.0
 
-        # Check full list cross-matching with parsed artists
-        raw_s_list = ([pri_s] + fea_s) if pri_s else source_artists
-        raw_c_list = ([pri_c] + fea_c) if pri_c else candidate_artists
-        norm_s = [TextCleaner.normalize(a) for a in raw_s_list if a.strip()]
-        norm_c = [TextCleaner.normalize(a) for a in raw_c_list if a.strip()]
+        # 2. Collaborative co-artists check (&, +, /, 、)
+        # e.g. "宴宁" vs "HOYO-MiX & 宴寧"
+        collab_match = False
+        all_s = [TextCleaner.normalize(n) for n in det_s.all_names if n]
+        all_c = [TextCleaner.normalize(n) for n in det_c.all_names if n]
 
-        if set(norm_s) == set(norm_c):
+        if set(all_s) == set(all_c) and all_s:
             return 1.0
 
+        # If source matches candidate's collaborator (or vice versa) and it's NOT an explicit guest
+        for sc in det_c.collaborators:
+            n_collab = TextCleaner.normalize(sc)
+            for s_cand in pri_cands_s:
+                ns = TextCleaner.normalize(s_cand)
+                if ns == n_collab or are_artists_equivalent(ns, n_collab):
+                    collab_match = True
+                    break
+            if collab_match:
+                break
+
+        if not collab_match:
+            for sc in det_s.collaborators:
+                n_collab = TextCleaner.normalize(sc)
+                for c_cand in pri_cands_c:
+                    nc = TextCleaner.normalize(c_cand)
+                    if nc == n_collab or are_artists_equivalent(nc, n_collab):
+                        collab_match = True
+                        break
+                if collab_match:
+                    break
+
+        if collab_match:
+            # If the source only specified one artist, matching the co-performer on a collab track is full match
+            if len(source_artists) == 1 and not det_s.featured:
+                return 1.0
+            return max(0.92, pri_score)
+
+        # 3. Explicit Guest / Featured Inversion Check (R2 / S04)
+        # One side's primary artist matches the other side's featured artist, but primary is missing
+        is_guest_inversion = False
+        norm_feat_s = [TextCleaner.normalize(f) for f in det_s.featured if f]
+        norm_feat_c = [TextCleaner.normalize(f) for f in det_c.featured if f]
+
+        for fs in norm_feat_s:
+            if fs == norm_pri_c or are_artists_equivalent(fs, norm_pri_c):
+                is_guest_inversion = True
+                break
+        if not is_guest_inversion:
+            for fc in norm_feat_c:
+                if fc == norm_pri_s or are_artists_equivalent(fc, norm_pri_s):
+                    is_guest_inversion = True
+                    break
+
+        if is_guest_inversion:
+            # Guest artist match is useful for recall, but MUST NOT exceed 0.60 (cannot auto_accept)
+            return 0.60
+
+        # General cross similarity between non-primary artists: capped at 0.50 if primary artists differ
         max_cross_score = 0.0
-        for s in norm_s:
-            for c in norm_c:
+        for s in all_s:
+            for c in all_c:
                 if s == c or are_artists_equivalent(s, c):
-                    max_cross_score = max(max_cross_score, 1.0)
+                    max_cross_score = max(max_cross_score, 0.50)
                     break
-                s_w = s.split()
-                c_w = c.split()
-                if len(s_w) == 2 and len(c_w) == 2 and s_w[0] == c_w[1] and s_w[1] == c_w[0]:
-                    max_cross_score = max(max_cross_score, 1.0)
-                    break
-                # Romaji transliteration check across artist list (requires Kana)
-                if bool(re.search(r"[\u3040-\u30ff]", s) or re.search(r"[\u3040-\u30ff]", c)):
-                    rs_list = TextCleaner.get_japanese_romaji_variants(s, is_artist=True) or [s]
-                    rc_list = TextCleaner.get_japanese_romaji_variants(c, is_artist=True) or [c]
-                    for rs in rs_list:
-                        for rc in rc_list:
-                            if rs == rc or are_artists_equivalent(rs, rc):
-                                max_cross_score = max(max_cross_score, 1.0)
-                                break
-                            rsp = re.sub(r"[^\w]", "", rs)
-                            rcp = re.sub(r"[^\w]", "", rc)
-                            if rsp and rsp == rcp:
-                                max_cross_score = max(max_cross_score, 1.0)
-                                break
-                            elif len(rsp) >= 3 and len(rcp) >= 3:
-                                shorter_r = rsp if len(rsp) <= len(rcp) else rcp
-                                longer_r = rcp if len(rsp) <= len(rcp) else rsp
-                                if (rsp in rcp or rcp in rsp) and (len(shorter_r) / max(1, len(longer_r)) >= 0.75):
-                                    max_cross_score = max(max_cross_score, 0.90)
-                elif s in c or c in s:
-                    s_shorter, s_longer = (s, c) if len(s) <= len(c) else (c, s)
-                    s_cjk_cnt = len(re.findall(r"[\u4e00-\u9fa5]", s_shorter))
-                    if s_cjk_cnt <= 2 or len(s_shorter) <= 3:
-                        ratio = _fast_sequence_ratio(s, c)
-                        max_cross_score = max(max_cross_score, ratio)
-                    else:
-                        max_cross_score = max(max_cross_score, 0.85)
-                else:
-                    max_possible = (2.0 * min(len(s), len(c))) / max(1, (len(s) + len(c)))
-                    if max_possible <= max_cross_score:
-                        continue
-                    ratio = _fast_sequence_ratio(s, c)
-                    max_cross_score = max(max_cross_score, ratio)
-            if max_cross_score >= 1.0:
+                ratio = _fast_sequence_ratio(s, c)
+                max_cross_score = max(max_cross_score, ratio * 0.50)
+            if max_cross_score >= 0.50:
                 break
 
         return max(pri_score, max_cross_score)
@@ -472,6 +478,60 @@ class TrackScorer:
         duration_factor = cls.calculate_duration_factor(source.duration_ms, candidate.duration_ms)
         album_score = cls.calculate_album_similarity(source.album, candidate.album)
 
+        # Check primary artist mismatch (R2 / S04)
+        det_s = TextCleaner.parse_artist_details(source.artists)
+        det_c = TextCleaner.parse_artist_details(candidate.artists)
+        has_primary_artist_mismatch = False
+
+        if det_s.primary and det_c.primary:
+            # Check if primary performers match (via direct, alias, CV, or Apple artist ID)
+            pri_cands_s = [det_s.primary] + det_s.aliases + det_s.character_voices
+            pri_cands_c = [det_c.primary] + det_c.aliases + det_c.character_voices
+            has_pri_match = False
+            for s_cand in pri_cands_s:
+                ns = TextCleaner.normalize(s_cand)
+                for c_cand in pri_cands_c:
+                    nc = TextCleaner.normalize(c_cand)
+                    if ns == nc or are_artists_equivalent(ns, nc):
+                        has_pri_match = True
+                        break
+                    sw = ns.split()
+                    cw = nc.split()
+                    if len(sw) == 2 and len(cw) == 2 and sw[0] == cw[1] and sw[1] == cw[0]:
+                        has_pri_match = True
+                        break
+                if has_pri_match:
+                    break
+
+            if not has_pri_match and candidate.artist_ids and hasattr(source, "artist_ids") and getattr(source, "artist_ids", None):
+                if set(candidate.artist_ids) & set(getattr(source, "artist_ids", [])):
+                    has_pri_match = True
+
+            # If not matched directly, check if it's a valid collaboration match
+            if not has_pri_match:
+                for sc in det_c.collaborators:
+                    n_collab = TextCleaner.normalize(sc)
+                    for s_cand in pri_cands_s:
+                        if TextCleaner.normalize(s_cand) == n_collab or are_artists_equivalent(TextCleaner.normalize(s_cand), n_collab):
+                            has_pri_match = True
+                            break
+                    if has_pri_match:
+                        break
+
+            if not has_pri_match:
+                norm_pri_c = TextCleaner.normalize(det_c.primary)
+                norm_pri_s = TextCleaner.normalize(det_s.primary)
+                norm_feat_s = [TextCleaner.normalize(f) for f in det_s.featured if f]
+                norm_feat_c = [TextCleaner.normalize(f) for f in det_c.featured if f]
+                is_guest_match = (norm_pri_c in norm_feat_s) or (norm_pri_s in norm_feat_c)
+                if is_guest_match:
+                    has_primary_artist_mismatch = True
+                    conflicts.append("primary_artist_mismatch: 仅客串/合作艺人匹配，主表演者不符")
+                    reasons.append("仅客串/合作艺人匹配，主表演者不符")
+                elif artist_score < 0.40:
+                    conflicts.append("artist_mismatch: 艺人明显不匹配")
+                    reasons.append("艺人明显不匹配")
+
         # 2. ISRC Exact Match Check
         isrc_match = False
         isrc_conflict = False
@@ -481,11 +541,27 @@ class TrackScorer:
             if s_isrc and s_isrc == c_isrc:
                 isrc_match = True
                 matched_fields.append("isrc")
-                # N08 check: If explicit artist conflict or version conflict, demote to review!
-                if source.artists and candidate.artists and artist_score < 0.40:
+                # Missing artist conflict (R1/S01)
+                if source.artists and not candidate.artists:
+                    isrc_conflict = True
+                    conflicts.append("isrc_missing_artist: ISRC相同但候选缺少艺人信息")
+                    reasons.append("ISRC相同但候选缺少艺人信息")
+                elif source.artists and candidate.artists and artist_score < 0.40:
                     isrc_conflict = True
                     conflicts.append("isrc_artist_conflict: ISRC相同但艺人明显不符")
                     reasons.append("ISRC相同但艺人明显不符")
+                elif has_primary_artist_mismatch:
+                    isrc_conflict = True
+                    conflicts.append("isrc_artist_conflict: ISRC相同但主表演者不符")
+                    reasons.append("ISRC相同但主表演者不符")
+
+                # Title conflict (R1/S01)
+                if title_score < 0.45:
+                    isrc_conflict = True
+                    conflicts.append("isrc_title_conflict: ISRC相同但歌名明显不符")
+                    reasons.append("ISRC相同但歌名明显不符")
+
+                # Version conflict (S03)
                 if version_factor < 0:
                     isrc_conflict = True
                     conflicts.append("isrc_version_conflict: ISRC相同但版本不一致")
@@ -493,34 +569,45 @@ class TrackScorer:
 
                 if not isrc_conflict:
                     reasons.append("ISRC精确匹配")
+                    if title_score >= 0.80:
+                        matched_fields.append("title")
+                    if artist_score >= 0.70:
+                        matched_fields.append("artist")
+                    if album_score >= 0.85:
+                        matched_fields.append("album")
+                    if source.duration_ms and candidate.duration_ms and abs(source.duration_ms - candidate.duration_ms) <= 3000:
+                        matched_fields.append("duration")
+                    if version_factor >= 0.0:
+                        matched_fields.append("version")
+
                     evidence = MatchEvidence(
                         evidence_type="isrc",
                         verification_level=VerificationLevel.STRONG.value,
-                        matched_fields=["isrc"],
+                        matched_fields=matched_fields,
                         conflicts=[],
                         provenance="isrc",
                         evidence_families=["isrc"],
                         rule_version=MATCH_RULE_VERSION,
-                        query_policy_version="2026.09.v2",
-                        romanizer_version="2026.09.v2",
-                        exception_registry_version="2026.09.v2",
+                        query_policy_version=QUERY_POLICY_VERSION,
+                        romanizer_version=ROMANIZER_VERSION,
+                        exception_registry_version=EXCEPTION_REGISTRY_VERSION,
                         alias_version=ALIAS_VERSION,
                     )
                     return MatchCandidate(
                         track=candidate,
                         score=1.0,
-                        title_score=1.0,
-                        artist_score=1.0,
-                        album_score=1.0,
-                        duration_score=0.05,
-                        version_score=0.1,
+                        title_score=round(title_score, 3),
+                        artist_score=round(artist_score, 3),
+                        album_score=round(album_score, 3),
+                        duration_score=round(duration_factor, 3),
+                        version_score=round(version_factor, 3),
                         confidence=ConfidenceLevel.EXACT,
                         decision=DecisionStatus.AUTO_ACCEPT.value,
                         decision_reasons=reasons,
                         evidence=evidence,
                     )
                 else:
-                    # N08: ISRC match with artist/version conflict demoted to REVIEW
+                    # S01/S03: ISRC match with conflict demoted to REVIEW
                     evidence = MatchEvidence(
                         evidence_type="isrc_conflict",
                         verification_level=VerificationLevel.CONFLICT.value,
@@ -529,21 +616,22 @@ class TrackScorer:
                         provenance="isrc",
                         evidence_families=["isrc"],
                         rule_version=MATCH_RULE_VERSION,
-                        query_policy_version="2026.09.v2",
-                        romanizer_version="2026.09.v2",
-                        exception_registry_version="2026.09.v2",
+                        query_policy_version=QUERY_POLICY_VERSION,
+                        romanizer_version=ROMANIZER_VERSION,
+                        exception_registry_version=EXCEPTION_REGISTRY_VERSION,
                         alias_version=ALIAS_VERSION,
                     )
+                    cand_score = 0.65 if (title_score >= 0.50 or artist_score >= 0.50) else 0.40
                     return MatchCandidate(
                         track=candidate,
-                        score=0.65,
+                        score=cand_score,
                         title_score=round(title_score, 3),
                         artist_score=round(artist_score, 3),
                         album_score=round(album_score, 3),
                         duration_score=round(duration_factor, 3),
                         version_score=round(version_factor, 3),
-                        confidence=ConfidenceLevel.MEDIUM,
-                        decision=DecisionStatus.REVIEW.value,
+                        confidence=ConfidenceLevel.MEDIUM if cand_score >= 0.55 else ConfidenceLevel.LOW,
+                        decision=DecisionStatus.REVIEW.value if cand_score >= 0.55 else DecisionStatus.NO_MATCH.value,
                         decision_reasons=reasons,
                         evidence=evidence,
                     )
@@ -756,9 +844,9 @@ class TrackScorer:
             provenance=getattr(candidate, "discovery_path", "search") or "search",
             evidence_families=list(set(evidence_families)),
             rule_version=MATCH_RULE_VERSION,
-            query_policy_version="2026.09.v2",
-            romanizer_version="2026.09.v2",
-            exception_registry_version="2026.09.v2",
+            query_policy_version=QUERY_POLICY_VERSION,
+            romanizer_version=ROMANIZER_VERSION,
+            exception_registry_version=EXCEPTION_REGISTRY_VERSION,
             alias_version=ALIAS_VERSION,
         )
 
@@ -829,12 +917,23 @@ class TrackScorer:
         is_strong = bool(best.evidence and best.evidence.verification_level == VerificationLevel.STRONG.value)
         has_conflicts = bool(best.evidence and best.evidence.conflicts)
 
-        # Check if second candidate is actually the same song variant (same title core & primary artist)
+        # Check if second candidate is actually the same song variant (same title core & primary artist & consistent version)
         is_same_song_variant = False
         if second and second.score >= 0.65:
             sec_title_sim = cls.calculate_title_similarity(best.track.title, second.track.title)
-            sec_artist_sim = cls.calculate_artist_similarity(best.track.artists, second.track.artists)
-            if sec_title_sim >= 0.90 and sec_artist_sim >= 0.70:
+            pri_b, _ = TextCleaner.parse_artists(best.track.artists)
+            pri_sec, _ = TextCleaner.parse_artists(second.track.artists)
+            norm_pri_b = TextCleaner.normalize(pri_b)
+            norm_pri_sec = TextCleaner.normalize(pri_sec)
+            same_pri_artist = (
+                (norm_pri_b and norm_pri_sec and (norm_pri_b == norm_pri_sec or are_artists_equivalent(norm_pri_b, norm_pri_sec)))
+                or (best.track.artist_ids and second.track.artist_ids and bool(set(best.track.artist_ids) & set(second.track.artist_ids)))
+            )
+            v_mod_between, _ = cls.calculate_version_consistency(best.track.title, second.track.title)
+            same_version = (v_mod_between >= 0.0)
+
+            # Both must have same core title, same primary artist, and NO version conflict (S06)
+            if sec_title_sim >= 0.90 and same_pri_artist and same_version:
                 is_same_song_variant = True
 
         gap_ok = True if is_same_song_variant else ((score_gap >= min_score_gap) if (second and second.score >= 0.65) else True)
