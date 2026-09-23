@@ -519,11 +519,24 @@ class TestGroupDCacheAndMigration(unittest.TestCase):
 
     def test_D03_old_rule_version_re_evaluated(self):
         """D03: Cache with outdated rule_version re-evaluates auto_accept."""
-        source = Track(title="テスト", artists=["歌手"])
+        source = Track(title="テスト", artists=["歌手"], album="Album A", duration_ms=289000)
+        cand = MatchCandidate(
+            track=AppleMusicTrack(
+                id="1600000001",
+                title="テスト",
+                artists=["歌手"],
+                album="Single",
+                duration_ms=315000,
+                storefront="cn",
+            ),
+            score=0.98,
+            confidence=ConfidenceLevel.EXACT,
+            decision="auto_accept",
+        )
         res = SongMatchResult(
             source_track=source,
-            candidates=[],
-            selected_candidate=None,
+            candidates=[cand],
+            selected_candidate=cand,
             status=ConfidenceLevel.EXACT,
             decision="auto_accept",
         )

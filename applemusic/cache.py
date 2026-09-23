@@ -452,8 +452,9 @@ class PersistentCache:
     def get_match(self, storefront: str, track_hash: str) -> Optional[SongMatchResult]:
         """
         Retrieve cached SongMatchResult if present and not expired.
-        Automatically re-evaluates auto_accept results if rule_version, query_policy_version,
-        romanizer_version, or exception_registry_version is outdated.
+        Automatically re-evaluates algorithmic results (auto_accept, review, no_match)
+        if rule_version, query_policy_version, romanizer_version, or exception_registry_version is outdated.
+        User-confirmed results (user_confirmed) are strictly preserved.
         """
         sf = (storefront or "cn").lower()
         now = time.time()
@@ -496,54 +497,112 @@ class PersistentCache:
             if result.decision == "user_confirmed":
                 return result
 
-            # If cached auto_accept has outdated versions, re-evaluate!
-            if result.decision == "auto_accept":
-                versions_outdated = (
-                    (cached_rule_ver is not None and cached_rule_ver != MATCH_RULE_VERSION)
-                    or (cached_policy_ver is not None and cached_policy_ver != QUERY_POLICY_VERSION)
-                    or (cached_romanizer_ver is not None and cached_romanizer_ver != ROMANIZER_VERSION)
-                    or (cached_registry_ver is not None and cached_registry_ver != EXCEPTION_REGISTRY_VERSION)
-                    or db_rule_ver != MATCH_RULE_VERSION
-                    or db_policy_ver != QUERY_POLICY_VERSION
-                    or db_romanizer_ver != ROMANIZER_VERSION
-                    or db_registry_ver != EXCEPTION_REGISTRY_VERSION
+            # Check rule version / policy version / romanizer version / exception registry version
+            ev = result.evidence
+            if ev is None and result.selected_candidate and result.selected_candidate.evidence:
+                ev = result.selected_candidate.evidence
+            elif ev is None and result.candidates and result.candidates[0].evidence:
+                ev = result.candidates[0].evidence
+
+            cached_rule_ver = getattr(ev, "rule_version", None) if ev else None
+            cached_policy_ver = getattr(ev, "query_policy_version", None) if ev else None
+            cached_romanizer_ver = getattr(ev, "romanizer_version", None) if ev else None
+            cached_registry_ver = getattr(ev, "exception_registry_version", None) if ev else None
+
+            versions_outdated = (
+                db_rule_ver != MATCH_RULE_VERSION
+                or db_policy_ver != QUERY_POLICY_VERSION
+                or db_romanizer_ver != ROMANIZER_VERSION
+                or db_registry_ver != EXCEPTION_REGISTRY_VERSION
+                or (
+                    ev is not None
+                    and (
+                        cached_rule_ver != MATCH_RULE_VERSION
+                        or cached_policy_ver != QUERY_POLICY_VERSION
+                        or cached_romanizer_ver != ROMANIZER_VERSION
+                        or cached_registry_ver != EXCEPTION_REGISTRY_VERSION
+                    )
                 )
-                if versions_outdated:
-                    cands_to_eval = result.candidates if result.candidates else ([result.selected_candidate] if result.selected_candidate else [])
-                    old_ver = cached_rule_ver or db_rule_ver or "unknown"
-                    if cands_to_eval and result.source_track:
-                        from applemusic.matcher.scorer import TrackScorer
-                        scored = [TrackScorer.score(result.source_track, c.track) for c in cands_to_eval]
-                        scored.sort(key=lambda x: x.score, reverse=True)
-                        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
-                            result.source_track,
-                            scored,
-                        )
-                        result.candidates = scored
-                        result.selected_candidate = best if dec in ("auto_accept", "review") else None
-                        result.status = conf
-                        result.decision = dec
-                        result.decision_reasons = [f"规则版本升级({old_ver}->{MATCH_RULE_VERSION})重新评估: {', '.join(reasons)}"]
-                        result.evidence = best.evidence if best else None
-                        result.score_gap = gap
-                    else:
-                        from applemusic.models import ConfidenceLevel, DecisionStatus
-                        result.decision = DecisionStatus.REVIEW.value
-                        result.status = ConfidenceLevel.MEDIUM
-                        result.decision_reasons = [f"旧版本({old_ver})缓存已废弃，需人工复核"]
+            )
+
+            if versions_outdated:
+                candidate_map = {}
+                for c in (result.candidates or []):
+                    if c and getattr(c, "track", None) and getattr(c.track, "id", None):
+                        candidate_map[str(c.track.id)] = c
+                    elif c and getattr(c, "track", None):
+                        candidate_map[id(c)] = c
+                if result.selected_candidate and getattr(result.selected_candidate, "track", None):
+                    sc = result.selected_candidate
+                    sc_id = str(sc.track.id) if getattr(sc.track, "id", None) else id(sc)
+                    if sc_id not in candidate_map:
+                        candidate_map[sc_id] = sc
+
+                cands_to_eval = list(candidate_map.values())
+                old_ver = cached_rule_ver or db_rule_ver or "unknown"
+                has_valid_source = bool(
+                    result.source_track
+                    and (getattr(result.source_track, "title", None) or getattr(result.source_track, "artists", None))
+                )
+
+                if cands_to_eval and has_valid_source:
+                    from applemusic.matcher.scorer import TrackScorer
+                    scored = [TrackScorer.score(result.source_track, c.track) for c in cands_to_eval]
+                    scored.sort(key=lambda x: x.score, reverse=True)
+                    best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(
+                        result.source_track,
+                        scored,
+                    )
+                    result.candidates = scored
+                    result.selected_candidate = best if dec in ("auto_accept", "review") else None
+                    result.status = conf
+                    result.decision = dec
+                    result.decision_reasons = [f"规则版本升级({old_ver}->{MATCH_RULE_VERSION})重新评估: {', '.join(reasons)}"]
+                    result.evidence = best.evidence if best else (scored[0].evidence if scored else None)
+                    result.score_gap = gap
+                    if dec == "no_match":
+                        result.search_status = "no_match"
+                    elif dec in ("auto_accept", "review"):
+                        result.search_status = "matched"
 
                     # Persist re-evaluated result back to DB
                     try:
                         json_str = result.model_dump_json()
+                        keys_to_update = {track_hash}
+                        t = result.source_track
+                        if t:
+                            isrc = getattr(t, "isrc", None)
+                            if isrc and len(str(isrc).strip()) >= 8:
+                                keys_to_update.add(f"isrc:{str(isrc).strip().upper()}")
+                            orig_id = getattr(t, "original_id", None)
+                            src = getattr(t, "source", None)
+                            if orig_id and str(orig_id).strip() and str(orig_id).lower() not in ("none", "null", "unknown", "undefined") and src:
+                                keys_to_update.add(f"{src}:{str(orig_id).strip()}")
+                            title = getattr(t, "title", None)
+                            artists = getattr(t, "artists", [])
+                            version_tags = getattr(t, "version_tags", None) or []
+                            if title:
+                                from applemusic.matcher.cleaner import TextCleaner
+                                clean_t, parsed_tags = TextCleaner.parse_title(title)
+                                all_v_tags = sorted(list(set(version_tags + parsed_tags)))
+                                v_tag_str = ",".join(all_v_tags) if all_v_tags else "standard"
+                                pri_a, _ = TextCleaner.parse_artists(artists)
+                                norm_a = TextCleaner.normalize(pri_a).lower()
+                                if clean_t:
+                                    keys_to_update.add(f"text:{clean_t.lower()}:{norm_a}:{v_tag_str}")
+
                         with self._lock:
                             with conn:
+                                placeholders = ",".join(["?"] * len(keys_to_update))
                                 conn.execute(
-                                    """
+                                    f"""
                                     UPDATE match_cache
                                     SET result_json = ?, decision = ?, status = ?,
                                         rule_version = ?, query_policy_version = ?,
                                         romanizer_version = ?, exception_registry_version = ?
-                                    WHERE storefront = ? AND (track_hash = ? OR cache_key = ?)
+                                    WHERE storefront = ?
+                                      AND decision != 'user_confirmed'
+                                      AND (track_hash IN ({placeholders}) OR cache_key IN ({placeholders}))
                                     """,
                                     (
                                         json_str,
@@ -554,12 +613,15 @@ class PersistentCache:
                                         ROMANIZER_VERSION,
                                         EXCEPTION_REGISTRY_VERSION,
                                         sf,
-                                        track_hash,
-                                        track_hash,
+                                        *keys_to_update,
+                                        *keys_to_update,
                                     ),
                                 )
                     except Exception as e:
                         logger.debug("Failed to update re-evaluated match in cache: %s", e)
+                else:
+                    # Missing candidates or missing/invalid source_track: cannot safely re-evaluate, treat as cache miss
+                    return None
 
             return result
         except Exception as e:
