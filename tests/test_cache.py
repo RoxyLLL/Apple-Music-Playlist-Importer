@@ -173,14 +173,21 @@ class TestEngineQueryBudget(unittest.TestCase):
             pass
 
     def test_absent_track_query_budget_capped(self):
-        # When a song is completely absent (returns no_hits), match_track must NOT fire more than 2 queries
+        # When an ordinary English song is completely absent (returns no_hits), match_track must NOT fire more than 2 queries
+        # Explanation of query budget:
+        # - Query 1 (Phase A): Native strict 'title + artist' search in current storefront.
+        # - Query 2 (Phase A): 'core_title_only' search. This call is necessary as a universal
+        #   recall reserve when the artist name format diverges between platforms (e.g. Western
+        #   artist alias vs native CJK script) or subtitle noise is stripped.
+        # - Phase D (Cross-Storefront JP Discovery) is safely skipped for non-Japanese tracks
+        #   based on script and metadata, preserving the original <= 2 budget constraint.
         mock_outcome = CatalogSearchOutcome(kind="no_hits", tracks=[], http_status=200)
         with patch.object(self.client, "search_catalog", return_value=mock_outcome) as mock_search:
             track = Track(title="Nonexistent Song 123", artists=["Ghost Artist"], album="None")
             result = self.engine.match_track(track, storefront="cn")
 
             self.assertEqual(result.decision, DecisionStatus.NO_MATCH.value)
-            # Must be <= 2 queries
+            # Must be <= 2 queries for ordinary non-Japanese absent track
             self.assertLessEqual(mock_search.call_count, 2)
             self.assertGreaterEqual(mock_search.call_count, 1)
 

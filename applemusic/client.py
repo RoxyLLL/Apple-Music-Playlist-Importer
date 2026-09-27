@@ -370,6 +370,28 @@ class AppleMusicClient:
                 raise ValueError("未配置 media-user-token，无法执行资料库写入操作")
         return headers
 
+    def clear_in_memory_cache(self) -> int:
+        """
+        Clear the in-memory catalog, ISRC, and suggestion caches.
+        Returns the number of entries cleared.
+        """
+        with self._in_flight_lock:
+            count = len(self._catalog_cache)
+            self._catalog_cache.clear()
+            return count
+
+    def clear_local_search_cache(self) -> Dict[str, Any]:
+        """
+        Clear persistent SQLite search/equivalence/algorithm match caches (preserving user_confirmed)
+        and clear in-memory catalog cache.
+        Returns a dict of deleted counts across tables and memory.
+        """
+        deleted = self.persistent_cache.clear_local_search_cache()
+        mem_cleared = self.clear_in_memory_cache()
+        deleted["memory_deleted"] = mem_cleared
+        return deleted
+
+
     def search_by_isrc_batch(
         self,
         isrc_list: List[str],

@@ -594,32 +594,48 @@ class TestGroupDCacheAndMigration(unittest.TestCase):
 
         # Open with PersistentCache which performs in-place migration
         migrated_cache = PersistentCache(db_path)
-        cached = migrated_cache.get_catalog("cn", "term", "test")
-        self.assertIsNotNone(cached)
-        self.assertEqual(len(cached.tracks), 0)
+        try:
+            # 1. Verify old data was NOT dropped during migration, but preserved with legacy policy version
+            conn2 = sqlite3.connect(db_path)
+            row = conn2.execute(
+                "SELECT query_term, query_policy_version, kind FROM catalog_cache WHERE query_term = 'test'"
+            ).fetchone()
+            conn2.close()
+            self.assertIsNotNone(row, "Old data must not be dropped during migration")
+            self.assertEqual(row[0], "test")
+            self.assertEqual(row[1], "2026.09.v1")
 
-        # Verify writing different locales into the migrated cache works and both can be read back
-        track_cn = AppleMusicTrack(id="1600000001", title="测试曲目CN", artists=["歌手CN"], storefront="cn")
-        outcome_cn = CatalogSearchOutcome(kind="ok", tracks=[track_cn], http_status=200)
-        migrated_cache.set_catalog("cn", "search", "concurrent_test", outcome_cn, locale="zh-Hans-CN")
+            # 2. Verify that under the current query policy version, old negative cache returns None (miss) to trigger fresh search
+            cached = migrated_cache.get_catalog("cn", "term", "test")
+            self.assertIsNone(cached, "Old negative cache without policy version must return None (cache miss) to trigger fresh search")
 
-        track_jp = AppleMusicTrack(id="1600000002", title="テスト曲目JP", artists=["歌手JP"], storefront="cn")
-        outcome_jp = CatalogSearchOutcome(kind="ok", tracks=[track_jp], http_status=200)
-        migrated_cache.set_catalog("cn", "search", "concurrent_test", outcome_jp, locale="ja-JP")
+            # 3. Explicit lookup under legacy version can still read the preserved record
+            cached_legacy = migrated_cache.get_catalog("cn", "term", "test", query_policy_version="2026.09.v1")
+            self.assertIsNotNone(cached_legacy, "Legacy cache record must remain readable when queried with legacy version")
+            self.assertEqual(len(cached_legacy.tracks), 0)
 
-        # Read back both locales
-        read_cn = migrated_cache.get_catalog("cn", "search", "concurrent_test", locale="zh-Hans-CN")
-        read_jp = migrated_cache.get_catalog("cn", "search", "concurrent_test", locale="ja-JP")
+            # 4. Verify writing different locales into the migrated cache works and both can be read back
+            track_cn = AppleMusicTrack(id="1600000001", title="测试曲目CN", artists=["歌手CN"], storefront="cn")
+            outcome_cn = CatalogSearchOutcome(kind="ok", tracks=[track_cn], http_status=200)
+            migrated_cache.set_catalog("cn", "search", "concurrent_test", outcome_cn, locale="zh-Hans-CN")
 
-        self.assertIsNotNone(read_cn)
-        self.assertEqual(len(read_cn.tracks), 1)
-        self.assertEqual(read_cn.tracks[0].id, "1600000001")
+            track_jp = AppleMusicTrack(id="1600000002", title="テスト曲目JP", artists=["歌手JP"], storefront="cn")
+            outcome_jp = CatalogSearchOutcome(kind="ok", tracks=[track_jp], http_status=200)
+            migrated_cache.set_catalog("cn", "search", "concurrent_test", outcome_jp, locale="ja-JP")
 
-        self.assertIsNotNone(read_jp)
-        self.assertEqual(len(read_jp.tracks), 1)
-        self.assertEqual(read_jp.tracks[0].id, "1600000002")
+            # Read back both locales
+            read_cn = migrated_cache.get_catalog("cn", "search", "concurrent_test", locale="zh-Hans-CN")
+            read_jp = migrated_cache.get_catalog("cn", "search", "concurrent_test", locale="ja-JP")
 
-        migrated_cache.close()
+            self.assertIsNotNone(read_cn)
+            self.assertEqual(len(read_cn.tracks), 1)
+            self.assertEqual(read_cn.tracks[0].id, "1600000001")
+
+            self.assertIsNotNone(read_jp)
+            self.assertEqual(len(read_jp.tracks), 1)
+            self.assertEqual(read_jp.tracks[0].id, "1600000002")
+        finally:
+            migrated_cache.close()
 
     def test_D07_negative_cache_ttl(self):
         """D07: Negative hits and misses have short TTL."""

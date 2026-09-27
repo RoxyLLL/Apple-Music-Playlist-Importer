@@ -206,7 +206,8 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"谷泽智文", "谷澤智文", "tomofumi tanizawa", "tanizawa tomofumi", "タニザワトモフミ"},
     {"米津玄师", "米津玄師", "kenshi yonezu", "yonezu kenshi", "hachi", "ハチ"},
     {"椎名林檎", "sheena ringo", "ringo sheena"},
-    {"宇多田光", "宇多田ヒカル", "hikaru utada", "utada hikaru"},
+    # Utada (宇多田光 / 宇多田ヒカル) - Source: Sony Music Japan (https://www.sonymusic.co.jp/Music/Info/utadahikaru/en/music/) "Works under the name of Utada"
+    {"宇多田光", "宇多田ヒカル", "hikaru utada", "utada hikaru", "utada"},
     {"LiSA", "lisa", "织部里沙"},
     {"Aimer", "aimer", "エメ"},
     {"YOASOBI", "yoasobi"},
@@ -403,6 +404,6 @@ def get_artist_aliases(artist: str) -> List[str]:
     p = re.sub(r"[^\w\s]", "", n).strip()
     gid = _ALIAS_TO_GROUP.get(n) or _ALIAS_TO_GROUP.get(p)
     if gid is not None:
-        return list(ARTIST_GROUPS[gid])
+        return sorted(list(ARTIST_GROUPS[gid]), key=lambda x: (x.lower(), x))
     return []
 

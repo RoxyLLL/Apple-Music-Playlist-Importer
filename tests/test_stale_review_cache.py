@@ -25,6 +25,7 @@ from applemusic.matcher.evidence import (
     QUERY_POLICY_VERSION,
     ROMANIZER_VERSION,
     EXCEPTION_REGISTRY_VERSION,
+    ALIAS_VERSION,
     MatchEvidence,
     VerificationLevel,
 )
@@ -75,9 +76,10 @@ class TestStaleReviewCache(unittest.TestCase):
             matched_fields=["artist"],
             conflicts=[],
             rule_version="2026.09.v1",
-            query_policy_version="2026.09.v1",
-            romanizer_version="2026.09.v1",
-            exception_registry_version="2026.09.v1",
+            query_policy_version=QUERY_POLICY_VERSION,
+            romanizer_version=ROMANIZER_VERSION,
+            exception_registry_version=EXCEPTION_REGISTRY_VERSION,
+            alias_version=ALIAS_VERSION,
         )
         old_cand = MatchCandidate(
             track=cand_track,
@@ -107,8 +109,8 @@ class TestStaleReviewCache(unittest.TestCase):
                 """
                 INSERT OR REPLACE INTO match_cache
                 (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at,
-                 rule_version, query_policy_version, romanizer_version, exception_registry_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 rule_version, query_policy_version, romanizer_version, exception_registry_version, alias_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "cn",
@@ -120,9 +122,10 @@ class TestStaleReviewCache(unittest.TestCase):
                     1000.0,
                     9999999999.0,
                     "2026.09.v1",
-                    "2026.09.v1",
-                    "2026.09.v1",
-                    "2026.09.v1",
+                    QUERY_POLICY_VERSION,
+                    ROMANIZER_VERSION,
+                    EXCEPTION_REGISTRY_VERSION,
+                    ALIAS_VERSION,
                 ),
             )
 
@@ -192,6 +195,8 @@ class TestStaleReviewCache(unittest.TestCase):
             verification_level=VerificationLevel.STRONG.value,
             matched_fields=["title", "artist"],
             rule_version="2026.09.v1",
+            query_policy_version=QUERY_POLICY_VERSION,
+            alias_version=ALIAS_VERSION,
         )
         old_cand = MatchCandidate(
             track=cand_track,
@@ -218,8 +223,8 @@ class TestStaleReviewCache(unittest.TestCase):
                 """
                 INSERT OR REPLACE INTO match_cache
                 (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at,
-                 rule_version, query_policy_version, romanizer_version, exception_registry_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 rule_version, query_policy_version, romanizer_version, exception_registry_version, alias_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "cn",
@@ -231,9 +236,10 @@ class TestStaleReviewCache(unittest.TestCase):
                     1000.0,
                     9999999999.0,
                     "2026.09.v1",
-                    "2026.09.v1",
-                    "2026.09.v1",
-                    "2026.09.v1",
+                    QUERY_POLICY_VERSION,
+                    ROMANIZER_VERSION,
+                    EXCEPTION_REGISTRY_VERSION,
+                    ALIAS_VERSION,
                 ),
             )
 
@@ -263,6 +269,7 @@ class TestStaleReviewCache(unittest.TestCase):
             query_policy_version=QUERY_POLICY_VERSION,
             romanizer_version=ROMANIZER_VERSION,
             exception_registry_version=EXCEPTION_REGISTRY_VERSION,
+            alias_version=ALIAS_VERSION,
         )
         cur_cand = MatchCandidate(
             track=cand_track,
@@ -291,8 +298,8 @@ class TestStaleReviewCache(unittest.TestCase):
                 """
                 INSERT OR REPLACE INTO match_cache
                 (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at,
-                 rule_version, query_policy_version, romanizer_version, exception_registry_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 rule_version, query_policy_version, romanizer_version, exception_registry_version, alias_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "cn",
@@ -307,6 +314,7 @@ class TestStaleReviewCache(unittest.TestCase):
                     QUERY_POLICY_VERSION,
                     ROMANIZER_VERSION,
                     EXCEPTION_REGISTRY_VERSION,
+                    ALIAS_VERSION,
                 ),
             )
 
@@ -469,6 +477,8 @@ class TestStaleReviewCache(unittest.TestCase):
             evidence_type="title_and_artist",
             verification_level=VerificationLevel.MEDIUM.value,
             rule_version="2026.09.v1",
+            query_policy_version=QUERY_POLICY_VERSION,
+            alias_version=ALIAS_VERSION,
         )
         old_cand = MatchCandidate(
             track=cand_track,
@@ -503,8 +513,8 @@ class TestStaleReviewCache(unittest.TestCase):
                     """
                     INSERT OR REPLACE INTO match_cache
                     (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at,
-                     rule_version, query_policy_version, romanizer_version, exception_registry_version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     rule_version, query_policy_version, romanizer_version, exception_registry_version, alias_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         "cn",
@@ -516,9 +526,10 @@ class TestStaleReviewCache(unittest.TestCase):
                         1000.0,
                         9999999999.0,
                         "2026.09.v1",
-                        "2026.09.v1",
-                        "2026.09.v1",
-                        "2026.09.v1",
+                        QUERY_POLICY_VERSION,
+                        ROMANIZER_VERSION,
+                        EXCEPTION_REGISTRY_VERSION,
+                        ALIAS_VERSION,
                     ),
                 )
 
@@ -555,7 +566,12 @@ class TestStaleReviewCache(unittest.TestCase):
         """
         src = Track(title="Sky High", artists=["Band A"])
         cand_track = AppleMusicTrack(id="arbitrary_99", title="Deep Ocean Blue", artists=["Band A"], storefront="cn")
-        old_evidence = MatchEvidence(evidence_type="title_and_artist", rule_version="2026.09.v1")
+        old_evidence = MatchEvidence(
+            evidence_type="title_and_artist",
+            rule_version="2026.09.v1",
+            query_policy_version=QUERY_POLICY_VERSION,
+            alias_version=ALIAS_VERSION,
+        )
         old_cand = MatchCandidate(track=cand_track, score=0.68, evidence=old_evidence)
         old_res = SongMatchResult(
             source_track=src,
@@ -571,10 +587,25 @@ class TestStaleReviewCache(unittest.TestCase):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO match_cache
-                (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at, rule_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at,
+                 rule_version, query_policy_version, romanizer_version, exception_registry_version, alias_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("cn", "arb_hash", "arb_hash", old_res.model_dump_json(), "review", "high", 1000.0, 9999999999.0, "2026.09.v1"),
+                (
+                    "cn",
+                    "arb_hash",
+                    "arb_hash",
+                    old_res.model_dump_json(),
+                    "review",
+                    "high",
+                    1000.0,
+                    9999999999.0,
+                    "2026.09.v1",
+                    QUERY_POLICY_VERSION,
+                    ROMANIZER_VERSION,
+                    EXCEPTION_REGISTRY_VERSION,
+                    ALIAS_VERSION,
+                ),
             )
 
         res = self.cache.get_match("cn", "arb_hash")

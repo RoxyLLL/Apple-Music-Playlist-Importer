@@ -573,6 +573,39 @@ async def clear_cache():
     }
 
 
+@app.post("/api/cache/clear-local")
+async def clear_local_cache():
+    """
+    清除本地检索缓存：
+    1. 在单个 SQLite 事务中删除 catalog_cache、equivalence_cache 以及非 user_confirmed 的 match_cache。
+    2. 清空 AppleMusicClient 内存检索与建议词缓存。
+    3. 严格保留 user_confirmed、授权令牌、配置、云端资料库及本地音频。
+    """
+    client, _ = get_shared_engine()
+    try:
+        deleted = client.clear_local_search_cache()
+        stats = client.persistent_cache.get_stats()
+    except Exception as e:
+        logger.error("Failed to clear local search cache: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"清除本地缓存失败: {str(e)}"
+        )
+
+    return {
+        "success": True,
+        "message": "已清除本机检索结果、跨区等价与自动匹配缓存",
+        "deleted": {
+            "catalog": deleted.get("catalog_deleted", 0),
+            "equivalence": deleted.get("equivalence_deleted", 0),
+            "match": deleted.get("match_deleted", 0),
+            "memory": deleted.get("memory_deleted", 0),
+        },
+        "stats": stats,
+    }
+
+
+
 @app.post("/api/sync")
 async def sync_to_apple_music(req: SyncRequest):
     config = get_config()

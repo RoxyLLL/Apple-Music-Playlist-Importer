@@ -146,6 +146,11 @@ class QueryPlanner:
                 if pq:
                     phase_a.append(pq)
 
+            # Reserved core title-only query (distinctive core title alone on target storefront)
+            pq_title = make_planned(core_t, target_sf, default_loc, "A_native", "core_title_only", 2)
+            if pq_title:
+                phase_a.append(pq_title)
+
             # Source aliases if available (bounded to top 2)
             if ctx.aliases:
                 for al in ctx.aliases[:2]:
@@ -283,24 +288,43 @@ class QueryPlanner:
         # Phase D: Cross-Storefront JP Discovery (Max 2)
         # -------------------------------------------------------------
         phase_d: List[PlannedQuery] = []
-        # Query 1: Best native Japanese in JP storefront with ja-JP locale
         jp_sf = "jp"
         jp_loc = "ja-JP"
+
+        # Determine Japanese relevance: avoid meaningless JP discovery for purely non-Japanese tracks
+        metadata_texts = [core_t, primary_artist, ctx.album, ctx.trans_title] + (ctx.aliases or [])
+        has_jp_script = any(
+            t and bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", t))
+            for t in metadata_texts
+        )
+        has_jp_artist_alias = False
         if primary_artist:
-            pq = make_planned(f"{core_t} {primary_artist}", jp_sf, jp_loc, "D_jp_discovery", "jp_native", 1)
-            if pq:
-                phase_d.append(pq)
-            if title_romaji:
-                pq = make_planned(f"{title_romaji[0].text} {primary_artist}", jp_sf, jp_loc, "D_jp_discovery", "jp_romaji_title", 2)
+            for aa in get_artist_aliases(primary_artist):
+                if re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", aa):
+                    has_jp_artist_alias = True
+                    break
+
+        has_jp_variants = bool(title_romaji or artist_romaji or title_trans)
+        is_jp_target = (target_sf.lower() == "jp")
+        is_jp_relevant = has_jp_script or has_jp_artist_alias or has_jp_variants or is_jp_target
+
+        if is_jp_relevant:
+            # Query 1: Best native Japanese in JP storefront with ja-JP locale
+            if primary_artist:
+                pq = make_planned(f"{core_t} {primary_artist}", jp_sf, jp_loc, "D_jp_discovery", "jp_native", 1)
                 if pq:
                     phase_d.append(pq)
-        else:
-            pq = make_planned(core_t, jp_sf, jp_loc, "D_jp_discovery", "jp_native", 1)
-            if pq:
-                phase_d.append(pq)
+                if title_romaji:
+                    pq = make_planned(f"{title_romaji[0].text} {primary_artist}", jp_sf, jp_loc, "D_jp_discovery", "jp_romaji_title", 2)
+                    if pq:
+                        phase_d.append(pq)
+            else:
+                pq = make_planned(core_t, jp_sf, jp_loc, "D_jp_discovery", "jp_native", 1)
+                if pq:
+                    phase_d.append(pq)
 
-        # Cap Phase D to max 2 queries
-        phase_d = phase_d[:2]
+            # Cap Phase D to max 2 queries
+            phase_d = phase_d[:2]
 
         return {
             "A_native": phase_a,

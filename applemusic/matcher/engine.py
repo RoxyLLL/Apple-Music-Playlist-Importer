@@ -848,7 +848,7 @@ class MatchingEngine:
             track = unique_tracks[key]
             key_str = ":".join(str(x) for x in key)
             cached_match = self.persistent_cache.get_match(sf, key_str) or self.persistent_cache.find_match(sf, track)
-            if cached_match:
+            if cached_match and cached_match.decision in (DecisionStatus.AUTO_ACCEPT.value, DecisionStatus.USER_CONFIRMED.value):
                 indices = key_to_indices[key]
                 for idx in indices:
                     res_copy = cached_match.model_copy(deep=True)

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from applemusic.config import DEFAULT_CONFIG_DIR
+from applemusic.matcher.evidence import QUERY_POLICY_VERSION
 from applemusic.models import AppleMusicTrack, CatalogSearchOutcome, SongMatchResult
 
 logger = logging.getLogger(__name__)
@@ -117,14 +118,14 @@ class PersistentCache:
                                 response_json TEXT NOT NULL,
                                 created_at REAL NOT NULL,
                                 expires_at REAL NOT NULL,
-                                query_policy_version TEXT NOT NULL DEFAULT '2026.09.v3',
+                                query_policy_version TEXT NOT NULL DEFAULT '2026.09.v1',
                                 PRIMARY KEY (storefront, locale, query_type, query_term, limit_val, query_policy_version)
                             );
                         """)
                         term_expr = "query_term" if "query_term" in cols_info else ("query_key" if "query_key" in cols_info else "''")
                         resp_expr = "response_json" if "response_json" in cols_info else ("tracks_json" if "tracks_json" in cols_info else "'{\"tracks\":[]}'")
                         loc_expr = "locale" if "locale" in cols_info else "''"
-                        pol_expr = "query_policy_version" if "query_policy_version" in cols_info else "'2026.09.v3'"
+                        pol_expr = "query_policy_version" if "query_policy_version" in cols_info else "'2026.09.v1'"
                         kind_expr = "kind" if "kind" in cols_info else "'ok'"
                         limit_expr = "limit_val" if "limit_val" in cols_info else "10"
                         created_expr = "created_at" if "created_at" in cols_info else ("fetched_at" if "fetched_at" in cols_info else "strftime('%s', 'now')")
@@ -144,13 +145,13 @@ class PersistentCache:
                                 COALESCE({resp_expr}, '{{}}'),
                                 COALESCE({created_expr}, strftime('%s', 'now')),
                                 COALESCE({expires_expr}, strftime('%s', 'now') + 86400),
-                                COALESCE({pol_expr}, '2026.09.v3')
+                                COALESCE({pol_expr}, '2026.09.v1')
                             FROM catalog_cache;
                         """)
                         conn.execute("DROP TABLE catalog_cache;")
                         conn.execute("ALTER TABLE catalog_cache_new RENAME TO catalog_cache;")
                 else:
-                    conn.execute("""
+                    conn.execute(f"""
                         CREATE TABLE IF NOT EXISTS catalog_cache (
                             storefront TEXT NOT NULL,
                             locale TEXT NOT NULL DEFAULT '',
@@ -161,7 +162,7 @@ class PersistentCache:
                             response_json TEXT NOT NULL,
                             created_at REAL NOT NULL,
                             expires_at REAL NOT NULL,
-                            query_policy_version TEXT NOT NULL DEFAULT '2026.09.v3',
+                            query_policy_version TEXT NOT NULL DEFAULT '{QUERY_POLICY_VERSION}',
                             PRIMARY KEY (storefront, locale, query_type, query_term, limit_val, query_policy_version)
                         );
                     """)
@@ -213,6 +214,7 @@ class PersistentCache:
                         query_policy_version TEXT NOT NULL DEFAULT '2026.09.v1',
                         romanizer_version TEXT NOT NULL DEFAULT '2026.09.v1',
                         exception_registry_version TEXT NOT NULL DEFAULT '2026.09.v1',
+                        alias_version TEXT NOT NULL DEFAULT '2026.09.v1',
                         PRIMARY KEY (storefront, track_hash)
                     );
                 """)
@@ -220,7 +222,7 @@ class PersistentCache:
                 match_cols = {row[1] for row in cursor.fetchall()}
                 if "cache_key" not in match_cols:
                     conn.execute("ALTER TABLE match_cache ADD COLUMN cache_key TEXT NOT NULL DEFAULT '';")
-                for c_name in ("rule_version", "query_policy_version", "romanizer_version", "exception_registry_version"):
+                for c_name in ("rule_version", "query_policy_version", "romanizer_version", "exception_registry_version", "alias_version"):
                     if c_name not in match_cols:
                         conn.execute(f"ALTER TABLE match_cache ADD COLUMN {c_name} TEXT NOT NULL DEFAULT '2026.09.v1';")
 
@@ -464,7 +466,7 @@ class PersistentCache:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT result_json, expires_at, rule_version, query_policy_version, romanizer_version, exception_registry_version
+                SELECT result_json, expires_at, rule_version, query_policy_version, romanizer_version, exception_registry_version, alias_version
                 FROM match_cache
                 WHERE storefront = ? AND (track_hash = ? OR cache_key = ?)
                 """,
@@ -474,30 +476,32 @@ class PersistentCache:
             if not row:
                 return None
 
-            result_json, expires_at, db_rule_ver, db_policy_ver, db_romanizer_ver, db_registry_ver = row
+            result_json, expires_at, db_rule_ver, db_policy_ver, db_romanizer_ver, db_registry_ver, db_alias_ver = row
             if expires_at <= now:
                 return None
 
             data = json.loads(result_json)
             result = SongMatchResult(**data)
 
-            # Check rule version / policy version / romanizer version / exception registry version
+            # Check rule version / policy version / romanizer version / exception registry version / alias version
             from applemusic.matcher.evidence import (
                 MATCH_RULE_VERSION,
                 QUERY_POLICY_VERSION,
                 ROMANIZER_VERSION,
                 EXCEPTION_REGISTRY_VERSION,
+                ALIAS_VERSION,
             )
             cached_rule_ver = getattr(result.evidence, "rule_version", None) if result.evidence else None
             cached_policy_ver = getattr(result.evidence, "query_policy_version", None) if result.evidence else None
             cached_romanizer_ver = getattr(result.evidence, "romanizer_version", None) if result.evidence else None
             cached_registry_ver = getattr(result.evidence, "exception_registry_version", None) if result.evidence else None
+            cached_alias_ver = getattr(result.evidence, "alias_version", None) if result.evidence else None
 
             # If user manually confirmed, preserve user_confirmed decision
             if result.decision == "user_confirmed":
                 return result
 
-            # Check rule version / policy version / romanizer version / exception registry version
+            # Check rule version / policy version / romanizer version / exception registry version / alias version
             ev = result.evidence
             if ev is None and result.selected_candidate and result.selected_candidate.evidence:
                 ev = result.selected_candidate.evidence
@@ -508,24 +512,53 @@ class PersistentCache:
             cached_policy_ver = getattr(ev, "query_policy_version", None) if ev else None
             cached_romanizer_ver = getattr(ev, "romanizer_version", None) if ev else None
             cached_registry_ver = getattr(ev, "exception_registry_version", None) if ev else None
+            cached_alias_ver = getattr(ev, "alias_version", None) if ev else None
 
-            versions_outdated = (
+            policy_or_alias_outdated = (
+                db_policy_ver != QUERY_POLICY_VERSION
+                or db_alias_ver != ALIAS_VERSION
+                or (
+                    ev is not None
+                    and (
+                        cached_policy_ver != QUERY_POLICY_VERSION
+                        or cached_alias_ver != ALIAS_VERSION
+                    )
+                )
+            )
+
+            scoring_rule_outdated = (
                 db_rule_ver != MATCH_RULE_VERSION
-                or db_policy_ver != QUERY_POLICY_VERSION
                 or db_romanizer_ver != ROMANIZER_VERSION
                 or db_registry_ver != EXCEPTION_REGISTRY_VERSION
                 or (
                     ev is not None
                     and (
                         cached_rule_ver != MATCH_RULE_VERSION
-                        or cached_policy_ver != QUERY_POLICY_VERSION
                         or cached_romanizer_ver != ROMANIZER_VERSION
                         or cached_registry_ver != EXCEPTION_REGISTRY_VERSION
                     )
                 )
             )
 
+            versions_outdated = policy_or_alias_outdated or scoring_rule_outdated
+
             if versions_outdated:
+                # 1. User manual confirmed decisions are strictly preserved unconditionally
+                if result.decision == "user_confirmed":
+                    return result
+
+                # 2. When query policy or artist aliases are upgraded, old algorithmic results
+                # (both no_match and review) must return cache miss (None) so that the upper layer
+                # initiates fresh catalog queries with the new query planner and new aliases,
+                # rather than merely re-evaluating stale candidates that were retrieved under old queries.
+                if policy_or_alias_outdated:
+                    if result.decision in ("no_match", "review"):
+                        return None
+
+                # 3. Outdated negative match (no_match) under any updated rule/policy must return None
+                # (cache miss) so the upper layer initiates a fresh search.
+                if result.decision == "no_match":
+                    return None
                 candidate_map = {}
                 for c in (result.candidates or []):
                     if c and getattr(c, "track", None) and getattr(c.track, "id", None):
@@ -599,7 +632,8 @@ class PersistentCache:
                                     UPDATE match_cache
                                     SET result_json = ?, decision = ?, status = ?,
                                         rule_version = ?, query_policy_version = ?,
-                                        romanizer_version = ?, exception_registry_version = ?
+                                        romanizer_version = ?, exception_registry_version = ?,
+                                        alias_version = ?
                                     WHERE storefront = ?
                                       AND decision != 'user_confirmed'
                                       AND (track_hash IN ({placeholders}) OR cache_key IN ({placeholders}))
@@ -612,6 +646,7 @@ class PersistentCache:
                                         QUERY_POLICY_VERSION,
                                         ROMANIZER_VERSION,
                                         EXCEPTION_REGISTRY_VERSION,
+                                        ALIAS_VERSION,
                                         sf,
                                         *keys_to_update,
                                         *keys_to_update,
@@ -750,6 +785,7 @@ class PersistentCache:
                 QUERY_POLICY_VERSION,
                 ROMANIZER_VERSION,
                 EXCEPTION_REGISTRY_VERSION,
+                ALIAS_VERSION,
             )
             json_str = match_result.model_dump_json()
             with self._lock:
@@ -759,8 +795,8 @@ class PersistentCache:
                         conn.execute(
                             """
                             INSERT OR REPLACE INTO match_cache 
-                            (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at, rule_version, query_policy_version, romanizer_version, exception_registry_version)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (storefront, track_hash, cache_key, result_json, decision, status, created_at, expires_at, rule_version, query_policy_version, romanizer_version, exception_registry_version, alias_version)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 sf,
@@ -775,6 +811,7 @@ class PersistentCache:
                                 QUERY_POLICY_VERSION,
                                 ROMANIZER_VERSION,
                                 EXCEPTION_REGISTRY_VERSION,
+                                ALIAS_VERSION,
                             ),
                         )
         except Exception as e:
@@ -800,12 +837,41 @@ class PersistentCache:
             logger.debug("Failed to clear expired cache: %s", e)
         return cat_deleted, mat_deleted
 
+    def clear_local_search_cache(self) -> Dict[str, int]:
+        """
+        Delete all catalog search cache, cross-storefront equivalence cache,
+        and algorithm-generated match cache within a single SQLite transaction.
+        Strictly preserves records where decision == 'user_confirmed'.
+        Returns dictionary of deleted counts per table:
+        {'catalog_deleted': ..., 'equivalence_deleted': ..., 'match_deleted': ...}.
+        Raises Exception if the operation fails (does not swallow errors).
+        """
+        with self._lock:
+            conn = self._get_connection()
+            with conn:
+                cur1 = conn.execute("DELETE FROM catalog_cache")
+                cat_deleted = cur1.rowcount if cur1.rowcount != -1 else 0
+
+                cur2 = conn.execute("DELETE FROM equivalence_cache")
+                eq_deleted = cur2.rowcount if cur2.rowcount != -1 else 0
+
+                cur3 = conn.execute("DELETE FROM match_cache WHERE decision != 'user_confirmed'")
+                mat_deleted = cur3.rowcount if cur3.rowcount != -1 else 0
+
+            return {
+                "catalog_deleted": cat_deleted,
+                "equivalence_deleted": eq_deleted,
+                "match_deleted": mat_deleted,
+            }
+
     def get_stats(self) -> Dict[str, Any]:
         """Return cache statistics."""
         now = time.time()
         stats = {
             "catalog_total": 0,
             "catalog_valid": 0,
+            "equivalence_total": 0,
+            "equivalence_valid": 0,
             "match_total": 0,
             "match_valid": 0,
             "db_size_bytes": 0,
@@ -821,11 +887,17 @@ class PersistentCache:
                 stats["catalog_total"] = row1[0] or 0
                 stats["catalog_valid"] = row1[1] or 0
 
-            cursor.execute("SELECT COUNT(*), SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END) FROM match_cache", (now,))
+            cursor.execute("SELECT COUNT(*), SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END) FROM equivalence_cache", (now,))
             row2 = cursor.fetchone()
             if row2:
-                stats["match_total"] = row2[0] or 0
-                stats["match_valid"] = row2[1] or 0
+                stats["equivalence_total"] = row2[0] or 0
+                stats["equivalence_valid"] = row2[1] or 0
+
+            cursor.execute("SELECT COUNT(*), SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END) FROM match_cache", (now,))
+            row3 = cursor.fetchone()
+            if row3:
+                stats["match_total"] = row3[0] or 0
+                stats["match_valid"] = row3[1] or 0
         except Exception as e:
             logger.debug("Failed to get cache stats: %s", e)
         return stats
