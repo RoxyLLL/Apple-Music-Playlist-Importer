@@ -1679,7 +1679,7 @@
         <div class="space-y-3 max-h-96 overflow-y-auto text-xs">
           <!-- Metadata Table -->
           <div class="grid grid-cols-2 gap-2 bg-neutral-50 p-3 rounded-xl border border-neutral-200/60 font-mono text-[11px]">
-            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.5' }}</div>
+            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.6' }}</div>
             <div><span class="text-neutral-400">构建标识:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.build_id) || 'unknown' }}</div>
             <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.09.v1' }}</div>
             <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.09.v1' }}</div>
@@ -2378,7 +2378,7 @@
         const modalCandidates = ref([]);
         const modalSearchQuery = ref('');
         const diagnosticsModalItem = ref(null);
-        const appVersion = computed(() => (config.value && config.value.version) || 'v2.0.5');
+        const appVersion = computed(() => (config.value && config.value.version) || 'v2.0.6');
 
         // Fetch user config on start
         const fetchConfig = async () => {
