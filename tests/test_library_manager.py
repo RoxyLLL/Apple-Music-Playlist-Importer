@@ -350,9 +350,12 @@ except Exception:
 @unittest.skipUnless(HAS_TESTCLIENT, "Requires httpx for FastAPI TestClient")
 class TestLibraryApi(unittest.TestCase):
     def setUp(self):
-        from applemusic.web.app import app, SESSION_API_TOKEN
+        from applemusic.web.app import app, SESSION_API_TOKEN, get_shared_engine, _auth_validation_cache
         self.client = TestClient(app)
         self.headers = {"X-App-Token": SESSION_API_TOKEN}
+        client, _ = get_shared_engine()
+        client.config.media_user_token = "dummy_user_token_for_tests"
+        _auth_validation_cache.clear()
 
     def test_get_local_songs(self):
         res = self.client.get("/api/local/songs", headers=self.headers)
