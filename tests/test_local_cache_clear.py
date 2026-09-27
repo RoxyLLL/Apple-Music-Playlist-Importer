@@ -690,9 +690,10 @@ class TestLocalCacheClearUI(unittest.TestCase):
                 await send_cmd("Network.enable")
                 await send_cmd("Page.navigate", {"url": f"http://127.0.0.1:{server_port}/"})
 
-                for _ in range(40):
+                for _ in range(80):
                     await asyncio.sleep(0.1)
-                    if await eval_js("Boolean(document.getElementById('app') && window.Vue)"):
+                    btn_ready = await eval_js("Boolean(Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('清除本地缓存')))")
+                    if btn_ready:
                         break
 
                 # 1. Initial state: confirmation modal must NOT be present

@@ -3,6 +3,7 @@ FastAPI Web Application backend for Apple Music Playlist Importer.
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -35,16 +36,92 @@ logger = logging.getLogger(__name__)
 
 thread_pool = ThreadPoolExecutor(max_workers=8)
 
+# In-memory auth validation cache (30s TTL to prevent event-loop choking)
+# Key: SHA-256 token hash (never raw token), Value: (timestamp, is_valid, sf_info_or_message)
+_auth_validation_cache: Dict[str, Tuple[float, bool, str]] = {}
+
 _shared_client: Optional[AppleMusicClient] = None
 _shared_engine: Optional[MatchingEngine] = None
+_shared_config_fingerprint: Optional[str] = None
+_shared_engine_lock = threading.Lock()
 
-def get_shared_engine() -> Tuple[AppleMusicClient, MatchingEngine]:
-    global _shared_client, _shared_engine
-    if _shared_client is None:
+
+def _get_token_hash(token: Optional[str]) -> str:
+    """Compute a memory-only cryptographic hash (SHA-256) of token for cache keys. Never logs or leaks raw token."""
+    if not token or not token.strip():
+        return ""
+    return hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
+
+
+def invalidate_shared_engine() -> None:
+    """Invalidate shared client and matching engine to force reconstruction on next access."""
+    global _shared_client, _shared_engine, _shared_config_fingerprint
+    with _shared_engine_lock:
+        _shared_client = None
+        _shared_engine = None
+        _shared_config_fingerprint = None
+
+
+def get_shared_engine(force_reload: bool = False) -> Tuple[AppleMusicClient, MatchingEngine]:
+    """
+    Thread-safe accessor for shared AppleMusicClient and MatchingEngine.
+    Automatically detects configuration/token generation changes via memory-only fingerprint
+    and reconstructs instances atomically if config changed, without in-place mutation of running clients.
+    """
+    global _shared_client, _shared_engine, _shared_config_fingerprint
+    with _shared_engine_lock:
         cfg = get_config()
-        _shared_client = AppleMusicClient(cfg)
-        _shared_engine = MatchingEngine(_shared_client, cfg)
-    return _shared_client, _shared_engine
+        current_fp = cfg.get_fingerprint()
+        if (
+            force_reload
+            or _shared_client is None
+            or _shared_engine is None
+            or _shared_config_fingerprint != current_fp
+        ):
+            new_client = AppleMusicClient(cfg)
+            new_engine = MatchingEngine(new_client, cfg)
+            _shared_client = new_client
+            _shared_engine = new_engine
+            _shared_config_fingerprint = current_fp
+            logger.info("Shared AppleMusicClient & MatchingEngine synchronized with config fingerprint")
+        return _shared_client, _shared_engine
+
+
+def _require_authorized_client() -> AppleMusicClient:
+    """
+    Ensure the shared AppleMusicClient is synchronized with the latest valid configuration.
+    Performs local authorization pre-check before calling Apple Music library endpoints.
+    Never exposes raw tokens, cookies, or headers in logs or error details.
+    """
+    client, _ = get_shared_engine()
+    if not client.config.media_user_token or not client.config.is_authorized():
+        logger.info("Local auth pre-check: media-user-token is absent or empty")
+        raise HTTPException(
+            status_code=401,
+            detail="尚未授权 Apple ID: 本地未配置有效的 media-user-token，请先登录 Apple ID",
+        )
+
+    # Check validation cache
+    thash = _get_token_hash(client.config.media_user_token)
+    cached = _auth_validation_cache.get(thash)
+    if cached and (time.time() - cached[0] < 30.0):
+        is_valid, msg = cached[1], cached[2]
+        if not is_valid:
+            logger.info("Local auth pre-check: cached token validation failed")
+            raise HTTPException(
+                status_code=401,
+                detail=f"Apple ID 授权失效: {msg}，请重新登录",
+            )
+
+    return client
+
+
+def _handle_upstream_permission_error(client: AppleMusicClient, e: PermissionError, action: str):
+    logger.warning("Upstream auth rejected during %s: %s", action, e)
+    thash = _get_token_hash(client.config.media_user_token)
+    if thash:
+        _auth_validation_cache[thash] = (time.time(), False, str(e))
+    raise HTTPException(status_code=401, detail=str(e))
 
 import sys
 
@@ -150,23 +227,22 @@ async def serve_index():
     return response
 
 
-# In-memory auth validation cache (30s TTL to prevent event-loop choking)
-_auth_validation_cache: Dict[str, Tuple[float, bool, str]] = {}
-
 @app.get("/api/config")
 async def get_config_status():
     config = get_config()
     auth = AppleMusicAuth(config)
     is_valid, sf_info = False, "未配置"
     if config.media_user_token:
-        cache_key = config.media_user_token[:24]
+        cache_key = _get_token_hash(config.media_user_token)
         now = time.time()
         cached = _auth_validation_cache.get(cache_key)
         if cached and (now - cached[0] < 30.0):
             is_valid, sf_info = cached[1], cached[2]
         else:
             is_valid, sf_info = await asyncio.to_thread(auth.validate_user_token)
-            _auth_validation_cache[cache_key] = (now, is_valid, sf_info)
+            # If network error or transient failure, allow prompt retry with short cache TTL
+            cache_ttl = 5.0 if (not is_valid and ("网络异常" in sf_info or "开发者 Token" in sf_info)) else 30.0
+            _auth_validation_cache[cache_key] = (now - (30.0 - cache_ttl), is_valid, sf_info)
 
     masked_token = (
         config.media_user_token[:10] + "..." + config.media_user_token[-8:]
@@ -194,14 +270,13 @@ async def update_config(req: ConfigUpdateRequest):
         config.storefront = req.storefront.strip().lower()
 
     config.save()
-    global _shared_client, _shared_engine
-    _shared_client = None
-    _shared_engine = None
+    invalidate_shared_engine()
 
     auth = AppleMusicAuth(config)
     is_valid, info = await asyncio.to_thread(auth.validate_user_token)
     if config.media_user_token:
-        _auth_validation_cache[config.media_user_token[:24]] = (time.time(), is_valid, info)
+        cache_key = _get_token_hash(config.media_user_token)
+        _auth_validation_cache[cache_key] = (time.time(), is_valid, info)
     return {
         "success": True,
         "is_authorized": is_valid,
@@ -213,6 +288,15 @@ _active_capturer: Optional[BrowserTokenCapturer] = None
 _capturer_lock = threading.Lock()
 
 
+def _on_auto_token_saved(saved_config: Config):
+    """Callback invoked immediately when BrowserTokenCapturer validates and saves a token."""
+    thash = _get_token_hash(saved_config.media_user_token)
+    if thash:
+        _auth_validation_cache[thash] = (time.time(), True, saved_config.storefront or "cn")
+    invalidate_shared_engine()
+    logger.info("Auto-login token saved: shared engine invalidated and auth cache updated")
+
+
 @app.get("/api/auto-login/status")
 async def get_auto_login_status():
     """Query live status of Edge browser token capture session."""
@@ -220,19 +304,23 @@ async def get_auto_login_status():
     with _capturer_lock:
         if _active_capturer is None:
             config = get_config()
+            is_valid = False
+            sf_info = config.storefront or "cn"
+            if config.media_user_token:
+                cache_key = _get_token_hash(config.media_user_token)
+                cached = _auth_validation_cache.get(cache_key)
+                if cached and (time.time() - cached[0] < 30.0):
+                    is_valid = cached[1]
+                    if is_valid and cached[2]:
+                        sf_info = cached[2]
             return {
                 "active": False,
                 "status": "idle",
                 "message": "",
-                "is_authorized": bool(config.media_user_token),
-                "storefront": config.storefront,
+                "is_authorized": is_valid,
+                "storefront": sf_info,
             }
         state = _active_capturer.get_state()
-        if not state.get("active") and not state.get("is_authorized"):
-            config = get_config()
-            if config.media_user_token:
-                state["is_authorized"] = True
-                state["storefront"] = config.storefront
         return state
 
 
@@ -259,7 +347,7 @@ async def trigger_auto_login():
                 "active": True,
                 "message": state.get("message", "正在监听浏览器登录..."),
             }
-        capturer = BrowserTokenCapturer()
+        capturer = BrowserTokenCapturer(on_token_saved=_on_auto_token_saved)
         _active_capturer = capturer
 
     def _run_capturer():
@@ -608,14 +696,11 @@ async def clear_local_cache():
 
 @app.post("/api/sync")
 async def sync_to_apple_music(req: SyncRequest):
-    config = get_config()
-    if not config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple Music，请先配置 media-user-token")
+    client = _require_authorized_client()
 
     loop = asyncio.get_running_loop()
 
     def _do_sync():
-        client = AppleMusicClient(config)
         final_track_ids = list(req.track_ids or [])
         bilibili_added_count = 0
         bilibili_pending_count = 0
@@ -711,6 +796,8 @@ async def sync_to_apple_music(req: SyncRequest):
     try:
         result = await loop.run_in_executor(thread_pool, _do_sync)
         return result
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "sync_to_apple_music")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1009,11 +1096,12 @@ class BatchDeleteSongsRequest(BaseModel):
 
 @app.get("/api/user/playlists")
 async def api_get_user_playlists(limit: int = 100, offset: int = 0):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    playlists = await asyncio.to_thread(client.get_user_playlists, limit, offset)
-    return {"success": True, "playlists": playlists}
+    client = _require_authorized_client()
+    try:
+        playlists = await asyncio.to_thread(client.get_user_playlists, limit, offset)
+        return {"success": True, "playlists": playlists}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "get_user_playlists")
 
 
 class PlaylistTracksActionRequest(BaseModel):
@@ -1022,33 +1110,36 @@ class PlaylistTracksActionRequest(BaseModel):
 
 @app.get("/api/user/playlists/{playlist_id}/tracks")
 async def api_get_playlist_tracks(playlist_id: str, limit: int = 100, fetch_all: bool = True):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    tracks = await asyncio.to_thread(client.get_playlist_tracks, playlist_id, limit, fetch_all)
-    return {"success": True, "tracks": tracks, "total": len(tracks)}
+    client = _require_authorized_client()
+    try:
+        tracks = await asyncio.to_thread(client.get_playlist_tracks, playlist_id, limit, fetch_all)
+        return {"success": True, "tracks": tracks, "total": len(tracks)}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "get_playlist_tracks")
 
 
 @app.delete("/api/user/playlists/{playlist_id}/tracks")
 async def api_delete_playlist_tracks(playlist_id: str, req: PlaylistTracksActionRequest):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    deleted_cnt, failed = await asyncio.to_thread(
-        client.delete_playlist_tracks, playlist_id, req.track_ids
-    )
-    return {"success": True, "deleted_count": deleted_cnt, "failed_ids": failed}
+    client = _require_authorized_client()
+    try:
+        deleted_cnt, failed = await asyncio.to_thread(
+            client.delete_playlist_tracks, playlist_id, req.track_ids
+        )
+        return {"success": True, "deleted_count": deleted_cnt, "failed_ids": failed}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "delete_playlist_tracks")
 
 
 @app.post("/api/user/playlists/{playlist_id}/tracks")
 async def api_add_playlist_tracks(playlist_id: str, req: PlaylistTracksActionRequest):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    added_cnt, failed = await asyncio.to_thread(
-        client.add_playlist_tracks, playlist_id, req.track_ids
-    )
-    return {"success": True, "added_count": added_cnt, "failed_ids": failed}
+    client = _require_authorized_client()
+    try:
+        added_cnt, failed = await asyncio.to_thread(
+            client.add_playlist_tracks, playlist_id, req.track_ids
+        )
+        return {"success": True, "added_count": added_cnt, "failed_ids": failed}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "add_playlist_tracks")
 
 
 class AddLocalTracksToPlaylistRequest(BaseModel):
@@ -1057,70 +1148,76 @@ class AddLocalTracksToPlaylistRequest(BaseModel):
 
 @app.post("/api/user/playlists/{playlist_id}/add-local-tracks")
 async def api_add_local_tracks_to_playlist(playlist_id: str, req: AddLocalTracksToPlaylistRequest):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
+    client = _require_authorized_client()
 
     added_count = 0
     failed_titles = []
     track_ids_to_add = []
 
-    for t in req.tracks:
-        title = t.get("title") or ""
-        artist = t.get("artist") or ""
-        lib_id = await asyncio.to_thread(client.find_library_song_id, title, artist)
-        if not lib_id and title:
-            try:
-                cat_res = await asyncio.to_thread(
-                    client.search_catalog, f"{title} {artist}".strip(), limit=1
-                )
-                if cat_res and cat_res.tracks:
-                    lib_id = cat_res.tracks[0].id
-            except Exception:
-                pass
-        if lib_id:
-            track_ids_to_add.append(lib_id)
-        else:
-            failed_titles.append(title or "未知歌曲")
+    try:
+        for t in req.tracks:
+            title = t.get("title") or ""
+            artist = t.get("artist") or ""
+            lib_id = await asyncio.to_thread(client.find_library_song_id, title, artist)
+            if not lib_id and title:
+                try:
+                    cat_res = await asyncio.to_thread(
+                        client.search_catalog, f"{title} {artist}".strip(), limit=1
+                    )
+                    if cat_res and cat_res.tracks:
+                        lib_id = cat_res.tracks[0].id
+                except PermissionError:
+                    raise
+                except Exception:
+                    pass
+            if lib_id:
+                track_ids_to_add.append(lib_id)
+            else:
+                failed_titles.append(title or "未知歌曲")
 
-    if track_ids_to_add:
-        success_cnt, failed = await asyncio.to_thread(
-            client.add_playlist_tracks, playlist_id, track_ids_to_add
-        )
-        added_count = success_cnt
+        if track_ids_to_add:
+            success_cnt, failed = await asyncio.to_thread(
+                client.add_playlist_tracks, playlist_id, track_ids_to_add
+            )
+            added_count = success_cnt
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "add_local_tracks_to_playlist")
 
     return {"success": True, "added_count": added_count, "failed_titles": failed_titles}
 
 
 @app.patch("/api/user/playlists/{playlist_id}")
 async def api_update_playlist(playlist_id: str, req: UpdatePlaylistRequest):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    ok = await asyncio.to_thread(client.update_playlist, playlist_id, req.name, req.description)
-    if not ok:
-        raise HTTPException(status_code=500, detail="修改歌单失败")
-    return {"success": True}
+    client = _require_authorized_client()
+    try:
+        ok = await asyncio.to_thread(client.update_playlist, playlist_id, req.name, req.description)
+        if not ok:
+            raise HTTPException(status_code=500, detail="修改歌单失败")
+        return {"success": True}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "update_playlist")
 
 
 @app.delete("/api/user/playlists/{playlist_id}")
 async def api_delete_playlist(playlist_id: str):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    ok = await asyncio.to_thread(client.delete_playlist, playlist_id)
-    if not ok:
-        raise HTTPException(status_code=500, detail="删除歌单失败")
-    return {"success": True}
+    client = _require_authorized_client()
+    try:
+        ok = await asyncio.to_thread(client.delete_playlist, playlist_id)
+        if not ok:
+            raise HTTPException(status_code=500, detail="删除歌单失败")
+        return {"success": True}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "delete_playlist")
 
 
 @app.post("/api/user/playlists/batch-delete")
 async def api_batch_delete_playlists(req: BatchDeletePlaylistsRequest):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    success_cnt, failed = await asyncio.to_thread(client.batch_delete_playlists, req.playlist_ids)
-    return {"success": True, "deleted_count": success_cnt, "failed_ids": failed}
+    client = _require_authorized_client()
+    try:
+        success_cnt, failed = await asyncio.to_thread(client.batch_delete_playlists, req.playlist_ids)
+        return {"success": True, "deleted_count": success_cnt, "failed_ids": failed}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "batch_delete_playlists")
 
 
 @app.get("/api/user/library/songs")
@@ -1130,40 +1227,44 @@ async def api_get_library_songs(
     fetch_all: bool = False,
     sort: Optional[str] = "-dateAdded",
 ):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    songs = await asyncio.to_thread(client.get_library_songs, limit, offset, fetch_all, 5000, sort)
-    return {"success": True, "songs": songs, "total": len(songs)}
+    client = _require_authorized_client()
+    try:
+        songs = await asyncio.to_thread(client.get_library_songs, limit, offset, fetch_all, 5000, sort)
+        return {"success": True, "songs": songs, "total": len(songs)}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "get_library_songs")
 
 
 @app.get("/api/user/library/search")
 async def api_search_library_songs(term: str, limit: int = 100):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    songs = await asyncio.to_thread(client.search_library_songs, term, limit)
-    return {"success": True, "songs": songs}
+    client = _require_authorized_client()
+    try:
+        songs = await asyncio.to_thread(client.search_library_songs, term, limit)
+        return {"success": True, "songs": songs}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "search_library_songs")
 
 
 @app.delete("/api/user/library/songs/{song_id}")
 async def api_delete_library_song(song_id: str):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    ok = await asyncio.to_thread(client.delete_library_song, song_id)
-    if not ok:
-        raise HTTPException(status_code=500, detail="从资料库删除歌曲失败")
-    return {"success": True}
+    client = _require_authorized_client()
+    try:
+        ok = await asyncio.to_thread(client.delete_library_song, song_id)
+        if not ok:
+            raise HTTPException(status_code=500, detail="从资料库删除歌曲失败")
+        return {"success": True}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "delete_library_song")
 
 
 @app.post("/api/user/library/songs/batch-delete")
 async def api_batch_delete_library_songs(req: BatchDeleteSongsRequest):
-    client, _ = get_shared_engine()
-    if not client.config.is_authorized():
-        raise HTTPException(status_code=401, detail="尚未授权 Apple ID")
-    success_cnt, failed = await asyncio.to_thread(client.batch_delete_library_songs, req.song_ids)
-    return {"success": True, "deleted_count": success_cnt, "failed_ids": failed}
+    client = _require_authorized_client()
+    try:
+        success_cnt, failed = await asyncio.to_thread(client.batch_delete_library_songs, req.song_ids)
+        return {"success": True, "deleted_count": success_cnt, "failed_ids": failed}
+    except PermissionError as e:
+        _handle_upstream_permission_error(client, e, "batch_delete_library_songs")
 
 
 # -----------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import base64
 import ctypes
 import os
 import sys
+import hashlib
 from pathlib import Path
 from typing import List, Optional
 from pydantic import BaseModel, Field
@@ -123,6 +124,14 @@ class Config(BaseModel):
     def is_authorized(self) -> bool:
         """Check if both developer token and media user token are configured."""
         return bool(self.media_user_token and len(self.media_user_token.strip()) > 10)
+
+    def get_fingerprint(self) -> str:
+        """
+        Compute a memory-only cryptographic fingerprint (SHA-256) of credentials and settings.
+        Never exposes the raw token. Used strictly for detecting configuration changes across threads.
+        """
+        raw = f"{self.media_user_token or ''}\x00{self.storefront or ''}\x00{self.developer_token or ''}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def get_config() -> Config:

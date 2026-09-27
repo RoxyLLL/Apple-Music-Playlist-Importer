@@ -2420,12 +2420,18 @@
               })
             });
             const data = await res.json();
-            config.value = data;
-            if (data.is_authorized) {
-              authTestResult.value = { valid: true, message: 'Apple ID 授权有效，已成功连接资料库！' };
-              setTimeout(() => { showAuthModal.value = false; }, 1200);
+            await fetchConfig();
+            if (data && data.is_authorized) {
+              authTestResult.value = { valid: true, message: data.message || 'Apple ID 授权有效，已成功连接资料库！' };
+              setTimeout(() => {
+                showAuthModal.value = false;
+                if (currentAppTab.value === 'cloud') {
+                  if (cloudSubTab.value === 'playlists') fetchUserPlaylists();
+                  else if (cloudSubTab.value === 'songs') fetchUserLibrarySongs();
+                }
+              }, 1200);
             } else {
-              authTestResult.value = { valid: false, message: 'Token 验证失败，请确认是否过期或重新登录提取。' };
+              authTestResult.value = { valid: false, message: data.message || 'Token 验证失败，请确认是否过期或重新登录提取。' };
             }
           } catch (e) {
             authTestResult.value = { valid: false, message: '网络请求异常: ' + e.message };
@@ -2494,8 +2500,21 @@
                 autoLoggingIn.value = false;
                 autoLoginStatusText.value = '抓取成功！';
                 authTestResult.value = { valid: true, message: data.message || '已自动捕获并连接 Apple ID 资料库！' };
-                fetchConfig();
-                setTimeout(() => { showAuthModal.value = false; }, 1500);
+                await fetchConfig();
+                if (config.value && config.value.is_authorized) {
+                  setTimeout(() => {
+                    showAuthModal.value = false;
+                    if (currentAppTab.value === 'cloud') {
+                      if (cloudSubTab.value === 'playlists') {
+                        fetchUserPlaylists();
+                      } else if (cloudSubTab.value === 'songs') {
+                        fetchUserLibrarySongs();
+                      }
+                    }
+                  }, 1200);
+                } else {
+                  authTestResult.value = { valid: false, message: '配置验证未通过，请重试或手动保存 Token' };
+                }
                 return;
               }
               if (data.status === 'failed') {
@@ -4021,13 +4040,21 @@
           try {
             const res = await fetch('/api/user/playlists?limit=100');
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法访问个人歌单: ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               userPlaylists.value = data.playlists || [];
             } else {
               alert('获取歌单失败: ' + (data.detail || '未知错误'));
             }
           } catch (e) {
-            alert('请求歌单异常: ' + e.message);
+            alert('请求歌单网络异常: ' + e.message);
           } finally {
             loadingPlaylists.value = false;
           }
@@ -4038,6 +4065,14 @@
           try {
             const res = await fetch(`/api/user/playlists/${pl.id}`, { method: 'DELETE' });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法删除歌单 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               userPlaylists.value = userPlaylists.value.filter(p => p.id !== pl.id);
               selectedCloudPlaylists.value = selectedCloudPlaylists.value.filter(id => id !== pl.id);
@@ -4061,6 +4096,14 @@
               body: JSON.stringify({ playlist_ids: selectedCloudPlaylists.value })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法批量删除歌单 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               alert(`成功删除 ${data.deleted_count} 个歌单！` + (data.failed_ids && data.failed_ids.length ? `\n${data.failed_ids.length} 个删除失败` : ''));
               fetchUserPlaylists();
@@ -4125,6 +4168,14 @@
           try {
             const res = await fetch(`/api/user/playlists/${pl.id}/tracks?limit=100&fetch_all=true`);
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法获取歌单曲目 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               playlistTracks.value = data.tracks || [];
             } else {
@@ -4160,6 +4211,14 @@
               body: JSON.stringify({ track_ids: [track.id] })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法从歌单移除歌曲 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success && data.deleted_count > 0) {
               playlistTracks.value = playlistTracks.value.filter(t => t.id !== track.id);
               selectedPlaylistTracks.value = selectedPlaylistTracks.value.filter(id => id !== track.id);
@@ -4184,6 +4243,14 @@
               body: JSON.stringify({ track_ids: selectedPlaylistTracks.value })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法批量移除歌曲 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               alert(`成功从歌单移除 ${data.deleted_count} 首歌曲！`);
               const deletedSet = new Set(selectedPlaylistTracks.value);
@@ -4259,6 +4326,14 @@
               body: JSON.stringify({ track_ids: selectedCloudAddSongs.value })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法添加歌曲至歌单 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success && data.added_count > 0) {
               alert(`已成功将 ${data.added_count} 首歌曲添加至歌单「${viewingPlaylist.value.name}」！`);
               selectedCloudAddSongs.value = [];
@@ -4325,6 +4400,14 @@
               })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法添加本地歌曲至歌单 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success && data.added_count > 0) {
               alert(`已成功将本地歌曲「${song.title || song.file_name}」添加至歌单「${viewingPlaylist.value.name}」！`);
               const reloadRes = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks?limit=100&fetch_all=true`);
@@ -4360,6 +4443,14 @@
               body: JSON.stringify({ tracks: tracksPayload })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法批量添加本地歌曲 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               let msg = `成功添加 ${data.added_count} 首本地歌曲至歌单！`;
               if (data.failed_titles && data.failed_titles.length > 0) {
@@ -4416,6 +4507,14 @@
               body: JSON.stringify({ track_ids: [track.id] })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法添加歌曲至歌单 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success && data.added_count > 0) {
               const reloadRes = await fetch(`/api/user/playlists/${viewingPlaylist.value.id}/tracks?limit=100&fetch_all=true`);
               const reloadData = await reloadRes.json();
@@ -4458,6 +4557,14 @@
               })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法修改歌单 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               editingPlaylist.value.name = editPlaylistName.value.trim();
               editingPlaylist.value.description = editPlaylistDesc.value.trim();
@@ -4551,6 +4658,14 @@
           try {
             const res = await fetch(`/api/user/library/search?term=${encodeURIComponent(term)}&limit=100`);
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法访问个人资料库 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               serverSearchResults.value = data.songs || [];
             } else {
@@ -4569,13 +4684,21 @@
           try {
             const res = await fetch(`/api/user/library/songs?limit=100&fetch_all=${fetchAll}&sort=-dateAdded`);
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法访问个人资料库: ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               userLibrarySongs.value = data.songs || [];
             } else {
               alert('获取资料库歌曲失败: ' + (data.detail || '未知错误'));
             }
           } catch (e) {
-            alert('请求资料库歌曲异常: ' + e.message);
+            alert('请求资料库歌曲网络异常: ' + e.message);
           } finally {
             loadingCloudSongs.value = false;
           }
@@ -4586,6 +4709,14 @@
           try {
             const res = await fetch(`/api/user/library/songs/${song.id}`, { method: 'DELETE' });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法删除歌曲 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               userLibrarySongs.value = userLibrarySongs.value.filter(s => s.id !== song.id);
               if (serverSearchResults.value) {
@@ -4612,6 +4743,14 @@
               body: JSON.stringify({ song_ids: selectedCloudSongs.value })
             });
             const data = await res.json();
+            if (res.status === 401) {
+              alert(`无法批量删除歌曲 (401): ${data.detail || '未授权或登录已过期'}。\n请点击右上角「Apple ID」重新连接。`);
+              return;
+            }
+            if (res.status === 403) {
+              alert(`本地会话安全校验失败 (403): ${data.detail || '拒绝访问'}。请刷新页面重试。`);
+              return;
+            }
             if (data.success) {
               alert(`成功删除 ${data.deleted_count} 首资料库歌曲！` + (data.failed_ids && data.failed_ids.length ? `\n${data.failed_ids.length} 首删除失败` : ''));
               fetchUserLibrarySongs(true);

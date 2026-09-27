@@ -1,4 +1,5 @@
 import json
+import logging
 import random
 import re
 import threading
@@ -12,6 +13,8 @@ from applemusic.cache import PersistentCache
 from applemusic.config import Config, get_config
 from applemusic.matcher.cleaner import TextCleaner
 from applemusic.models import AppleMusicTrack, BatchDiagnosticSummary, CatalogSearchOutcome
+
+logger = logging.getLogger(__name__)
 
 
 def parse_retry_after(header_val: Optional[str], default: Optional[float] = None) -> Optional[float]:
@@ -1291,11 +1294,16 @@ class AppleMusicClient:
                 data = resp.json()
                 playlist_id = data.get("data", [{}])[0].get("id")
                 return playlist_id
+            elif resp.status_code in (401, 403):
+                logger.warning("创建歌单失败: HTTP %d (上游认证失败)", resp.status_code)
+                raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
             else:
-                print(f"[Error] 创建歌单失败: HTTP {resp.status_code} - {resp.text[:200]}")
+                logger.error("创建歌单失败: HTTP %d - %s", resp.status_code, resp.text[:200])
                 return None
+        except PermissionError:
+            raise
         except Exception as e:
-            print(f"[Error] 创建歌单网络异常: {e}")
+            logger.error("创建歌单网络异常: %s", e)
             return None
 
     def add_tracks_to_playlist(
@@ -1334,11 +1342,16 @@ class AppleMusicClient:
                 resp = self.session.post(url, headers=headers, json=payload, timeout=15)
                 if resp.status_code in (200, 201, 204):
                     success_count += len(batch)
+                elif resp.status_code in (401, 403):
+                    logger.warning("批量添加歌曲失败: HTTP %d (上游认证失败)", resp.status_code)
+                    raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
                 else:
-                    print(f"[Warning] 批量添加歌曲失败 (批次 {i // batch_size + 1}): HTTP {resp.status_code} - {resp.text[:100]}")
+                    logger.warning("批量添加歌曲失败 (批次 %d): HTTP %d - %s", i // batch_size + 1, resp.status_code, resp.text[:100])
                     failed_ids.extend(batch)
+            except PermissionError:
+                raise
             except Exception as e:
-                print(f"[Warning] 批量添加歌曲请求异常: {e}")
+                logger.error("批量添加歌曲请求异常: %s", e)
                 failed_ids.extend(batch)
 
             # Polite delay between batches
@@ -1427,6 +1440,11 @@ class AppleMusicClient:
 
                         if best_cand_id:
                             return best_cand_id
+                elif resp.status_code in (401, 403):
+                    logger.warning("检索资料库歌曲ID失败: HTTP %d (上游认证失败)", resp.status_code)
+                    raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
+            except PermissionError:
+                raise
             except Exception:
                 pass
         return None
@@ -1450,6 +1468,11 @@ class AppleMusicClient:
                 resp = self.session.post(url, headers=headers, params=params, timeout=15)
                 if resp.status_code in (200, 202):
                     added_count += len(batch)
+                elif resp.status_code in (401, 403):
+                    logger.warning("添加目录歌曲到资料库失败: HTTP %d (上游认证失败)", resp.status_code)
+                    raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
+            except PermissionError:
+                raise
             except Exception:
                 pass
             time.sleep(0.5)
@@ -1489,9 +1512,14 @@ class AppleMusicClient:
                         "date_added": attrs.get("dateAdded"),
                     })
                 return results
+            elif resp.status_code in (401, 403):
+                logger.warning("获取用户歌单失败: HTTP %d (上游认证失败)", resp.status_code)
+                raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
             else:
                 logger.warning("获取用户歌单失败: HTTP %d - %s", resp.status_code, resp.text[:150])
                 return []
+        except PermissionError:
+            raise
         except Exception as e:
             logger.error("获取用户歌单请求异常: %s", e)
             return []
@@ -1537,9 +1565,14 @@ class AppleMusicClient:
 
                     cur_offset += len(data)
                     time.sleep(0.1)
+                elif resp.status_code in (401, 403):
+                    logger.warning("获取歌单歌曲失败 (%s): HTTP %d (上游认证失败)", playlist_id, resp.status_code)
+                    raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
                 else:
                     logger.warning("获取歌单歌曲失败 (%s): HTTP %d", playlist_id, resp.status_code)
                     break
+            except PermissionError:
+                raise
             except Exception as e:
                 logger.error("获取歌单歌曲请求异常 (%s): %s", playlist_id, e)
                 break
@@ -1568,6 +1601,9 @@ class AppleMusicClient:
                 resp = self.session.delete(url, headers=headers, params=params, timeout=15)
                 if resp.status_code in (200, 204):
                     deleted_count += len(batch)
+                elif resp.status_code in (401, 403):
+                    logger.warning("删除歌单曲目失败: HTTP %d (上游认证失败)", resp.status_code)
+                    raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
                 else:
                     logger.warning(
                         "删除歌单曲目失败 (批次 %d): HTTP %d - %s",
@@ -1576,6 +1612,8 @@ class AppleMusicClient:
                         resp.text[:120],
                     )
                     failed_ids.extend(batch)
+            except PermissionError:
+                raise
             except Exception as e:
                 logger.error("删除歌单曲目异常: %s", e)
                 failed_ids.extend(batch)
@@ -1604,6 +1642,8 @@ class AppleMusicClient:
         if catalog_ids:
             try:
                 self.add_tracks_to_library(catalog_ids)
+            except PermissionError:
+                raise
             except Exception as e:
                 logger.warning("添加目录歌曲到资料库失败: %s", e)
 
@@ -1623,6 +1663,9 @@ class AppleMusicClient:
                 resp = self.session.post(url, headers=headers, json=payload, timeout=15)
                 if resp.status_code in (200, 201, 204):
                     added_count += len(batch)
+                elif resp.status_code in (401, 403):
+                    logger.warning("添加曲目至歌单失败: HTTP %d (上游认证失败)", resp.status_code)
+                    raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
                 else:
                     logger.warning(
                         "添加曲目至歌单失败 (批次 %d): HTTP %d - %s",
@@ -1631,6 +1674,8 @@ class AppleMusicClient:
                         resp.text[:120],
                     )
                     failed_ids.extend(batch)
+            except PermissionError:
+                raise
             except Exception as e:
                 logger.error("添加曲目至歌单异常: %s", e)
                 failed_ids.extend(batch)
@@ -1663,7 +1708,12 @@ class AppleMusicClient:
         payload = {"attributes": attrs}
         try:
             resp = self.session.patch(url, headers=headers, json=payload, timeout=12)
+            if resp.status_code in (401, 403):
+                logger.warning("修改歌单失败: HTTP %d (上游认证失败)", resp.status_code)
+                raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
             return resp.status_code in (200, 204)
+        except PermissionError:
+            raise
         except Exception as e:
             logger.error("修改歌单异常 (%s): %s", playlist_id, e)
             return False
@@ -1676,7 +1726,12 @@ class AppleMusicClient:
         headers = self._get_auth_headers(require_user=True)
         try:
             resp = self.session.delete(url, headers=headers, timeout=12)
+            if resp.status_code in (401, 403):
+                logger.warning("删除歌单失败: HTTP %d (上游认证失败)", resp.status_code)
+                raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
             return resp.status_code in (200, 204)
+        except PermissionError:
+            raise
         except Exception as e:
             logger.error("删除歌单异常 (%s): %s", playlist_id, e)
             return False
@@ -1688,10 +1743,13 @@ class AppleMusicClient:
         success = 0
         failed = []
         for pid in playlist_ids:
-            if self.delete_playlist(pid):
-                success += 1
-            else:
-                failed.append(pid)
+            try:
+                if self.delete_playlist(pid):
+                    success += 1
+                else:
+                    failed.append(pid)
+            except PermissionError:
+                raise
             time.sleep(0.3)
         return success, failed
 
@@ -1741,9 +1799,14 @@ class AppleMusicClient:
 
                     cur_offset += len(data)
                     time.sleep(0.1)
+                elif resp.status_code in (401, 403):
+                    logger.warning("获取资料库歌曲失败: HTTP %d (上游认证失败)", resp.status_code)
+                    raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
                 else:
                     logger.warning("获取资料库歌曲失败: HTTP %d", resp.status_code)
                     break
+            except PermissionError:
+                raise
             except Exception as e:
                 logger.error("获取资料库歌曲异常 (offset %d): %s", cur_offset, e)
                 break
@@ -1783,9 +1846,14 @@ class AppleMusicClient:
                         "date_added": attrs.get("dateAdded"),
                     })
                 return songs
+            elif resp.status_code in (401, 403):
+                logger.warning("检索资料库歌曲失败: HTTP %d (上游认证失败)", resp.status_code)
+                raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
             else:
                 logger.warning("检索资料库歌曲失败: HTTP %d", resp.status_code)
                 return []
+        except PermissionError:
+            raise
         except Exception as e:
             logger.error("检索资料库歌曲异常: %s", e)
             return []
@@ -1798,7 +1866,12 @@ class AppleMusicClient:
         headers = self._get_auth_headers(require_user=True)
         try:
             resp = self.session.delete(url, headers=headers, timeout=12)
+            if resp.status_code in (401, 403):
+                logger.warning("删除资料库歌曲失败: HTTP %d (上游认证失败)", resp.status_code)
+                raise PermissionError(f"Apple Music 认证失效 (HTTP {resp.status_code})：Token 已过期或无效，请重新登录")
             return resp.status_code in (200, 204)
+        except PermissionError:
+            raise
         except Exception as e:
             logger.error("删除资料库歌曲异常 (%s): %s", song_id, e)
             return False
@@ -1810,9 +1883,12 @@ class AppleMusicClient:
         success = 0
         failed = []
         for sid in song_ids:
-            if self.delete_library_song(sid):
-                success += 1
-            else:
-                failed.append(sid)
+            try:
+                if self.delete_library_song(sid):
+                    success += 1
+                else:
+                    failed.append(sid)
+            except PermissionError:
+                raise
             time.sleep(0.3)
         return success, failed

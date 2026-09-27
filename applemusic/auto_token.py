@@ -53,10 +53,16 @@ def find_browser_executable() -> Optional[str]:
 class BrowserTokenCapturer:
     """Manages launching browser in CDP mode and extracting media-user-token."""
 
-    def __init__(self, port: Optional[int] = None, config: Optional[Config] = None):
+    def __init__(
+        self,
+        port: Optional[int] = None,
+        config: Optional[Config] = None,
+        on_token_saved: Optional[Callable[[Config], None]] = None,
+    ):
         # Dynamically allocate an ephemeral port by default to prevent port-sniffing/hijacking
         self.port = port if port is not None else find_free_port()
         self.config = config or get_config()
+        self.on_token_saved = on_token_saved
         self.browser_exe = find_browser_executable()
         
         # Base persistent profile directory
@@ -317,6 +323,11 @@ class BrowserTokenCapturer:
                                         self.config.media_user_token = val
                                         self.config.storefront = sf_info
                                         self.config.save()
+                                        if self.on_token_saved:
+                                            try:
+                                                self.on_token_saved(self.config)
+                                            except Exception as cb_err:
+                                                print(f"[Warning] on_token_saved callback error: {cb_err}")
                                         succ_msg = f"🎉 验证成功！账号所属区域为 [{sf_info.upper()}]，已自动连接！"
                                         self._update_state(succ_msg, status="success", success=True, is_authorized=True, storefront=sf_info)
                                         if on_status:
