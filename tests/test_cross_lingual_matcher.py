@@ -167,7 +167,8 @@ class TestCrossLingualMatcher(unittest.TestCase):
         self.assertEqual(dec, DecisionStatus.AUTO_ACCEPT.value)
 
     def test_corroborative_cross_lingual_unlisted_song_with_same_album(self):
-        # An unlisted Japanese song with English title: ONLY allowed as REVIEW if artist AND album AND duration <= 2s match
+        # V5: Uncataloged cross-lingual titles cannot overwrite real title score with fake 0.60.
+        # Different song title with same artist/album/duration must be rejected as NO_MATCH (score <= 0.39).
         src = Track(title="未知の楽曲", artists=["YOASOBI"], duration_ms=200000, album="New Album")
         cand = AppleMusicTrack(
             id="104",
@@ -177,9 +178,12 @@ class TestCrossLingualMatcher(unittest.TestCase):
             album="New Album",
         )
         scored = TrackScorer.score(src, cand)
-        # Should be corroborated as REVIEW (not auto-accept!)
-        self.assertGreaterEqual(scored.score, 0.60)
-        self.assertEqual(scored.confidence, ConfidenceLevel.MEDIUM)
+        self.assertLessEqual(scored.score, 0.39)
+        self.assertEqual(scored.decision, DecisionStatus.NO_MATCH.value)
+        self.assertTrue(any("title_unverified" in c or "title_mismatch" in c for c in scored.evidence.conflicts))
+        best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [scored])
+        self.assertEqual(dec, DecisionStatus.NO_MATCH.value)
+        self.assertIsNone(best)
 
     def test_same_title_different_artist_rejected_eve_case(self):
         # Case 1: 心海 / Eve vs 心海 / 悬在雾中 (Identical short title, completely different artists)
@@ -209,7 +213,7 @@ class TestCrossLingualMatcher(unittest.TestCase):
         )
         scored = TrackScorer.score(src, cand)
         self.assertLess(scored.score, 0.35)
-        self.assertIn("歌名相似度过低", scored.decision_reasons)
+        self.assertTrue(any(r in scored.decision_reasons for r in ("跨语言歌名未核验", "歌名相似度过低", "歌名明显不匹配")))
         best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [scored])
         self.assertEqual(dec, DecisionStatus.NO_MATCH.value)
 
@@ -225,7 +229,7 @@ class TestCrossLingualMatcher(unittest.TestCase):
         )
         scored = TrackScorer.score(src, cand)
         self.assertLess(scored.score, 0.35)
-        self.assertIn("歌名相似度过低", scored.decision_reasons)
+        self.assertTrue(any(r in scored.decision_reasons for r in ("跨语言歌名未核验", "歌名相似度过低", "歌名明显不匹配")))
         best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [scored])
         self.assertEqual(dec, DecisionStatus.NO_MATCH.value)
 
@@ -433,8 +437,8 @@ class TestCrossLingualMatcher(unittest.TestCase):
         self.assertEqual(best.track.id, "reol_cand_1")
 
     def test_single_ep_layer4_corroboration(self):
-        # Uncataloged cross-lingual title with verified artist, Single/EP album, and matching duration
-        # Retains as a plausible candidate for review (>= 0.70) without dangerous false-positive auto-accept
+        # V5: Single/EP label and matching duration cannot forge 0.60 title score.
+        # Uncataloged different song must be rejected as NO_MATCH (score <= 0.39) without fake equality.
         src = Track(
             title="未収録のアニメ曲",
             artists=["FictionJunction"],
@@ -449,9 +453,12 @@ class TestCrossLingualMatcher(unittest.TestCase):
             duration_ms=210500,
         )
         s = TrackScorer.score(src, cand)
-        self.assertGreaterEqual(s.score, 0.70)
+        self.assertLessEqual(s.score, 0.39)
+        self.assertEqual(s.decision, DecisionStatus.NO_MATCH.value)
+        self.assertTrue(any("title_unverified" in c or "title_mismatch" in c for c in s.evidence.conflicts))
         best, conf, dec, reasons, gap = TrackScorer.evaluate_candidates(src, [s])
-        self.assertEqual(dec, DecisionStatus.REVIEW.value)
+        self.assertEqual(dec, DecisionStatus.NO_MATCH.value)
+        self.assertIsNone(best)
 
     def test_character_song_voice_actor_inversion(self):
         # 夏色恋花火 藤田茜 (ふじた あかね) vs Sagiri Izumi (CV:Akane Fujita)

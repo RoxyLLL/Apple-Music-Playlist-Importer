@@ -101,7 +101,12 @@ class MatchingEngine:
                 min_score_gap=self.config.min_score_gap,
             )
 
-            if is_rematch and best and best.score >= effective_min_review and dec == DecisionStatus.NO_MATCH.value:
+            has_title_conflict = bool(
+                best and best.evidence and any(
+                    k in c for c in best.evidence.conflicts for k in ("title_mismatch", "title_unverified", "title_missing")
+                )
+            )
+            if is_rematch and best and not has_title_conflict and best.score >= effective_min_review and dec == DecisionStatus.NO_MATCH.value:
                 dec = DecisionStatus.REVIEW.value
                 conf = ConfidenceLevel.MEDIUM
                 reasons.append(f"重试检索放宽推荐 (得分: {best.score:.2f})")
@@ -109,7 +114,12 @@ class MatchingEngine:
             if has_partial_failures:
                 reasons.append("部分检索词请求受限或异常，已保留当前已发现候选供复核")
 
-            search_status = "matched" if dec == DecisionStatus.AUTO_ACCEPT.value else "review"
+            if dec == DecisionStatus.AUTO_ACCEPT.value:
+                search_status = "matched"
+            elif dec == DecisionStatus.REVIEW.value:
+                search_status = "review"
+            else:
+                search_status = "no_match"
             diag = SingleTrackDiagnostics(
                 target_storefront=sf,
                 executed_queries=executed_query_records or [],
@@ -120,6 +130,10 @@ class MatchingEngine:
                 verification_level=best.evidence.verification_level if best and best.evidence else VerificationLevel.UNVERIFIED.value,
                 matched_fields=best.evidence.matched_fields if best and best.evidence else [],
                 conflicts=best.evidence.conflicts if best and best.evidence else [],
+                title_comparison_method=best.evidence.title_comparison_method if best and best.evidence else None,
+                matched_title_pair=best.evidence.matched_title_pair if best and best.evidence else None,
+                title_details=best.evidence.title_details if best and best.evidence else None,
+                decision_reasons=reasons,
                 discovery_chain=discovery_chain or [],
                 budget_consumed=budget_consumed or {},
             )
@@ -389,6 +403,10 @@ class MatchingEngine:
                         verification_level=best.evidence.verification_level if best and best.evidence else VerificationLevel.UNVERIFIED.value,
                         matched_fields=best.evidence.matched_fields if best and best.evidence else [],
                         conflicts=best.evidence.conflicts if best and best.evidence else [],
+                        title_comparison_method=best.evidence.title_comparison_method if best and best.evidence else None,
+                        matched_title_pair=best.evidence.matched_title_pair if best and best.evidence else None,
+                        title_details=best.evidence.title_details if best and best.evidence else None,
+                        decision_reasons=reasons,
                         discovery_chain=discovery_chain,
                         budget_consumed=budget_consumed,
                     )
@@ -509,6 +527,10 @@ class MatchingEngine:
                     verification_level=best.evidence.verification_level if best and best.evidence else VerificationLevel.UNVERIFIED.value,
                     matched_fields=best.evidence.matched_fields if best and best.evidence else [],
                     conflicts=best.evidence.conflicts if best and best.evidence else [],
+                    title_comparison_method=best.evidence.title_comparison_method if best and best.evidence else None,
+                    matched_title_pair=best.evidence.matched_title_pair if best and best.evidence else None,
+                    title_details=best.evidence.title_details if best and best.evidence else None,
+                    decision_reasons=reasons,
                     discovery_chain=discovery_chain,
                     budget_consumed=budget_consumed,
                 )

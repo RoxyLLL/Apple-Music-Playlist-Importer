@@ -9,10 +9,10 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, root_validator
 
-MATCH_RULE_VERSION = "2026.09.v4"
-ALIAS_VERSION = "2026.09.v4"
+MATCH_RULE_VERSION = "2026.09.v5.1"
+ALIAS_VERSION = "2026.09.v5"
 QUERY_POLICY_VERSION = "2026.09.v4"
-ROMANIZER_VERSION = "2026.09.v4"
+ROMANIZER_VERSION = "2026.09.v5"
 EXCEPTION_REGISTRY_VERSION = "2026.09.v4"
 
 
@@ -58,6 +58,9 @@ class MatchEvidence(BaseModel):
     conflicts: List[str] = Field(default_factory=list)
     provenance: str = "search"
     evidence_families: List[str] = Field(default_factory=list)
+    title_comparison_method: Optional[str] = None
+    matched_title_pair: Optional[List[str]] = None
+    title_details: Optional[Dict[str, Any]] = None
     base_rule_version: str = "2026.09.v1"
     rule_version: str = "2026.09.v1"
     query_policy_version: str = "2026.09.v1"
@@ -121,6 +124,9 @@ class SingleTrackDiagnostics(BaseModel):
     verification_level: str = VerificationLevel.UNVERIFIED.value
     matched_fields: List[str] = Field(default_factory=list)
     conflicts: List[str] = Field(default_factory=list)
+    title_comparison_method: Optional[str] = None
+    matched_title_pair: Optional[List[str]] = None
+    title_details: Optional[Dict[str, Any]] = None
     final_decision: str = "no_match"
     decision_reasons: List[str] = Field(default_factory=list)
     budget_consumed: Dict[str, int] = Field(default_factory=dict)

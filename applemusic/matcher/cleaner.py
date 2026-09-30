@@ -264,6 +264,7 @@ class TextCleaner:
                     if clean_np and not re.search(r"[\u4e00-\u9fa5]", clean_np):
                         variants[clean_np] = None
 
+
         # Add inverted order for multi-word Romaji (e.g. Last First vs First Last: fujita akane <-> akane fujita)
         # Only when is_artist=True (not for song titles)
         if is_artist:
@@ -513,6 +514,13 @@ class TextCleaner:
                 raw,
                 flags=re.IGNORECASE,
             ).strip()
+
+            # Strip book title marks or quotes wrapping the artist name (e.g. 『ユイカ』 -> ユイカ)
+            unwrapped = re.sub(r"^[《「『“\"'\s]+|[》」』”\"'\s]+$", "", cleaned_raw).strip()
+            if unwrapped and unwrapped != cleaned_raw:
+                if cleaned_raw not in details.aliases:
+                    details.aliases.append(cleaned_raw)
+                cleaned_raw = unwrapped
 
             # Check if parenthetical CV or alias:
             alias_m = re.match(r"^([^(（]+)[(（]([^)）]+)[)）]$", cleaned_raw)

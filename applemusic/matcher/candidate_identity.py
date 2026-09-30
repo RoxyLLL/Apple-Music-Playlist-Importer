@@ -79,6 +79,8 @@ class CandidateAggregator:
             track.discovery_path = discovery_path
         if original_jp_track and not getattr(track, "original_jp_track", None):
             track.original_jp_track = original_jp_track
+        if is_equivalent_mapped:
+            track.is_equivalent_mapped = True
 
         temp_cand = CandidateIdentity(
             track=track,

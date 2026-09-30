@@ -630,6 +630,7 @@
                       <i class="fa-solid fa-pause text-xs"></i>
                       <span>等待重试</span>
                     </span>
+                    <span v-else-if="item.candidates && item.candidates.length > 0" class="text-neutral-400 italic">未找到可信匹配 ({{ item.candidates.length }}个候选不符)</span>
                     <span v-else class="text-neutral-400 italic">Apple Music 当前曲库未收录</span>
                   </div>
                 </template>
@@ -678,6 +679,9 @@
                   </span>
                   <span v-else-if="item.decision === 'unprocessed'" class="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-500 border border-neutral-200">
                     待重试
+                  </span>
+                  <span v-else-if="item.candidates && item.candidates.length > 0" class="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200" title="已有候选曲目均未通过可信身份核验">
+                    候选不符
                   </span>
                   <span v-else class="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-600 border border-neutral-200">
                     未收录
@@ -730,11 +734,11 @@
                     <span>{{ item.rematching ? '检索中' : '重试' }}</span>
                   </button>
 
-                  <!-- Manual search modal button -->
+                  <!-- Manual search modal button / Change version if candidates exist -->
                   <button @click="openCandidateModal(item)"
                     class="px-2 py-1.5 rounded-lg text-xs font-medium text-neutral-500 hover:text-sky-600 hover:bg-neutral-100 transition"
-                    title="手动输入关键词搜索 Apple Music">
-                    搜曲库
+                    :title="item.candidates && item.candidates.length > 0 ? '查看或选择检索到的候选版本' : '手动输入关键词搜索 Apple Music'">
+                    {{ item.candidates && item.candidates.length > 0 ? '换版本' : '搜曲库' }}
                   </button>
 
                   <!-- Diagnostics button -->
@@ -1681,8 +1685,8 @@
           <div class="grid grid-cols-2 gap-2 bg-neutral-50 p-3 rounded-xl border border-neutral-200/60 font-mono text-[11px]">
             <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.6' }}</div>
             <div><span class="text-neutral-400">构建标识:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.build_id) || 'unknown' }}</div>
-            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.09.v1' }}</div>
-            <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.09.v1' }}</div>
+            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.rule_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.09.v5.1' }}</div>
+            <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.alias_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.09.v5' }}</div>
             <div><span class="text-neutral-400">目标区域:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.target_storefront) || 'cn' }}</div>
             <div><span class="text-neutral-400">最终决策:</span> <span class="font-bold">{{ diagnosticsModalItem.decision }}</span></div>
             <div><span class="text-neutral-400">证据级别:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.verification_level) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.verification_level) || 'unverified' }}</div>
@@ -1699,6 +1703,28 @@
               <span v-for="c in (diagnosticsModalItem.evidence.conflicts || [])" :key="c" class="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px]">
                 ✗ {{ c }}
               </span>
+            </div>
+          </div>
+
+          <!-- Title Comparison Details -->
+          <div v-if="(diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.title_comparison_method) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.title_comparison_method)" class="space-y-1">
+            <div class="font-semibold text-neutral-700">歌名比对与变体:</div>
+            <div class="p-2.5 bg-neutral-50 rounded-xl border border-neutral-200/60 font-mono text-[11px] space-y-1">
+              <div><span class="text-neutral-400">比对方法:</span> <span class="font-bold text-sky-700">{{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.title_comparison_method) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.title_comparison_method) }}</span></div>
+              <div v-if="(diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.matched_title_pair) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.matched_title_pair)">
+                <span class="text-neutral-400">命中文本对:</span>
+                <span class="text-neutral-800 font-semibold ml-1">
+                  "{{ ((diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.matched_title_pair) || diagnosticsModalItem.diagnostics.matched_title_pair)[0] }}"
+                  ⟷
+                  "{{ ((diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.matched_title_pair) || diagnosticsModalItem.diagnostics.matched_title_pair)[1] }}"
+                </span>
+              </div>
+              <div v-if="(diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.title_details) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.title_details)">
+                <span class="text-neutral-400">详细判定:</span>
+                <span class="text-neutral-600 ml-1">
+                  {{ JSON.stringify(((diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.title_details) || diagnosticsModalItem.diagnostics.title_details).details || ((diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.title_details) || diagnosticsModalItem.diagnostics.title_details)) }}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -2329,7 +2355,7 @@
       }
       const { createApp, ref, computed, watch, onMounted } = Vue;
 
-      createApp({
+      const vueAppInstance = createApp({
         setup() {
         // Core State
         const inputTab = ref('netease'); // 'netease' | 'qqmusic' | 'spotify' | 'local'
@@ -5204,7 +5230,8 @@
           appVersion,
         };
       }
-    }).mount('#app');
+    });
+    window.__vueRoot = vueAppInstance.mount('#app');
     } catch (err) {
       console.error('界面挂载异常:', err);
       var appEl = document.getElementById('app');

@@ -58,93 +58,176 @@ def _fast_sequence_ratio(s1: str, s2: str) -> float:
     return SequenceMatcher(None, s1, s2).ratio()
 
 
+from dataclasses import dataclass
+
+
+@dataclass
+class TitleComparisonResult:
+    similarity: float
+    method: str = "raw_ratio"
+    matched_pair: Optional[Tuple[str, str]] = None
+    is_transliteration: bool = False
+    is_mismatch: bool = False
+    is_unverified: bool = False
+    details: Optional[str] = None
+
+
 @lru_cache(maxsize=8192)
-def _calculate_title_similarity_cached(source_title: str, candidate_title: str, artist: Optional[str] = None) -> float:
-    """Core cached implementation of title similarity."""
+def _compare_single_title_pair(source_title: str, candidate_title: str, artist: Optional[str] = None) -> TitleComparisonResult:
+    """Core cached comparison between two single titles returning structured TitleComparisonResult."""
+    if not source_title or not candidate_title:
+        return TitleComparisonResult(similarity=0.0, method="empty", is_mismatch=False)
+
     s1 = TextCleaner.normalize(source_title)
     s2 = TextCleaner.normalize(candidate_title)
+    if not s1 or not s2:
+        return TitleComparisonResult(similarity=0.0, method="empty", is_mismatch=False)
 
     if s1 == s2:
-        return 1.0
+        return TitleComparisonResult(similarity=1.0, method="exact", matched_pair=(source_title, candidate_title))
 
-    # Compare core cleaned versions (without version tags/noise)
+    # Core cleaned versions (without version tags/noise)
     c1 = TextCleaner.normalize(TextCleaner.clean_title(source_title))
     c2 = TextCleaner.normalize(TextCleaner.clean_title(candidate_title))
-    if c1 == c2:
-        return 0.98
+    if c1 and c2 and c1 == c2:
+        return TitleComparisonResult(similarity=0.98, method="normalized", matched_pair=(c1, c2))
 
-    # Compare ignoring all punctuation
+    # Punctuation-stripped comparison
     p1 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", c1)
     p2 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", c2)
-    if p1 and p1 == p2:
-        return 0.99
+    if p1 and p2 and p1 == p2:
+        return TitleComparisonResult(similarity=0.99, method="punctuation_stripped", matched_pair=(p1, p2))
 
     # Known cross-lingual title aliases (e.g. 夜に駆ける <-> Racing into the Night)
     if are_titles_equivalent(s1, s2, artist=artist) or are_titles_equivalent(c1, c2, artist=artist):
-        return 1.0
+        s_ro = TextCleaner.get_japanese_romaji_variants(s1, is_artist=False) or []
+        c_ro = TextCleaner.get_japanese_romaji_variants(s2, is_artist=False) or []
+        s_ro_clean = {re.sub(r"[^\w]", "", v.lower()) for v in s_ro if v}
+        c_ro_clean = {re.sub(r"[^\w]", "", v.lower()) for v in c_ro if v}
+        cand_clean = re.sub(r"[^\w]", "", s2.lower())
+        src_clean = re.sub(r"[^\w]", "", s1.lower())
+        is_trans = bool(
+            (cand_clean and cand_clean in s_ro_clean)
+            or (src_clean and src_clean in c_ro_clean)
+            or (bool(s_ro_clean & c_ro_clean))
+        )
+        return TitleComparisonResult(similarity=1.0, method="alias", matched_pair=(s1, s2), is_transliteration=is_trans)
 
-    # Check extracted title variants (e.g. bracketed English/Romaji subtitles)
+    # Check extracted title variants (e.g. bracketed subtitles, translations)
     v1_list = TextCleaner.extract_title_variants(source_title)
     v2_list = TextCleaner.extract_title_variants(candidate_title)
     for v1 in v1_list:
         for v2 in v2_list:
             if v1 == v2 or are_titles_equivalent(v1, v2, artist=artist):
-                return 0.98
+                return TitleComparisonResult(similarity=0.98, method="variant_exact", matched_pair=(v1, v2))
             nv1 = TextCleaner.normalize(v1)
             nv2 = TextCleaner.normalize(v2)
             if nv1 == nv2 or are_titles_equivalent(nv1, nv2, artist=artist):
-                return 0.98
-            # Punctuation-stripped comparison (e.g. "Miss Elf's" vs "Miss Elf''s" / "Miss Elf s")
+                return TitleComparisonResult(similarity=0.98, method="variant_normalized", matched_pair=(nv1, nv2))
             p_nv1 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", nv1)
             p_nv2 = re.sub(r"[^\w\u4e00-\u9fa5\u3040-\u30ff]", "", nv2)
             if p_nv1 and p_nv2 and (p_nv1 == p_nv2 or are_titles_equivalent(p_nv1, p_nv2, artist=artist)):
-                return 0.98
-            # Fuzzy variant ratio for minor typos or official metadata discrepancies
+                return TitleComparisonResult(similarity=0.98, method="variant_punct_stripped", matched_pair=(p_nv1, p_nv2))
             if len(nv1) >= 4 and len(nv2) >= 4:
                 v_ratio = _fast_sequence_ratio(nv1, nv2)
                 if v_ratio >= 0.85:
-                    return max(v_ratio, 0.95)
+                    return TitleComparisonResult(similarity=max(v_ratio, 0.95), method="variant_fuzzy", matched_pair=(nv1, nv2))
                 if len(p_nv1) >= 4 and len(p_nv2) >= 4:
-                    if p_nv1 in p_nv2 or p_nv2 in p_nv1:
-                        return 0.92
+                    shorter_p, longer_p = (p_nv1, p_nv2) if len(p_nv1) <= len(p_nv2) else (p_nv2, p_nv1)
+                    ratio_p = len(shorter_p) / max(1, len(longer_p))
+                    if (p_nv1 in p_nv2 or p_nv2 in p_nv1) and ratio_p >= 0.65:
+                        return TitleComparisonResult(similarity=0.85, method="variant_containment", matched_pair=(p_nv1, p_nv2), details=f"variant containment ratio: {ratio_p:.2f}")
                     p_ratio = _fast_sequence_ratio(p_nv1, p_nv2)
                     if p_ratio >= 0.85:
-                        return max(p_ratio, 0.95)
+                        return TitleComparisonResult(similarity=max(p_ratio, 0.90), method="variant_fuzzy", matched_pair=(p_nv1, p_nv2), details=f"variant fuzzy ratio: {p_ratio:.2f}")
 
-    # Japanese Kana/Kanji <-> Romaji comparison with multi-reading and morphological analysis
+    # Japanese Kana/Kanji <-> Romaji / Latin comparison with multi-reading and morphological analysis
     from applemusic.matcher.title_aliases import KANJI_TO_ROMAJI_COMPOUNDS
-    has_japanese = bool(
-        re.search(r"[\u3040-\u30ff]", c1) or re.search(r"[\u3040-\u30ff]", c2)
-        or any(k in c1 for k, _ in KANJI_TO_ROMAJI_COMPOUNDS)
-        or any(k in c2 for k, _ in KANJI_TO_ROMAJI_COMPOUNDS)
-    )
-    if has_japanese:
-        v1_romaji = TextCleaner.get_japanese_romaji_variants(c1, is_artist=False)
-        v2_romaji = TextCleaner.get_japanese_romaji_variants(c2, is_artist=False)
-        for r1 in v1_romaji:
-            for r2 in v2_romaji:
-                if r1 == r2 or are_titles_equivalent(r1, r2, artist=artist):
-                    return 0.98
-                rp1 = re.sub(r"[^\w]", "", r1).lower()
-                rp2 = re.sub(r"[^\w]", "", r2).lower()
-                if rp1 and rp2:
-                    if rp1 == rp2 or are_titles_equivalent(rp1, rp2, artist=artist):
-                        return 0.98
-                    if len(rp1) >= 4 and len(rp2) >= 4:
-                        ratio = _fast_sequence_ratio(r1, r2)
-                        if ratio >= 0.85:
-                            return max(ratio, 0.90)
+
+    def has_jp(t: str) -> bool:
+        return bool(
+            re.search(r"[\u3040-\u30ff]", t)
+            or any(k in t for k, _ in KANJI_TO_ROMAJI_COMPOUNDS)
+        )
+
+    def is_latin_text(t: str) -> bool:
+        return bool(re.search(r"[a-zA-Z]", t) and not re.search(r"[\u4e00-\u9fa5\u3040-\u30ff]", t))
+
+    raw_c1 = TextCleaner.clean_title(source_title)
+    raw_c2 = TextCleaner.clean_title(candidate_title)
+    all_s1 = [raw_c1, c1] + [v for v in v1_list if v and v not in (raw_c1, c1)]
+    all_s2 = [raw_c2, c2] + [v for v in v2_list if v and v not in (raw_c2, c2)]
+
+    best_romaji_res: Optional[TitleComparisonResult] = None
+
+    for t1 in all_s1:
+        for t2 in all_s2:
+            jp1 = has_jp(t1)
+            jp2 = has_jp(t2)
+            lat1 = is_latin_text(t1)
+            lat2 = is_latin_text(t2)
+
+            if jp1 or jp2:
+                v1_ro = TextCleaner.get_japanese_romaji_variants(t1, is_artist=False) if jp1 else ([t1] if lat1 else [])
+                v2_ro = TextCleaner.get_japanese_romaji_variants(t2, is_artist=False) if jp2 else ([t2] if lat2 else [])
+
+                if v1_ro and v2_ro:
+                    for r1 in v1_ro:
+                        for r2 in v2_ro:
+                            if r1 == r2 or are_titles_equivalent(r1, r2, artist=artist):
+                                return TitleComparisonResult(similarity=0.98, method="romaji_exact", matched_pair=(r1, r2), is_transliteration=True)
+
+                            rp1 = re.sub(r"[^\w]", "", r1).lower()
+                            rp2 = re.sub(r"[^\w]", "", r2).lower()
+                            if rp1 and rp2:
+                                if rp1 == rp2 or are_titles_equivalent(rp1, rp2, artist=artist):
+                                    if len(rp1) >= 3:
+                                        return TitleComparisonResult(similarity=0.98, method="romaji_exact", matched_pair=(r1, r2), is_transliteration=True)
+
+                                r1_norm = re.sub(r"\bwo\b", "o", r1).replace("ou", "o").replace("uu", "u").replace("oo", "o")
+                                r2_norm = re.sub(r"\bwo\b", "o", r2).replace("ou", "o").replace("uu", "u").replace("oo", "o")
+                                rp1_norm = re.sub(r"[^\w]", "", r1_norm).lower()
+                                rp2_norm = re.sub(r"[^\w]", "", r2_norm).lower()
+                                if rp1_norm and rp1_norm == rp2_norm and len(rp1_norm) >= 3:
+                                    if rp1 == rp2:
+                                        return TitleComparisonResult(similarity=0.98, method="romaji_exact", matched_pair=(r1, r2), is_transliteration=True)
+                                    else:
+                                        cur_folded = TitleComparisonResult(
+                                            similarity=0.92,
+                                            method="romaji_long_vowel_folded",
+                                            matched_pair=(r1, r2),
+                                            is_transliteration=True,
+                                            details=f"folded: '{r1}' vs '{r2}'",
+                                        )
+                                        if not best_romaji_res or cur_folded.similarity > best_romaji_res.similarity:
+                                            best_romaji_res = cur_folded
+
+                                if len(rp1) >= 4 and len(rp2) >= 4:
+                                    ratio = _fast_sequence_ratio(r1, r2)
+                                    if ratio >= 0.85:
+                                        cur_fuzzy = TitleComparisonResult(
+                                            similarity=max(ratio, 0.88),
+                                            method="romaji_fuzzy",
+                                            matched_pair=(r1, r2),
+                                            is_transliteration=True,
+                                            details=f"fuzzy ratio: {ratio:.3f}",
+                                        )
+                                        if not best_romaji_res or cur_fuzzy.similarity > best_romaji_res.similarity:
+                                            best_romaji_res = cur_fuzzy
+
+    if best_romaji_res and best_romaji_res.similarity >= 0.85:
+        return best_romaji_res
 
     # Katakana loanword phonetic alignment (e.g. ミラージュ <-> mirage)
     loan_sim = TextCleaner.match_katakana_loanword(c1, c2)
     if loan_sim >= 0.85:
-        return 0.98
+        return TitleComparisonResult(similarity=0.98, method="katakana_loanword", matched_pair=(c1, c2), is_transliteration=True)
 
     for v1 in v1_list:
         for v2 in v2_list:
             v_loan = TextCleaner.match_katakana_loanword(v1, v2)
             if v_loan >= 0.85:
-                return 0.98
+                return TitleComparisonResult(similarity=0.98, method="katakana_loanword", matched_pair=(v1, v2), is_transliteration=True)
 
     raw_sim = _fast_sequence_ratio(s1, s2)
     clean_sim = _fast_sequence_ratio(c1, c2)
@@ -157,31 +240,101 @@ def _calculate_title_similarity_cached(source_title: str, candidate_title: str, 
         for v2 in v2_list:
             if TextCleaner.match_katakana_loanword(v1, v2) >= 0.65:
                 contain_bonus = max(contain_bonus, 0.90)
+    contain_detected = False
     if c1 and c2:
         shorter, longer = (c1, c2) if len(c1) <= len(c2) else (c2, c1)
         ratio = len(shorter) / max(1, len(longer))
         if longer.startswith(shorter):
-            if len(shorter) <= 2:
-                if len(longer) <= 3:
-                    contain_bonus = 0.88
-            else:
-                contain_bonus = 0.88
-        elif shorter in longer and ratio >= 0.70:
-            contain_bonus = 0.80
+            if ratio >= 0.65:
+                contain_bonus = max(contain_bonus, 0.80)
+                contain_detected = True
+        elif shorter in longer and ratio >= 0.75:
+            contain_bonus = max(contain_bonus, 0.75)
+            contain_detected = True
 
-    # If core cleaned titles have very low similarity (< 0.40),
-    # do not let shared noise/tags (e.g. '(feat. ...)', '(live)') in raw titles
-    # artificially elevate the score.
     if clean_sim < 0.40:
         base_sim = clean_sim
     else:
         base_sim = max(raw_sim, clean_sim)
 
-    return max(base_sim, contain_bonus)
+    final_sim = max(base_sim, contain_bonus)
+
+    # Determine if this is a confirmed title_mismatch or title_unverified
+    is_mismatch = False
+    is_unverified = False
+    lat1 = is_latin_text(c1)
+    lat2 = is_latin_text(c2)
+    has_cjk1 = bool(re.search(r"[\u4e00-\u9fa5\u3040-\u30ff]", c1))
+    has_cjk2 = bool(re.search(r"[\u4e00-\u9fa5\u3040-\u30ff]", c2))
+    jp_involved = has_jp(raw_c1) or has_jp(raw_c2) or has_jp(c1) or has_jp(c2)
+
+    method_used = "containment" if (contain_detected or contain_bonus > base_sim) else "raw_ratio"
+    if (lat1 and lat2 and final_sim < 0.80) or ((has_cjk1 and has_cjk2) and final_sim < 0.70):
+        is_mismatch = True
+    elif ((has_cjk1 != has_cjk2) or (lat1 != lat2) or jp_involved) and final_sim < 0.60:
+        is_unverified = True
+    elif final_sim < 0.45:
+        if (lat1 and lat2) or (has_cjk1 and has_cjk2):
+            is_mismatch = True
+        else:
+            is_unverified = True
+
+    return TitleComparisonResult(
+        similarity=final_sim,
+        method=method_used,
+        matched_pair=(c1, c2),
+        is_transliteration=False,
+        is_mismatch=is_mismatch,
+        is_unverified=is_unverified,
+    )
+
+
+def _calculate_title_similarity_cached(source_title: str, candidate_title: str, artist: Optional[str] = None) -> float:
+    """Core cached implementation of title similarity."""
+    return _compare_single_title_pair(source_title, candidate_title, artist=artist).similarity
 
 
 class TrackScorer:
     """Calculates match confidence scores and decision statuses for Apple Music candidates."""
+
+    @classmethod
+    def compare_titles(
+        cls,
+        source_title: str,
+        candidate_title: str,
+        trans_title: Optional[str] = None,
+        aliases: Optional[List[str]] = None,
+        artist: Optional[str] = None,
+    ) -> TitleComparisonResult:
+        """
+        Compare core titles, official translation (trans_title), and alternate aliases.
+        Returns the structured TitleComparisonResult of the highest similarity match.
+        """
+        res = _compare_single_title_pair(source_title, candidate_title, artist=artist)
+        if res.similarity >= 0.95:
+            return res
+
+        if trans_title:
+            t_res = _compare_single_title_pair(trans_title, candidate_title, artist=artist)
+            if t_res.similarity > res.similarity:
+                res = t_res
+            if res.similarity >= 0.95:
+                return res
+
+        if aliases:
+            for a in aliases:
+                if a and a.strip():
+                    a_res = _compare_single_title_pair(a.strip(), candidate_title, artist=artist)
+                    if a_res.similarity > res.similarity:
+                        res = a_res
+                    if res.similarity >= 0.95:
+                        return res
+
+        if res.similarity >= 0.80:
+            res.is_mismatch = False
+            res.is_unverified = False
+
+        return res
 
     @classmethod
     def calculate_title_similarity(
@@ -196,25 +349,13 @@ class TrackScorer:
         Calculate similarity between core titles.
         Also checks official translation (trans_title) and alternate aliases.
         """
-        sim = _calculate_title_similarity_cached(source_title, candidate_title, artist=artist)
-        if sim >= 0.95:
-            return sim
-
-        if trans_title:
-            t_sim = _calculate_title_similarity_cached(trans_title, candidate_title, artist=artist)
-            sim = max(sim, t_sim)
-            if sim >= 0.95:
-                return sim
-
-        if aliases:
-            for a in aliases:
-                if a and a.strip():
-                    a_sim = _calculate_title_similarity_cached(a.strip(), candidate_title, artist=artist)
-                    sim = max(sim, a_sim)
-                    if sim >= 0.95:
-                        return sim
-
-        return sim
+        return cls.compare_titles(
+            source_title,
+            candidate_title,
+            trans_title=trans_title,
+            aliases=aliases,
+            artist=artist,
+        ).similarity
 
     @classmethod
     def calculate_artist_similarity(
@@ -247,7 +388,7 @@ class TrackScorer:
                 if not c_cand:
                     continue
                 nc = TextCleaner.normalize(c_cand)
-                if ns == nc or are_artists_equivalent(ns, nc):
+                if ns == nc or are_artists_equivalent(ns, nc) or are_artists_equivalent(s_cand, c_cand):
                     return 1.0
                 sw = ns.split()
                 cw = nc.split()
@@ -449,6 +590,9 @@ class TrackScorer:
             return 1.0
         if a1 in a2 or a2 in a1:
             return 0.90
+        t_sim = cls.calculate_title_similarity(source_album, candidate_album)
+        if t_sim >= 0.85:
+            return t_sim
         return _fast_sequence_ratio(a1, a2)
 
     @classmethod
@@ -460,9 +604,10 @@ class TrackScorer:
 
         # 1. Feature similarities
         pri_s_for_title = source.artists[0] if source.artists else None
-        title_score = cls.calculate_title_similarity(
+        title_comp = cls.compare_titles(
             source.title, candidate.title, trans_title=source.trans_title, aliases=source.aliases, artist=pri_s_for_title
         )
+        title_score = title_comp.similarity
         version_factor, v_reasons = cls.calculate_version_consistency(
             source.title, candidate.title, candidate.album
         )
@@ -492,7 +637,7 @@ class TrackScorer:
                 ns = TextCleaner.normalize(s_cand)
                 for c_cand in pri_cands_c:
                     nc = TextCleaner.normalize(c_cand)
-                    if ns == nc or are_artists_equivalent(ns, nc):
+                    if ns == nc or are_artists_equivalent(ns, nc) or are_artists_equivalent(s_cand, c_cand):
                         has_pri_match = True
                         break
                     sw = ns.split()
@@ -636,27 +781,7 @@ class TrackScorer:
                         evidence=evidence,
                     )
 
-        # 3. Strict Album Track Fingerprint Fallback (for unlisted translations only)
-        # Triggers when artist is verified (>= 0.85), version is consistent, duration matches precisely (<= 2.5s),
-        # and album matches (>= 0.85) OR candidate is a Single/EP.
-        is_album_track_corroborated = False
-        cand_album_is_single = False
-        if candidate.album:
-            ca_lower = candidate.album.lower()
-            cand_album_is_single = "single" in ca_lower or "ep" in ca_lower
-
-        album_ok_for_fallback = (album_score >= 0.85) or (cand_album_is_single and artist_score >= 0.85)
-
-        if title_score < 0.45 and artist_score >= 0.85 and album_ok_for_fallback and version_factor >= 0.0:
-            if source.duration_ms and candidate.duration_ms:
-                diff_sec = abs(source.duration_ms - candidate.duration_ms) / 1000.0
-                if diff_sec <= 2.5:
-                    is_album_track_corroborated = True
-                    # Set title_score to 0.60 for review (never >= 0.80, so title_ok is False and is_strong is False)
-                    title_score = 0.60
-                    reasons.append(f"同专辑/Single同艺人相同时长曲目({diff_sec:.1f}s误差)，疑似跨语种译名(待人工核对)")
-
-        # 4. Dynamic Weighting & Metadata Adequacy
+        # 3. Dynamic Weighting & Metadata Adequacy
         has_artist = bool(source.artists and candidate.artists)
         has_album = bool(source.album and candidate.album)
         has_duration = bool(source.duration_ms and candidate.duration_ms)
@@ -681,18 +806,41 @@ class TrackScorer:
         # Apply version factor
         composite = base_score + version_factor
 
-        # 5. Hard Guards (Orthogonal Double-Independence Verification)
+        # 4. Hard Guards (Orthogonal Double-Independence Verification)
         # Rule 1: Artist mismatch guard
         if source.artists and candidate.artists and artist_score < 0.35:
             composite *= 0.30
             reasons.append("艺人明显不匹配")
             conflicts.append("artist_mismatch: 艺人明显不匹配")
 
-        # Rule 2: Title mismatch guard
-        if title_score < 0.45 and not is_album_track_corroborated:
+        # Rule 2: Title mismatch & unverified guard
+        is_title_mismatch = bool(getattr(title_comp, "is_mismatch", False))
+        is_title_unverified = bool(getattr(title_comp, "is_unverified", False))
+
+        if is_title_mismatch:
+            composite *= 0.30
+            reasons.append("歌名明显不匹配")
+            if not any("title_mismatch" in c for c in conflicts):
+                conflicts.append("title_mismatch: 歌名明显不匹配")
+            composite = min(composite, 0.39)
+        elif is_title_unverified:
+            composite *= 0.30
+            reasons.append("跨语言歌名未核验")
+            if not any("title_unverified" in c for c in conflicts):
+                conflicts.append("title_unverified: 跨语言歌名未核验")
+            composite = min(composite, 0.39)
+        elif not source.title or not candidate.title:
+            composite *= 0.30
+            reasons.append("缺少歌名信息")
+            if not any("title_missing" in c for c in conflicts):
+                conflicts.append("title_missing: 缺少歌名信息")
+            composite = min(composite, 0.39)
+        elif title_score < 0.45:
             composite *= 0.30
             reasons.append("歌名相似度过低")
-            conflicts.append("title_mismatch: 歌名相似度过低")
+            if not any("title_mismatch" in c for c in conflicts):
+                conflicts.append("title_mismatch: 歌名相似度过低")
+            composite = min(composite, 0.39)
 
         # Rule 3: Short title safety guard (e.g. "心海", "Lemon", "Stay", "Intro")
         clean_core, _ = TextCleaner.parse_title(source.title)
@@ -728,35 +876,8 @@ class TrackScorer:
         norm_s_t = TextCleaner.normalize(TextCleaner.clean_title(source.title))
         norm_c_t = TextCleaner.normalize(TextCleaner.clean_title(candidate.title))
 
-        # Check if title match is derived from romanization
-        has_jp_title_s = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", source.title))
-        has_jp_title_c = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fa5]", candidate.title))
-        if has_jp_title_s != has_jp_title_c:
-            s_title_romaji = TextCleaner.get_japanese_romaji_variants(source.title) or []
-            c_title_romaji = TextCleaner.get_japanese_romaji_variants(candidate.title) or []
-            s_title_clean = {re.sub(r"[^\w]", "", v.lower()) for v in s_title_romaji if v}
-            c_title_clean = {re.sub(r"[^\w]", "", v.lower()) for v in c_title_romaji if v}
-            cand_clean = re.sub(r"[^\w]", "", candidate.title.lower())
-            src_clean = re.sub(r"[^\w]", "", source.title.lower())
-            if (cand_clean and cand_clean in s_title_clean) or (src_clean and src_clean in c_title_clean) or (s_title_clean & c_title_clean):
-                is_title_romanized = True
-
-        if not is_title_romanized and norm_s_t != norm_c_t and not are_titles_equivalent(norm_s_t, norm_c_t, artist=pri_s_for_title):
-            v1_list = TextCleaner.extract_title_variants(source.title)
-            if source.trans_title:
-                v1_list.append(source.trans_title)
-            if source.aliases:
-                v1_list.extend(source.aliases)
-            v2_list = TextCleaner.extract_title_variants(candidate.title)
-            direct_variant_match = any(
-                TextCleaner.clean_title(v1) == TextCleaner.clean_title(v2)
-                or _fast_sequence_ratio(TextCleaner.normalize(v1), TextCleaner.normalize(v2)) >= 0.85
-                or are_titles_equivalent(v1, v2, artist=pri_s_for_title)
-                or TextCleaner.match_katakana_loanword(v1, v2) >= 0.65
-                for v1 in v1_list for v2 in v2_list
-            )
-            if not direct_variant_match:
-                is_title_romanized = True
+        # Check if title match is derived from transliteration
+        is_title_romanized = bool(title_comp and title_comp.is_transliteration)
 
         pri_s, _ = TextCleaner.parse_artists(source.artists)
         pri_c, _ = TextCleaner.parse_artists(candidate.artists)
@@ -798,7 +919,38 @@ class TrackScorer:
                 else:
                     evidence_families.append("text_artist")
 
-        if getattr(candidate, "discovery_path", None) in ("jp_equivalents", "apple_equivalent") or getattr(candidate, "is_equivalent_mapped", False):
+        # Determine verification level
+        DEFINITE_TITLE_METHODS = {
+            "exact",
+            "normalized",
+            "punctuation_stripped",
+            "alias",
+            "variant_exact",
+            "variant_normalized",
+            "variant_punct_stripped",
+            "romaji_exact",
+        }
+        is_title_definite = bool(title_comp and title_comp.method in DEFINITE_TITLE_METHODS)
+
+        is_orig_jp_definite = False
+        orig_jp = getattr(candidate, "original_jp_track", None)
+        if orig_jp and getattr(orig_jp, "title", None):
+            orig_comp = cls.compare_titles(
+                source.title, orig_jp.title, trans_title=source.trans_title, aliases=source.aliases, artist=pri_s_for_title
+            )
+            if orig_comp and orig_comp.method in DEFINITE_TITLE_METHODS:
+                is_orig_jp_definite = True
+
+        # Verified catalog equivalent requires either definite title on candidate, or verified mapping from definite original JP track.
+        # Discovery path string or artist ID alone cannot bypass non-definite title identity protection.
+        is_verified_equivalent = False
+        if getattr(candidate, "is_equivalent_mapped", False):
+            if is_title_definite or is_orig_jp_definite:
+                is_verified_equivalent = True
+        elif is_title_definite and getattr(candidate, "discovery_path", None) in ("jp_equivalents", "apple_equivalent"):
+            is_verified_equivalent = True
+
+        if is_verified_equivalent:
             evidence_families.append("apple_equivalent")
 
         if "album" in matched_fields:
@@ -806,23 +958,38 @@ class TrackScorer:
         if "duration" in matched_fields:
             evidence_families.append("duration")
 
-        # Determine verification level
         if isrc_conflict:
             v_level = VerificationLevel.CONFLICT.value
             ev_type = "isrc_conflict"
         elif conflicts:
             v_level = VerificationLevel.CONFLICT.value
             ev_type = "conflict"
-        elif "apple_equivalent" in evidence_families:
+        elif is_verified_equivalent:
             v_level = VerificationLevel.STRONG.value
             ev_type = "apple_equivalent"
-        elif "text_title" in evidence_families and "text_artist" in evidence_families:
+        elif not is_title_definite:
+            # Hard identity protection: non-definite title methods (prefix containment, edit fuzzy,
+            # long-vowel folding, multi-reading approximation) cannot become STRONG via ordinary metadata (artist+duration/album).
+            # They strictly retain their ambiguity and remain at most MEDIUM / REVIEW.
+            v_level = VerificationLevel.MEDIUM.value
+            if title_comp and title_comp.method in ("romaji_fuzzy", "variant_fuzzy"):
+                ev_type = "romaji_fuzzy" if title_comp.method == "romaji_fuzzy" else "variant_fuzzy"
+            elif title_comp and title_comp.method in ("containment", "variant_containment"):
+                ev_type = "containment"
+            elif title_comp and title_comp.method == "romaji_long_vowel_folded":
+                ev_type = "romaji_long_vowel_folded"
+            elif "title" in matched_fields or "artist" in matched_fields:
+                ev_type = "partial"
+            else:
+                v_level = VerificationLevel.WEAK.value
+                ev_type = "weak"
+        elif is_title_definite and "text_title" in evidence_families and "text_artist" in evidence_families:
             v_level = VerificationLevel.STRONG.value
             ev_type = "title_and_artist"
-        elif not (is_title_romanized and is_artist_romanized) and "title" in matched_fields and "artist" in matched_fields:
+        elif is_title_definite and not (is_title_romanized and is_artist_romanized) and "title" in matched_fields and "artist" in matched_fields:
             v_level = VerificationLevel.STRONG.value
             ev_type = "title_and_artist"
-        elif len(set(evidence_families)) >= 2 and ("text_title" in evidence_families or "text_artist" in evidence_families) and ("duration" in evidence_families or "album" in evidence_families):
+        elif is_title_definite and len(set(evidence_families)) >= 2 and ("text_title" in evidence_families or "text_artist" in evidence_families or ("romanizer_derived" in evidence_families and "album" in evidence_families)) and ("duration" in evidence_families or "album" in evidence_families):
             v_level = VerificationLevel.STRONG.value
             ev_type = "independent_corroborated"
         elif evidence_families == ["romanizer_derived"]:
@@ -843,6 +1010,9 @@ class TrackScorer:
             conflicts=conflicts,
             provenance=getattr(candidate, "discovery_path", "search") or "search",
             evidence_families=list(set(evidence_families)),
+            title_comparison_method=title_comp.method if title_comp else None,
+            matched_title_pair=list(title_comp.matched_pair) if (title_comp and title_comp.matched_pair) else None,
+            title_details={"method": title_comp.method, "details": title_comp.details} if title_comp else None,
             rule_version=MATCH_RULE_VERSION,
             query_policy_version=QUERY_POLICY_VERSION,
             romanizer_version=ROMANIZER_VERSION,
@@ -850,17 +1020,23 @@ class TrackScorer:
             alias_version=ALIAS_VERSION,
         )
 
-        # Initial confidence classification
-        if is_album_track_corroborated:
-            confidence = ConfidenceLevel.HIGH if (cand_album_is_single and composite >= 0.88) else ConfidenceLevel.MEDIUM
+        # Initial confidence & decision classification
+        has_critical_conflict = any(
+            any(k in c for k in ("title_mismatch", "title_unverified", "artist_mismatch", "isrc_conflict"))
+            for c in conflicts
+        )
+        if has_critical_conflict or composite < 0.55:
+            confidence = ConfidenceLevel.LOW
+            cand_decision = DecisionStatus.NO_MATCH.value
         elif composite >= 0.88:
             confidence = ConfidenceLevel.EXACT
+            cand_decision = DecisionStatus.REVIEW.value
         elif composite >= 0.72:
             confidence = ConfidenceLevel.HIGH
-        elif composite >= 0.55:
-            confidence = ConfidenceLevel.MEDIUM
+            cand_decision = DecisionStatus.REVIEW.value
         else:
-            confidence = ConfidenceLevel.LOW
+            confidence = ConfidenceLevel.MEDIUM
+            cand_decision = DecisionStatus.REVIEW.value
 
         return MatchCandidate(
             track=candidate,
@@ -871,7 +1047,7 @@ class TrackScorer:
             duration_score=round(duration_factor, 3),
             version_score=round(version_factor, 3),
             confidence=confidence,
-            decision=DecisionStatus.REVIEW.value,
+            decision=cand_decision,
             decision_reasons=reasons,
             evidence=evidence,
         )
@@ -898,9 +1074,20 @@ class TrackScorer:
         score_gap = round(best.score - second.score, 3) if second else 1.0
         reasons = list(best.decision_reasons)
 
-        if best.score < min_review_score:
+        has_title_mismatch = bool(best.evidence and any("title_mismatch" in c for c in best.evidence.conflicts))
+        has_title_unverified = bool(best.evidence and any("title_unverified" in c for c in best.evidence.conflicts))
+        has_title_missing = bool(best.evidence and any("title_missing" in c for c in best.evidence.conflicts))
+        if best.score < min_review_score or has_title_mismatch or has_title_unverified or has_title_missing:
             best.decision = DecisionStatus.NO_MATCH.value
-            return None, ConfidenceLevel.NOT_FOUND, DecisionStatus.NO_MATCH.value, ["无达到及格分的候选"], score_gap
+            if has_title_mismatch:
+                reject_reason = "候选曲目歌名明显不符"
+            elif has_title_unverified:
+                reject_reason = "候选曲目歌名未核验"
+            elif has_title_missing:
+                reject_reason = "候选曲目缺少歌名信息"
+            else:
+                reject_reason = "无达到及格分的候选"
+            return None, ConfidenceLevel.NOT_FOUND, DecisionStatus.NO_MATCH.value, reasons + [reject_reason], score_gap
 
         # Check auto_accept requirements:
         # 1. Verification level is STRONG (two independent strong evidences or consistent ISRC)
@@ -955,7 +1142,16 @@ class TrackScorer:
         if has_conflicts:
             reasons.append(f"存在冲突项({', '.join(best.evidence.conflicts)})，转人工复核")
         elif not is_strong:
-            reasons.append("缺乏两项独立强证据佐证，转人工复核")
+            if best.evidence and best.evidence.evidence_type == "romanizer_derived_unverified":
+                reasons.append("标题/艺人转写吻合，纯转写依赖待人工核对身份")
+            elif best.evidence and best.evidence.evidence_type in ("romaji_fuzzy", "variant_fuzzy"):
+                reasons.append("歌名存在拼写或读音差异，待人工核对")
+            elif best.evidence and best.evidence.evidence_type in ("containment", "variant_containment"):
+                reasons.append("歌名仅前缀或片段包含，待人工核对")
+            elif best.evidence and best.evidence.evidence_type == "romaji_long_vowel_folded":
+                reasons.append("歌名存在长音或读音折叠差异，待人工核对")
+            else:
+                reasons.append("缺乏两项独立强证据佐证，转人工复核")
         else:
             reasons.append("置信度较高但存在微小歧义或分差较小，建议人工复核")
 
