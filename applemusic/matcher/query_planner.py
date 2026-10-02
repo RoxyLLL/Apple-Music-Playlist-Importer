@@ -151,6 +151,24 @@ class QueryPlanner:
             if pq_title:
                 phase_a.append(pq_title)
 
+        # A3. Bilingual translation segments (e.g. '不虚此行 On the Journey', 'ReDreaming Angel 复梦天使')
+        bi_segments = TextCleaner.extract_bilingual_segments(core_t)
+        if primary_artist:
+            for seg in bi_segments:
+                pq_bi = make_planned(f"{seg} {primary_artist}", target_sf, default_loc, "A_native", "bilingual_segment", 3)
+                if pq_bi:
+                    phase_a.append(pq_bi)
+                pq_bi_t = make_planned(seg, target_sf, default_loc, "A_native", "bilingual_segment_title_only", 3)
+                if pq_bi_t:
+                    phase_a.append(pq_bi_t)
+        else:
+            for seg in bi_segments:
+                pq_bi_t = make_planned(seg, target_sf, default_loc, "A_native", "bilingual_segment_title_only", 2)
+                if pq_bi_t:
+                    phase_a.append(pq_bi_t)
+
+        if primary_artist:
+
             # Source aliases if available (bounded to top 2)
             if ctx.aliases:
                 for al in ctx.aliases[:2]:
@@ -173,6 +191,10 @@ class QueryPlanner:
                     pq = make_planned(f"{core_t} {aa}", target_sf, default_loc, "A_native", "artist_alias", 4)
                     if pq:
                         phase_a.append(pq)
+                    for seg in bi_segments:
+                        pq_bi_aa = make_planned(f"{seg} {aa}", target_sf, default_loc, "A_native", "bilingual_segment_artist_alias", 4)
+                        if pq_bi_aa:
+                            phase_a.append(pq_bi_aa)
         else:
             if ctx.trans_title:
                 t_core = TextCleaner.clean_title(ctx.trans_title)

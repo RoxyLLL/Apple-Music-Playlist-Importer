@@ -9,9 +9,9 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, root_validator
 
-MATCH_RULE_VERSION = "2026.09.v5.1"
-ALIAS_VERSION = "2026.09.v5"
-QUERY_POLICY_VERSION = "2026.09.v4"
+MATCH_RULE_VERSION = "2026.09.v6.1"
+ALIAS_VERSION = "2026.09.v6.1"
+QUERY_POLICY_VERSION = "2026.09.v6.1"
 ROMANIZER_VERSION = "2026.09.v5"
 EXCEPTION_REGISTRY_VERSION = "2026.09.v4"
 
@@ -61,6 +61,12 @@ class MatchEvidence(BaseModel):
     title_comparison_method: Optional[str] = None
     matched_title_pair: Optional[List[str]] = None
     title_details: Optional[Dict[str, Any]] = None
+    language_version: Optional[str] = None
+    source_language_version: Optional[str] = None
+    candidate_language_version: Optional[str] = None
+    title_credits: List[str] = Field(default_factory=list)
+    matched_credit_role: Optional[str] = None
+    project_credit_matched: bool = False
     base_rule_version: str = "2026.09.v1"
     rule_version: str = "2026.09.v1"
     query_policy_version: str = "2026.09.v1"
@@ -127,6 +133,12 @@ class SingleTrackDiagnostics(BaseModel):
     title_comparison_method: Optional[str] = None
     matched_title_pair: Optional[List[str]] = None
     title_details: Optional[Dict[str, Any]] = None
+    language_version: Optional[str] = None
+    source_language_version: Optional[str] = None
+    candidate_language_version: Optional[str] = None
+    title_credits: List[str] = Field(default_factory=list)
+    matched_credit_role: Optional[str] = None
+    project_credit_matched: bool = False
     final_decision: str = "no_match"
     decision_reasons: List[str] = Field(default_factory=list)
     budget_consumed: Dict[str, int] = Field(default_factory=dict)

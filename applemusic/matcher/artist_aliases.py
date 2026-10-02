@@ -317,7 +317,8 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"なとり", "natori"},
     {"imase", "imase"},
     {"Atarashii Gakko!", "新しい学校のリーダーズ", "atarashii gakko"},
-    {"幾田りら", "ikura", "幾田莉拉"},
+    # Ikura / Lilas Ikuta (幾田りら) - Source: Apple Music Artist Page (https://music.apple.com/artist/lilas-ikuta/1531633519)
+    {"幾田りら", "ikura", "幾田莉拉", "lilas ikuta", "ikuta lilas", "lilas"},
     {"DAZBEE", "dazbee"},
 
     # Korean Artists (K-Pop)
@@ -351,7 +352,20 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"Reol", "れをる"},
     # Toaka (十明) - Source: Universal Music Japan (https://www.universal-music.co.jp/toaka/)
     {"十明", "toaka"},
+    # Sān-Z / 三Z-STUDIO - Source: Apple Music Artist Page (https://music.apple.com/artist/s%C4%81n-z/1643440788)
+    {"三Z-STUDIO", "三Z工作室", "三z-studio", "三z工作室", "sān-z", "san-z", "sān-z studio", "san-z studio"},
+    # CORSAK / 胡梦周 - Source: Apple Music Artist Page (https://music.apple.com/cn/artist/corsak/1442111166)
+    {"CORSAK", "corsak", "胡梦周", "CORSAK 胡梦周", "corsak 胡梦周"},
 ]
+
+
+def _strip_diacritics(text: str) -> str:
+    """Strip combining diacritical marks for artist name matching (e.g. Sān-Z -> San-Z)."""
+    import unicodedata
+    decomposed = unicodedata.normalize("NFKD", text)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return unicodedata.normalize("NFC", stripped)
+
 
 # Build lookup index from normalized alias -> group_id
 _ALIAS_TO_GROUP: Dict[str, int] = {}
@@ -363,6 +377,41 @@ for gid, group in enumerate(ARTIST_GROUPS):
         p_clean = re.sub(r"[^\w\s]", "", norm).strip()
         if p_clean and p_clean != norm:
             _ALIAS_TO_GROUP[p_clean] = gid
+        # Strip diacritics / tones: "sān-z" -> "san-z"
+        d_norm = _strip_diacritics(norm)
+        if d_norm and d_norm != norm:
+            _ALIAS_TO_GROUP[d_norm] = gid
+            d_clean = re.sub(r"[^\w\s]", "", d_norm).strip()
+            if d_clean and d_clean != d_norm:
+                _ALIAS_TO_GROUP[d_clean] = gid
+
+
+def _lookup_group(name: str) -> Optional[int]:
+    """
+    Look up group_id for an artist name with explicit None check to prevent group_id=0 falsy evaluation.
+    """
+    if not name:
+        return None
+    norm = name.lower().strip()
+    gid = _ALIAS_TO_GROUP.get(norm)
+    if gid is not None:
+        return gid
+    p_clean = re.sub(r"[^\w\s]", "", norm).strip()
+    if p_clean:
+        gid = _ALIAS_TO_GROUP.get(p_clean)
+        if gid is not None:
+            return gid
+    d_norm = _strip_diacritics(norm)
+    if d_norm:
+        gid = _ALIAS_TO_GROUP.get(d_norm)
+        if gid is not None:
+            return gid
+        d_clean = re.sub(r"[^\w\s]", "", d_norm).strip()
+        if d_clean:
+            gid = _ALIAS_TO_GROUP.get(d_clean)
+            if gid is not None:
+                return gid
+    return None
 
 
 def are_artists_equivalent(a1: str, a2: str) -> bool:
@@ -378,15 +427,24 @@ def are_artists_equivalent(a1: str, a2: str) -> bool:
     if n1 == n2:
         return True
 
+    # Check diacritic-stripped equality (e.g. Sān-Z == San-Z)
+    if _strip_diacritics(n1) == _strip_diacritics(n2):
+        return True
+
     # Check clean punctuation
     p1 = re.sub(r"[^\w\s]", "", n1).strip()
     p2 = re.sub(r"[^\w\s]", "", n2).strip()
     if p1 and p1 == p2:
         return True
 
-    # Lookup in alias groups
-    g1 = _ALIAS_TO_GROUP.get(n1) or _ALIAS_TO_GROUP.get(p1)
-    g2 = _ALIAS_TO_GROUP.get(n2) or _ALIAS_TO_GROUP.get(p2)
+    dp1 = _strip_diacritics(p1)
+    dp2 = _strip_diacritics(p2)
+    if dp1 and dp1 == dp2:
+        return True
+
+    # Lookup in alias groups with explicit None check (handles group 0 safely)
+    g1 = _lookup_group(a1)
+    g2 = _lookup_group(a2)
 
     if g1 is not None and g2 is not None and g1 == g2:
         return True
@@ -401,9 +459,7 @@ def get_artist_aliases(artist: str) -> List[str]:
     """
     if not artist:
         return []
-    n = artist.lower().strip()
-    p = re.sub(r"[^\w\s]", "", n).strip()
-    gid = _ALIAS_TO_GROUP.get(n) or _ALIAS_TO_GROUP.get(p)
+    gid = _lookup_group(artist)
     if gid is not None:
         return sorted(list(ARTIST_GROUPS[gid]), key=lambda x: (x.lower(), x))
     return []

@@ -39,16 +39,19 @@ class CandidateIdentity:
         if self.track.id:
             return f"id:{self.track.id}"
 
+        parsed_title = TextCleaner.parse_title_details(self.track.title)
+        lang_ver = parsed_title.language_version or ""
+
         clean_isrc = (self.track.isrc or "").strip().upper()
         if clean_isrc:
-            # Add version fingerprint to distinguish live / remix with same ISRC
+            # Add version fingerprint to distinguish live / remix / language versions with same ISRC
             v_tag = TextCleaner.extract_version_tag(self.track.title) or "orig"
-            return f"isrc:{clean_isrc}:{v_tag}"
+            return f"isrc:{clean_isrc}:{v_tag}:{lang_ver}"
 
         norm_t = TextCleaner.clean_title(self.track.title).lower()
         norm_a = TextCleaner.clean_artist(self.track.artists[0] if self.track.artists else "").lower()
         dur_bucket = (self.track.duration_ms // 4000) if self.track.duration_ms else 0
-        return f"text:{norm_t}:{norm_a}:{dur_bucket}"
+        return f"text:{norm_t}:{norm_a}:{dur_bucket}:{lang_ver}"
 
 
 class CandidateAggregator:

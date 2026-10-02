@@ -58,8 +58,51 @@ VERSION_MAP = {
     "sped_up": ["sped up", "加速版"],
     "slowed": ["slowed", "慢速版", "slowed + reverb", "slowed and reverb"],
     "tv_size": ["tv size", "tv ver", "tv ver.", "tv version", "anime ver", "anime version", "tv edit"],
-    "english_ver": ["english version", "english ver", "english ver.", "eng ver", "eng version"],
+    "japanese_ver": [
+        "japanese version", "japanese ver", "japanese ver.", "japan ver", "japan version",
+        "jp ver", "jp ver.", "日语版", "日文版", "日本語ver", "日本語ver.", "日本語版",
+    ],
+    "english_ver": [
+        "english version", "english ver", "english ver.", "eng ver", "eng version",
+        "英语版", "英文版", "英語ver", "英語ver.", "英語版",
+    ],
+    "chinese_ver": [
+        "chinese version", "chinese ver", "chinese ver.", "chn ver", "chn ver.",
+        "中文版", "国语版", "普通话版", "華語版", "中国語ver", "中国語版",
+    ],
+    "korean_ver": [
+        "korean version", "korean ver", "korean ver.", "kor ver", "kor ver.",
+        "韩语版", "韩文版", "韓国語ver", "韓国語版",
+    ],
     "alternate_cut": ["director's cut", "directors cut", "ディレクターズカット", "special cut", "alternate cut"],
+}
+
+LANGUAGE_VERSION_MAP = {
+    "japanese": [
+        "japanese ver", "japanese version", "japanese ver.", "japan ver", "japan version",
+        "jp ver", "jp ver.", "日语版", "日文版", "日本語ver", "日本語ver.", "日本語版",
+    ],
+    "english": [
+        "english ver", "english version", "english ver.", "eng ver", "eng version",
+        "英语版", "英文版", "英語ver", "英語ver.", "英語版",
+    ],
+    "chinese": [
+        "chinese ver", "chinese version", "chinese ver.", "chn ver", "chn ver.",
+        "中文版", "国语版", "普通话版", "華語版", "中国語ver", "中国語版",
+    ],
+    "korean": [
+        "korean ver", "korean version", "korean ver.", "kor ver", "kor ver.",
+        "韩语版", "韩文版", "韓国語ver", "韓国語版",
+    ],
+}
+
+# Recognized music projects, game studios, community brands, and publisher entities
+PROJECT_OR_PUBLISHER_ENTITIES = {
+    "hoyofair", "hoyo-mix", "hoyomix", "riot games music", "project sekai",
+    "monstercat", "a-sketch", "vocaloid", "san-z", "三z-studio", "三z工作室",
+    "bandai namco", "square enix music", "capcom sound team", "sega sound team",
+    "nintendo", "arcaea", "rayark", "bilibili", "netease cloud music", "qq music",
+    "mihoyo", "hypergryph", "塞壬唱片", "monster siren records", "siren records",
 }
 
 NOISE_ARTISTS = {
@@ -71,6 +114,17 @@ SUBTITLE_PATTERN = r"\s*[-–—/]\s*(?:电视剧|电影|网剧|网综|综艺|�
 
 
 @dataclass
+class ParsedTitleDetails:
+    raw_title: str = ""
+    core_title: str = ""
+    title_variants: List[str] = field(default_factory=list)
+    variant_details: List[Tuple[str, str, bool]] = field(default_factory=list)  # (text, provenance, is_speculative)
+    version_tags: List[str] = field(default_factory=list)
+    language_version: Optional[str] = None  # "japanese", "english", "chinese", "korean"
+    title_credits: List[str] = field(default_factory=list)  # extracted from feat./ft./with in title
+
+
+@dataclass
 class ParsedArtistDetails:
     primary: str = ""
     featured: List[str] = field(default_factory=list)          # explicit feat. / ft. / featuring / with
@@ -78,6 +132,8 @@ class ParsedArtistDetails:
     collaborators: List[str] = field(default_factory=list)     # & / + / / / 、 / ×
     aliases: List[str] = field(default_factory=list)           # readings / bracketed aliases
     all_names: List[str] = field(default_factory=list)         # all valid parsed names
+    publisher_or_project: Optional[str] = None                 # recognized label / project brand
+    title_credits: List[str] = field(default_factory=list)     # credits extracted from song title
 
 
 class TextCleaner:
@@ -376,22 +432,110 @@ class TextCleaner:
         return text
 
     @classmethod
-    def parse_title(cls, title: str) -> Tuple[str, List[str]]:
+    def extract_bilingual_segments(cls, core: str) -> List[str]:
         """
-        Extract core title and structured version tags (e.g. live, remix, instrumental).
-        Returns (title_core, version_tags).
+        Extract continuous bilingual translation segments (e.g. '不虚此行 On the Journey', 'ReDreaming Angel 复梦天使').
+        Returns list of segment strings, or empty list.
+        """
+        if not core:
+            return []
+        s = core.strip()
+        # Japanese Kana is not Chinese/English bilingual
+        if re.search(r"[\u3040-\u30ff]", s):
+            return []
+
+        def is_valid_pair(cjk: str, lat: str) -> bool:
+            # Must have >= 1 Chinese char and no Latin letters in CJK
+            if len(re.findall(r"[\u4e00-\u9fa5]", cjk)) < 1 or re.search(r"[a-zA-Z]", cjk):
+                return False
+            # Must have >= 3 Latin letters and no Chinese chars in Latin
+            if len(re.findall(r"[a-zA-Z]", lat)) < 3 or re.search(r"[\u4e00-\u9fa5]", lat):
+                return False
+            lat_words = [w for w in re.findall(r"[a-zA-Z]+", lat.lower())]
+            if not lat_words:
+                return False
+            # Exclude single common version tags or format keywords
+            single_noise = {
+                "live", "remix", "instrumental", "acoustic", "demo", "ver", "version",
+                "edit", "cut", "cover", "ost", "bgm", "piano", "guitar", "orchestral",
+                "sped", "slowed", "op", "ed", "ep", "single", "album", "deluxe", "radio",
+            }
+            if len(lat_words) == 1 and lat_words[0] in single_noise:
+                return False
+            # Exclude short codes where all words are <= 2 letters (e.g. OP 1, ED 2)
+            if all(len(w) <= 2 for w in lat_words):
+                return False
+            return True
+
+        # Chinese + English
+        m1 = re.match(r"^([\u4e00-\u9fa50-9\s·•]{1,})\s+([a-zA-Z0-9\s'’,\.\-!&]{3,})$", s)
+        if m1:
+            cjk, lat = m1.group(1).strip(), m1.group(2).strip()
+            if is_valid_pair(cjk, lat):
+                return [cjk, lat]
+
+        # English + Chinese
+        m2 = re.match(r"^([a-zA-Z0-9\s'’,\.\-!&]{3,})\s+([\u4e00-\u9fa50-9\s·•]{1,})$", s)
+        if m2:
+            lat, cjk = m2.group(1).strip(), m2.group(2).strip()
+            if is_valid_pair(cjk, lat):
+                return [cjk, lat]
+
+        return []
+
+    @classmethod
+    def _parse_title_components(cls, title: str) -> Tuple[str, List[str], Optional[str], List[str]]:
+        """
+        Internal full title parser.
+        Returns (core_title, version_tags, language_version, title_credits).
         """
         if not title:
-            return "", []
+            return "", [], None, []
 
         cleaned = title
         version_tags: List[str] = []
+        language_version: Optional[str] = None
+        title_credits: List[str] = []
 
-        # 1. Extract bracketed blocks: (...), [...], 【...】, （...）
+        # 1. Extract explicit feat / ft / featuring in brackets or standalone
+        feat_bracket = r"[\(（【\[]\s*(?:feat\.?|ft\.?|featuring)\s+([^()（）【\]]+)[\)）】\]]"
+        for m in re.finditer(feat_bracket, cleaned, flags=re.IGNORECASE):
+            raw_c = m.group(1).strip()
+            parts = re.split(r"\s*[/\\&、／+×,，]\s*", raw_c)
+            for p in parts:
+                p_c = re.sub(r"^[《「『“\"'\s]+|[》」』”\"'\s]+$", "", p).strip()
+                if p_c and p_c.lower() not in NOISE_ARTISTS and p_c not in title_credits:
+                    title_credits.append(p_c)
+
+        # Strip feat bracket from title
+        cleaned = re.sub(feat_bracket, " ", cleaned, flags=re.IGNORECASE)
+
+        standalone_feat = r"\s+(?:feat\.?|ft\.?|featuring)\s+([^\(\[\)\]]+)$"
+        m_s = re.search(standalone_feat, cleaned, flags=re.IGNORECASE)
+        if m_s:
+            raw_c = m_s.group(1).strip()
+            parts = re.split(r"\s*[/\\&、／+×,，]\s*", raw_c)
+            for p in parts:
+                p_c = re.sub(r"^[《「『“\"'\s]+|[》」』”\"'\s]+$", "", p).strip()
+                if p_c and p_c.lower() not in NOISE_ARTISTS and p_c not in title_credits:
+                    title_credits.append(p_c)
+            cleaned = cleaned[: m_s.start()].strip()
+
+        # 2. Extract bracketed blocks: (...), [...], 【...】, （...）
         bracket_pattern = r"[\(（【\[]([^()（）【\]]*)[\)）】\]]"
         matches = re.findall(bracket_pattern, cleaned)
         for m in matches:
             norm_m = m.lower().strip()
+            # Check language versions
+            for lang, keywords in LANGUAGE_VERSION_MAP.items():
+                if any(kw in norm_m for kw in keywords):
+                    if not language_version:
+                        language_version = lang
+                    tag = f"{lang}_ver"
+                    if tag not in version_tags:
+                        version_tags.append(tag)
+                    break
+            # Check version map
             for v_tag, keywords in VERSION_MAP.items():
                 for kw in keywords:
                     if kw in norm_m:
@@ -405,11 +549,20 @@ class TextCleaner:
             prev = cleaned
             cleaned = re.sub(bracket_pattern, " ", cleaned)
 
-        # 2. Check trailing dash phrases: e.g. "Song - Live", "Song - 伴奏"
+        # 3. Check trailing dash phrases: e.g. "Song - Live", "Song - 伴奏", "Song - Japanese Ver."
         dash_match = re.search(r"\s*[-–—]\s*([^–—-]*)$", cleaned)
         if dash_match:
             suffix = dash_match.group(1).lower().strip()
             matched_dash = False
+            for lang, keywords in LANGUAGE_VERSION_MAP.items():
+                if any(kw in suffix for kw in keywords):
+                    if not language_version:
+                        language_version = lang
+                    tag = f"{lang}_ver"
+                    if tag not in version_tags:
+                        version_tags.append(tag)
+                    matched_dash = True
+                    break
             for v_tag, keywords in VERSION_MAP.items():
                 for kw in keywords:
                     if kw in suffix:
@@ -420,12 +573,23 @@ class TextCleaner:
             if matched_dash:
                 cleaned = cleaned[: dash_match.start()].strip()
 
-        # Check explanatory subtitle phrases: e.g. "Song - 电视剧《...》插曲", "Song - 电影《...》主题曲"
+        # Check explanatory subtitle phrases
         sub_match = re.search(SUBTITLE_PATTERN, cleaned, flags=re.IGNORECASE)
         if sub_match:
             cleaned = cleaned[: sub_match.start()].strip()
 
-        # 3. Check standalone trailing keywords, e.g. "晴天 伴奏", "晴天 现场版"
+        # 4. Check standalone trailing keywords
+        for lang, keywords in LANGUAGE_VERSION_MAP.items():
+            for kw in keywords:
+                pat = rf"\s+{re.escape(kw)}$"
+                if re.search(pat, cleaned, flags=re.IGNORECASE):
+                    if not language_version:
+                        language_version = lang
+                    tag = f"{lang}_ver"
+                    if tag not in version_tags:
+                        version_tags.append(tag)
+                    cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
+
         for v_tag, keywords in VERSION_MAP.items():
             for kw in keywords:
                 pat = rf"\s+{re.escape(kw)}$"
@@ -434,15 +598,24 @@ class TextCleaner:
                         version_tags.append(v_tag)
                     cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
 
-        # 4. Strip book title marks and quotation marks without deleting the song name
+        # 5. Strip book title marks and quotation marks
         cleaned = re.sub(r"[《》「」『』\"“”'‘’]", " ", cleaned)
 
-        # 5. Remove extra whitespace and trailing hyphens
+        # 6. Remove extra whitespace and trailing hyphens
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         cleaned = re.sub(r"\s*[-–—/]\s*$", "", cleaned).strip()
 
         core = cleaned if cleaned else title.strip()
-        return core, version_tags
+        return core, version_tags, language_version, title_credits
+
+    @classmethod
+    def parse_title(cls, title: str) -> Tuple[str, List[str]]:
+        """
+        Extract core title and structured version tags (e.g. live, remix, instrumental).
+        Returns (title_core, version_tags).
+        """
+        core, v_tags, _, _ = cls._parse_title_components(title)
+        return core, v_tags
 
     @classmethod
     def clean_title(cls, title: str) -> str:
@@ -451,38 +624,94 @@ class TextCleaner:
         return core
 
     @classmethod
+    def extract_title_variant_details(cls, title: str) -> List[Tuple[str, str, bool]]:
+        """
+        Extract title and alternate titles with (text, provenance, is_speculative).
+        Provenance: 'original', 'bracket', 'dash', 'bilingual_segment'.
+        """
+        if not title:
+            return []
+        core = cls.clean_title(title)
+        results: List[Tuple[str, str, bool]] = []
+        seen: Set[str] = set()
+
+        def add_v(t: str, prov: str, is_spec: bool):
+            clean_t = cls.clean_title(t)
+            if not clean_t:
+                return
+            has_cjk = bool(re.search(r"[\u4e00-\u9fa5\u3040-\u30ff]", clean_t))
+            if not has_cjk and len(clean_t) < 2:
+                return
+            norm = clean_t.lower()
+            if norm in seen:
+                return
+            seen.add(norm)
+            results.append((clean_t, prov, is_spec))
+
+        if core:
+            add_v(core, "original", False)
+
+        # Check bracketed segments
+        bracket_pattern = r"[\(（【\[]([^()（）【\]]*)[\)）】\]]"
+        for m in re.findall(bracket_pattern, title):
+            m_clean = m.strip()
+            # Ignore if version tag or feat
+            is_noise = False
+            for keywords in VERSION_MAP.values():
+                if any(kw in m_clean.lower() for kw in keywords):
+                    is_noise = True
+                    break
+            if re.search(r"^(?:feat\.?|ft\.?|featuring)\s+", m_clean, flags=re.IGNORECASE):
+                is_noise = True
+            for lang_kws in LANGUAGE_VERSION_MAP.values():
+                if any(kw in m_clean.lower() for kw in lang_kws):
+                    is_noise = True
+                    break
+            if not is_noise and len(m_clean) >= 2:
+                add_v(m_clean, "bracket", False)
+
+        # Check dash / slash separators
+        parts = re.split(r"\s*[-–—/]\s*", title)
+        if len(parts) > 1:
+            for p in parts:
+                add_v(p, "dash", False)
+
+        # Check bilingual segments from core title
+        if core:
+            bi_segs = cls.extract_bilingual_segments(core)
+            for seg in bi_segs:
+                add_v(seg, "bilingual_segment", True)
+
+        # Keep max 4 variants
+        return results[:4]
+
+    @classmethod
     def extract_title_variants(cls, title: str) -> List[str]:
         """
         Extract title and any bracketed or dash-separated alternate titles.
         Useful for cross-lingual matches like '打上花火 (Uchiage Hanabi)' or
         '夜に駆ける - Racing into the Night'.
         """
+        return [v[0] for v in cls.extract_title_variant_details(title)]
+
+    @classmethod
+    def parse_title_details(cls, title: str) -> ParsedTitleDetails:
+        """
+        Unified title parser returning structured ParsedTitleDetails.
+        """
         if not title:
-            return []
-        variants = [cls.clean_title(title)]
-
-        # Check bracketed segments
-        bracket_pattern = r"[\(（【\[]([^()（）【\]]*)[\)）】\]]"
-        for m in re.findall(bracket_pattern, title):
-            m_clean = m.strip()
-            # Ignore if it's purely a version tag
-            is_version = False
-            for keywords in VERSION_MAP.values():
-                if any(kw in m_clean.lower() for kw in keywords):
-                    is_version = True
-                    break
-            if not is_version and len(m_clean) >= 2:
-                variants.append(m_clean)
-
-        # Check dash / slash separators: e.g. "Song - English Title"
-        parts = re.split(r"\s*[-–—/]\s*", title)
-        if len(parts) > 1:
-            for p in parts:
-                p_clean = cls.clean_title(p)
-                if p_clean and p_clean not in variants and len(p_clean) >= 2:
-                    variants.append(p_clean)
-
-        return [v for v in variants if v]
+            return ParsedTitleDetails()
+        core, v_tags, lang_ver, credits = cls._parse_title_components(title)
+        v_details = cls.extract_title_variant_details(title)
+        return ParsedTitleDetails(
+            raw_title=title,
+            core_title=core,
+            title_variants=[v[0] for v in v_details],
+            variant_details=v_details,
+            version_tags=v_tags,
+            language_version=lang_ver,
+            title_credits=credits,
+        )
 
     @classmethod
     def clean_artist(cls, artist: str) -> str:
@@ -493,16 +722,23 @@ class TextCleaner:
         return pri if pri else artist.strip()
 
     @classmethod
-    def parse_artist_details(cls, artists: List[str]) -> ParsedArtistDetails:
+    def parse_artist_details(
+        cls, artists: List[str], title_credits: Optional[List[str]] = None
+    ) -> ParsedArtistDetails:
         """
         Structure artist information into primary, featured, character_voices,
-        collaborators, and bracketed aliases/readings.
+        collaborators, bracketed aliases/readings, and publisher_or_project.
         Preserves non-delimited names with commas (e.g. 'Tyler, The Creator').
         """
-        if not artists:
-            return ParsedArtistDetails()
-
         details = ParsedArtistDetails()
+        if title_credits:
+            for tc in title_credits:
+                tc_clean = tc.strip()
+                if tc_clean and tc_clean.lower() not in NOISE_ARTISTS and tc_clean not in details.title_credits:
+                    details.title_credits.append(tc_clean)
+
+        if not artists:
+            return details
 
         for raw in artists:
             if not raw:
@@ -571,6 +807,18 @@ class TextCleaner:
             if n and n not in names and n.lower() not in NOISE_ARTISTS:
                 names.append(n)
         details.all_names = names
+
+        if details.primary:
+            from applemusic.matcher.artist_aliases import are_artists_equivalent, _strip_diacritics
+            pri_norm = _strip_diacritics(details.primary.lower().strip())
+            p_clean = re.sub(r"[^\w\s]", "", pri_norm).strip()
+            if pri_norm in PROJECT_OR_PUBLISHER_ENTITIES or p_clean in PROJECT_OR_PUBLISHER_ENTITIES:
+                details.publisher_or_project = details.primary
+            else:
+                for proj in PROJECT_OR_PUBLISHER_ENTITIES:
+                    if are_artists_equivalent(details.primary, proj):
+                        details.publisher_or_project = details.primary
+                        break
 
         return details
 

@@ -1685,12 +1685,14 @@
           <div class="grid grid-cols-2 gap-2 bg-neutral-50 p-3 rounded-xl border border-neutral-200/60 font-mono text-[11px]">
             <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.6' }}</div>
             <div><span class="text-neutral-400">构建标识:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.build_id) || 'unknown' }}</div>
-            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.rule_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.09.v5.1' }}</div>
-            <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.alias_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.09.v5' }}</div>
+            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.rule_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.09.v6.1' }}</div>
+            <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.alias_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.09.v6.1' }}</div>
             <div><span class="text-neutral-400">目标区域:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.target_storefront) || 'cn' }}</div>
             <div><span class="text-neutral-400">最终决策:</span> <span class="font-bold">{{ diagnosticsModalItem.decision }}</span></div>
             <div><span class="text-neutral-400">证据级别:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.verification_level) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.verification_level) || 'unverified' }}</div>
             <div><span class="text-neutral-400">候选数量:</span> {{ (diagnosticsModalItem.candidates || []).length }}</div>
+            <div v-if="(diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.language_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.language_version)"><span class="text-neutral-400">语言版本:</span> <span class="font-semibold text-sky-700">{{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.language_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.language_version) }}</span></div>
+            <div v-if="(diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.matched_credit_role) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.matched_credit_role)"><span class="text-neutral-400">署名角色:</span> <span class="font-semibold text-purple-700">{{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.matched_credit_role) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.matched_credit_role) }}</span></div>
           </div>
 
           <!-- Matched Fields & Conflicts -->
