@@ -2,8 +2,6 @@
 
 # 🎵 Apple Music Playlist Importer
 
-### The Most Powerful and Elegant Cross-Platform Playlist Migrator & Library Manager for Apple Music
-
 **English | [简体中文](README.md)**
 
 <p align="center">
@@ -24,7 +22,7 @@
   </a>
 </p>
 
-[📥 Download Latest Release (Standalone EXE)](https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases/latest) · [✨ Key Features](#-key-features) · [🚀 3-Step Quickstart](#-3-step-quickstart) · [🛠️ Build from Source](#-development--build-from-source) · [❓ FAQ](#-faq)
+[📥 Download Latest Release (Standalone EXE)](https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases/latest) · [✨ Key Features](#-key-features) · [🚀 3-Step Quickstart](#-3-step-quickstart) · [❓ FAQ](#-faq)
 
 </div>
 
@@ -39,20 +37,18 @@
 
 Migrating playlists from platforms like NetEase Cloud Music, QQ Music, or Spotify to Apple Music often leads to common frustrations:
 
-- ❌ **Missing niche songs, Live concerts, and ACG anime tracks** not present in Apple Music catalog;
-- ❌ **Cross-lingual mismatches** (Japanese Romaji vs. Kana, mixed bilingual subtitles causing wrong matches);
+- ❌ **Missing niche songs and Live concerts** not present in Apple Music catalog;
 - ❌ **Homonym song false positives**, where original hits are incorrectly replaced by covers or instrumental tracks;
 - ❌ **Expensive developer accounts required** by other tools, or painful manual packet sniffing for auth tokens;
-- ❌ **Unordered imported tracks**, making newly added songs difficult to find, and Apple’s official client capping batch views at 100 songs.
+- ❌ **Unordered imported tracks**, and Apple’s official client capping batch views at 100 songs.
 
 **Apple Music Playlist Importer is purpose-built to solve every one of these problems:**
 
-| Feature Comparison | Traditional Importers / Plugins | Apple Music Playlist Importer (v2.0.7) |
+| Feature Comparison | Traditional Importers / Plugins | Apple Music Playlist Importer |
 | :--- | :--- | :--- |
-| **Uncataloged / Unavailable Songs** | ❌ Lost completely, resulting in broken playlists | ✅ **One-click automatic audio retrieval from Bilibili**, embedding HD album artwork and ID3 tags, saved locally and synced directly to **iCloud Music Library** |
-| **Multilingual & ACG Matching** | ❌ Basic fuzzy text search only; fails on Kana, voice actors, and project credits | ✅ **Proprietary V6.1 Matching Engine** with Katakana phonetics, bilingual splitting, ACG project entities, CV & featured artist extraction, and Apple Equivalents cross-storefront discovery |
-| **Homonym & Cover Protection** | ⚠️ High error rate (mismatched to covers, instrumentals, or remixes) | ✅ **Multi-dimensional scoring & strict safety guardrails**, distinguishing Live/Original/Covers with 30s official audio previews and version switching |
-| **Ease of Use** | ❌ Requires Python, Node.js, Docker, or manual proxy sniffing | ✅ **Single-file portable Windows executable (EXE)** with one-click Edge browser automatic Token capture (no Apple Developer account needed) |
+| **Uncataloged / Unavailable Songs** | ❌ Lost completely, resulting in broken playlists | ✅ **One-click automatic audio retrieval from Bilibili**, embedding artwork & ID3 tags, synced directly to **iCloud Music Library** |
+| **Matching Accuracy** | ⚠️ High error rate (mismatched to covers or instrumentals) | ✅ **Intelligent multi-dimensional scoring**, distinguishing Live/Original/Covers with 30s official audio previews and version switching |
+| **Ease of Use** | ❌ Requires Python environment or manual proxy sniffing | ✅ **Single-file portable Windows executable (EXE)** with one-click Edge browser automatic Token capture (no Apple Developer account needed) |
 | **Cloud Library Management** | ❌ One-time import only | ✅ **Full Library Butler** (bypasses the 100-song cap for batch deletion, version switching, and sorted by newly added date) |
 | **All-Device Roaming** | ⚠️ Stored locally on PC only | ✅ **Direct iCloud Music Library integration**, listening seamlessly across iPhone, iPad, Mac, and CarPlay |
 
@@ -60,28 +56,10 @@ Migrating playlists from platforms like NetEase Cloud Music, QQ Music, or Spotif
 
 ## 🎯 Key Features
 
-### 1. Instant Cross-Platform Migration
-- Supports pasting playlist share links or share text from **NetEase Cloud Music**, **QQ Music**, and **Spotify**.
-- Supports importing local **TXT / CSV** playlist files, parsing hundreds of tracks in seconds.
-
-### 2. V6.1 Multilingual & Complex Credit Matching Engine 🌟
-- **Katakana Phonetic Engine & Romaji Transliteration**: Native bidirectional phonetic matching for Japanese Hiragana, Katakana, Kanji, and Romaji (e.g., `すきだから` / `Sukidakara` / `好きだから`).
-- **Bilingual Title Segmentation**: Automatically identifies and segments bilingual combined titles (e.g., `Nameless Faces / 问名无面`).
-- **ACG Project & Publisher Recognition**: Deeply adapted for project entities like HoYoFair, BanG Dream!, LoveLive!, The Idolmaster, VTuber agencies, accurately extracting project brands, voice actors, and featured artists (`feat.`, `CV`, `Vocalist`).
-- **Homonym False-Positive Guard & English Title Protection**: Prevents accidental false positives caused by similar track durations or cover songs, strictly enforcing safety boundary rules.
-- **Apple Equivalents Cross-Storefront Discovery**: Discovers equivalent tracks across regional storefronts (CN, US, JP, etc.).
-- **30-Second Official Audio Preview**: Listen to 30-second official audio snippets and freely switch versions before deciding.
-
-### 3. Automatic Audio Gap-Filling from Bilibili (Flagship Feature 🌟)
-- For songs not available on Apple Music due to licensing, click **"Fill with Bilibili"** to retrieve original or Live audio.
-- Automatically extracts high-fidelity audio, downloads and embeds **HD album artwork, artist metadata, and standard ID3 tags**.
-- Automatically copies to the Apple Music Auto-Add directory, syncing straight to **iCloud Music Library** for seamless playback across mobile, tablet, and desktop.
-
-### 4. Full-Featured Apple Music Library Manager
-- **Bypass the 100-Song Limit**: Smoothly view, multi-select, and batch remove tracks from large playlists with thousands of songs.
-- **Playlist Management**: View and modify playlist names and descriptions; support single or multi-playlist batch deletion.
-- **Date Added Sorting**: Default reverse chronological sort by **Date Added**, locating newly imported tracks in seconds, with ascending/descending toggles by title or artist.
-- **Local Music Management**: Scan local audio files, reveal in file explorer, and manage audio metadata.
+- **Cross-Platform Playlist Migration**: Supports pasting playlist share links from NetEase Cloud Music, QQ Music, and Spotify, or importing local TXT/CSV playlist files.
+- **Smart High-Precision Matching**: Automatically identifies tracks and artists, providing 30-second official audio previews and version switching to ensure the right track every time.
+- **Automatic Audio Gap-Filling from Bilibili (Flagship Feature 🌟)**: For tracks unavailable on Apple Music, retrieve high-quality audio from Bilibili with embedded album artwork and metadata, synced directly to your iCloud Music Library.
+- **Full-Featured Apple Music Library Manager**: Bypasses the 100-song cap to view and batch-remove tracks from large playlists, with sorting by Date Added.
 
 ---
 
@@ -130,41 +108,6 @@ Before your first import, authorize your Apple ID once (no Apple Developer accou
 4. Upon successful login, the app **automatically captures the Music User Token in the background**, and displays "Connected".
 
 > 🔒 **Privacy Guarantee**: All operations run purely locally on your machine (`127.0.0.1`). Credentials and tokens are stored solely in your local configuration and **are never uploaded to any external server**.
-
----
-
-## 🛠️ Development & Build from Source
-
-If you want to run from source code or contribute:
-
-### Prerequisites
-- Python 3.10+
-- Windows 10 / 11 (64-bit)
-
-### Run from Source
-```powershell
-# 1. Clone the repository
-git clone https://github.com/RoxyLLL/Apple-Music-Playlist-Importer.git
-cd Apple-Music-Playlist-Importer
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Launch GUI application
-python run_gui.py
-```
-
-### Run Full Test Suite
-```powershell
-pytest -v
-```
-
-### Build Standalone Windows EXE
-```powershell
-pip install pyinstaller
-python build_exe.py
-```
-Upon completion, the executable `AppleMusicImporter.exe` will be generated in both the project root and `dist/` directory.
 
 ---
 
