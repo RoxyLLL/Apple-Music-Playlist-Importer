@@ -4,7 +4,7 @@
 
 ### 可能是最好用、最优雅的 Apple Music 跨平台歌单搬家与资料库管理神器
 
-**一键迁移网易云 / QQ 音乐 / Spotify 歌单 · B 站音源无损自动补漏 · 真正 100% 完整度迁移 · Windows 单文件绿色版**
+**[English](README_EN.md) | 简体中文**
 
 <p align="center">
   <a href="https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases">
@@ -12,6 +12,9 @@
   </a>
   <a href="https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases">
     <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(64--bit)-0078d7.svg?style=for-the-badge&logo=windows&logoColor=white" alt="Platform">
+  </a>
+  <a href="https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/actions">
+    <img src="https://img.shields.io/badge/Tests-256%20Passed-brightgreen.svg?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests">
   </a>
   <a href="https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/stargazers">
     <img src="https://img.shields.io/github/stars/RoxyLLL/Apple-Music-Playlist-Importer?style=for-the-badge&color=gold" alt="Stars">
@@ -21,58 +24,64 @@
   </a>
 </p>
 
-[📥 立即下载最新版 (免安装 EXE)](https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases/latest) · [✨ 核心功能](#-它能用来干什么) · [🚀 3 步上手指南](#-3-步极速上手) · [❓ 常见问题](#-常见问题-faq)
+[📥 立即下载最新版 (免安装 EXE)](https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases/latest) · [✨ 核心功能](#-它能用来干什么) · [🚀 3 步上手指南](#-3-步极速上手) · [🛠️ 源码运行](#-开发者与源码构建) · [❓ 常见问题](#-常见问题-faq)
 
 </div>
 
 ---
 
 > 💡 **无需安装 Python，无需配置复杂环境！**  
-> 下载单个 `AppleMusicImporter.exe`，双击即可直接运行。
+> 直接在 [Releases](https://github.com/RoxyLLL/Apple-Music-Playlist-Importer/releases/latest) 下载单个 `AppleMusicImporter.exe`，双击即可直接运行。
 
 ---
 
 ## 🌟 为什么选择它？
 
-从国内音乐平台转到 Apple Music，你是否也遇到过这些头疼的问题？
+从网易云音乐、QQ 音乐、Spotify 等平台转到 Apple Music，你是否也遇到过这些痛点？
 
-- ❌ **很多小众歌、Live 现场版在 Apple Music 搜不到**，迁移后歌单缺斤少两；
-- ❌ **同名歌曲经常匹配错**，把原版误匹配成了翻唱或纯伴奏；
-- ❌ **很多工具还要买几百块的苹果开发者账号**，或者需要手动抓包配置 Token；
-- ❌ **歌单里的歌曲导入后乱序**，找不到刚导进去的歌。
+- ❌ **很多冷门歌曲、Live 现场版、ACG 动漫歌曲在 Apple Music 搜不到**，迁移后歌单缺斤少两；
+- ❌ **跨语种歌名经常匹配错**（日文罗马音/假名对不上、中英文副标题导致误匹配）；
+- ❌ **同名歌曲防不胜防**，常常把原版误匹配成了同名纯伴奏或翻唱；
+- ❌ **很多工具必须购买几百上千元的苹果开发者账号**，或需要复杂的抓包与环境变量配置；
+- ❌ **歌单里的歌曲导入后乱序**，找不到刚导进去的歌；官方客户端一次最多只能浏览或删除 100 首歌。
 
 **Apple Music Playlist Importer 为解决这些痛点而生：**
 
-| 功能对比 | 传统导入工具 | Apple Music Playlist Importer |
+| 功能对比 | 传统导入工具 / 插件 | Apple Music Playlist Importer (v2.0.7) |
 | :--- | :--- | :--- |
-| **未收录/下架歌曲** | ❌ 直接丢失，歌单残缺 | ✅ **一键从 B 站补全音源并写入资料库**，实现 100% 完整迁移 |
-| **匹配准确率** | ⚠️ 经常串歌（匹配成翻唱/伴奏） | ✅ **智能多维打分**，严格区分 Live/翻唱/原版，支持 30 秒试听 |
-| **使用门槛** | ❌ 需安装 Python、Docker 或手动抓包 | ✅ **单文件免安装绿色 EXE**，支持 Edge 一键自动授权 |
-| **云端资料库管理** | ❌ 仅支持一次性导歌 | ✅ **全功能资料库管家**（批量删歌/换版本/按加入时间排序） |
-| **全设备漫游** | ⚠️ 仅保存在本机 | ✅ **自动同步到 iCloud**，iPhone、iPad、Mac 随时随地收听 |
+| **未收录 / 灰色下架歌曲** | ❌ 直接丢失，歌单残缺不全 | ✅ **一键从 B 站检索高品质音源补漏**，自动嵌入高清封面与 ID3 标签，写入本地并同步至 **iCloud 云端资料库** |
+| **多语种与 ACG 匹配** | ❌ 仅支持基础文本模糊搜索，假名/声优/企划歌名完全抓瞎 | ✅ **自研 V6.1 智能匹配引擎**，内置假名音标、双语切分、ACG 企划实体与声优识别，跨区 Apple Equivalents 发现 |
+| **同名与翻唱防误伤** | ⚠️ 极易串歌（匹配成翻唱/伴奏/混音） | ✅ **多维评分与严格防误伤机制**，严格区分 Live/翻唱/原版，支持 30 秒官方原声试听与自由换版本 |
+| **使用门槛** | ❌ 需安装 Python、Node.js、Docker 或手动抓包抓取 Token | ✅ **Windows 单文件免安装绿色 EXE**，支持 Edge 浏览器一键秒级自动授权捕获 Token（无需开发者账号） |
+| **云端资料库管理** | ❌ 仅支持一次性导歌 | ✅ **全功能资料库管家**（突破 100 首限制批量删歌、换版本、按最新添加时间排序） |
+| **全设备漫游** | ⚠️ 仅保存在本机 | ✅ **直通 iCloud 音乐资料库**，iPhone、iPad、Mac、CarPlay 全端随心听 |
 
 ---
 
 ## 🎯 它能用来干什么？
 
 ### 1. 跨平台歌单秒速搬家
-- 支持粘贴 **网易云音乐**、**QQ 音乐**、**Spotify** 的歌单分享链接或口令。
-- 支持直接导入本地 **TXT / CSV** 歌单文件，一键快速解析数百首歌曲。
+- 支持粘贴 **网易云音乐**、**QQ 音乐**、**Spotify** 的歌单分享链接或分享口令。
+- 支持导入本地 **TXT / CSV** 歌单文件，一键快速解析数百首歌曲。
 
-### 2. 智能高精度匹配 & 原声在线试听
-- 自动识别歌曲与歌手，精确区分 **原版 / Live 现场版 / 伴奏版 / Remix 混音**。
-- 提供 **30 秒官方原声在线试听** 与 **自由换版本** 功能，不确定的歌曲听完再决定，拒绝张冠李戴。
+### 2. V6.1 跨语种与复杂署名智能匹配引擎 🌟
+- **片假名音标与罗马音转换**：原生支持日语假名、汉字、罗马音音素互转（如 `すきだから` / `Sukidakara` / `好きだから`）。
+- **双语歌名智能切分**：自动识别并拆分中日、中英双语并列歌名（如 `Nameless Faces / 问名无面`）。
+- **ACG 企划与企划实体主署名识别**：深度适配 HoYoFair、BanG Dream!、LoveLive!、偶像大师、VTuber 企划等复杂企划歌手，准确提取企划实体、演唱声优及合作艺人（feat. / CV / Vocalist）。
+- **同名防误伤与英文歌名保护**：杜绝因时长相近或同名翻唱导致的误匹配，严格执行安全边界规则。
+- **Apple Equivalents 跨区曲库发现**：支持跨 Storefront（国区/日区/美区等）发现等价曲目与版本。
+- **30 秒官方原声试听**：提供 30 秒官方原声在线试听与自由换版本功能，听完再决定，拒绝张冠李戴。
 
 ### 3. B 站音源无损自动补漏（核心特色 🌟）
-- 对于 Apple Music 没有版权或下架的歌曲，支持 **一键从 B 站检索原唱音源**。
-- 自动转码为高品质音频，自动嵌入**高清专辑封面、歌手信息与 ID3 标签**。
-- 自动加入 Apple Music 导入目录并同步至 **iCloud 个人云端资料库**，手机、平板、电脑全端随时听。
+- 对于 Apple Music 没有版权或下架的灰色歌曲，支持 **一键从 B 站检索原唱/Live 高清音源**。
+- 自动提取音频、高保真转码，自动嵌入 **高清专辑封面、歌手信息与标准 ID3 标签**。
+- 自动加入 Apple Music 导入目录，直通 **iCloud 个人云端音乐资料库**，手机、平板、车载无缝同步。
 
 ### 4. Apple Music 资料库全功能管家
+- **突破 100 首限制**：完美支持上千首超大歌单的全量浏览、多选与批量移除。
 - **歌单管理**：查看、修改歌单名与描述，支持歌单单项与多选批量删除。
-- **曲目管理（突破 100 首限制）**：完美支持上千首超大歌单全量浏览与批量移除。
-- **歌曲加入时间排序**：默认按 **最新加入时间** 排序，新导入的歌曲一秒就能找到，同时支持按歌名、歌手升降序切换。
-- **本地音源管理**：扫描电脑本地音乐文件，支持在文件夹中快速定位、批量修改元数据。
+- **歌曲加入时间排序**：默认按 **最新加入时间** 倒序排列，刚导入的歌曲一秒就能找到，同时支持按歌名、歌手升降序切换。
+- **本地音乐管理**：扫描电脑本地音乐文件，支持在文件夹中快速定位、批量修改元数据。
 
 ---
 
@@ -117,10 +126,45 @@
 
 1. 点击软件界面右上角的 **“连接 Apple ID”**；
 2. 点击 **“启动 Edge 自动抓取 Token”**；
-3. 软件会自动调起浏览器打开 Apple Music 网页版，您只需正常扫码或登录您的 Apple ID；
+3. 软件会自动调起系统自带的 Edge 浏览器打开 Apple Music 网页版，您只需正常扫码或登录您的 Apple ID；
 4. 登录成功后，软件将在**后台秒级自动捕获 Token**，客户端提示“已连接”即可开始使用。
 
 > 🔒 **隐私安全承诺**：所有数据均仅在您的本地设备（`127.0.0.1`）运行，Token 仅保存在本地配置文件中，**绝不会上传到任何第三方服务器**。
+
+---
+
+## 🛠️ 开发者与源码构建
+
+如果您希望从源码运行或二次开发：
+
+### 环境要求
+- Python 3.10+
+- Windows 10 / 11 (64-bit)
+
+### 源码运行
+```powershell
+# 1. 克隆代码仓库
+git clone https://github.com/RoxyLLL/Apple-Music-Playlist-Importer.git
+cd Apple-Music-Playlist-Importer
+
+# 2. 安装 Python 依赖
+pip install -r requirements.txt
+
+# 3. 启动图形界面应用
+python run_gui.py
+```
+
+### 运行全量测试
+```powershell
+pytest -v
+```
+
+### 本地打包单文件 EXE
+```powershell
+pip install pyinstaller
+python build_exe.py
+```
+打包完成后将在项目根目录与 `dist/` 目录生成 `AppleMusicImporter.exe`。
 
 ---
 
@@ -129,7 +173,7 @@
 <details>
 <summary><b>Q1：我需要购买苹果开发者账号（Apple Developer）吗？</b></summary>
 <br>
-<b>完全不需要！</b> 本项目通过 Apple Music 官方网页端的安全授权机制，只要您的 Apple ID 拥有 Apple Music 订阅即可正常使用。
+<b>完全不需要！</b> 本项目通过 Apple Music 官方网页端的安全授权机制，只要您的 Apple ID 拥有 Apple Music 个人或家庭订阅即可正常使用。
 </details>
 
 <details>
