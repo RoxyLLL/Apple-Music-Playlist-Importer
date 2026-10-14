@@ -10,7 +10,7 @@ from functools import lru_cache
 from typing import List, Optional, Tuple
 from applemusic.matcher.artist_aliases import are_artists_equivalent
 from applemusic.matcher.title_aliases import are_titles_equivalent
-from applemusic.matcher.cleaner import TextCleaner, NOISE_ARTISTS
+from applemusic.matcher.cleaner import TextCleaner, NOISE_ARTISTS, VERSION_MAP
 from applemusic.matcher.evidence import (
     MatchEvidence,
     VerificationLevel,
@@ -586,26 +586,40 @@ class TrackScorer:
         return max(pri_score, max_cross_score)
 
     @classmethod
-    def calculate_duration_factor(
+    def is_valid_duration(cls, dur_ms: Optional[int]) -> bool:
+        """Duration must be a valid positive number between 5 seconds and 60 minutes."""
+        return isinstance(dur_ms, (int, float)) and 5000 <= dur_ms <= 3600000
+
+    @classmethod
+    def calculate_duration_similarity(
         cls, dur1_ms: Optional[int], dur2_ms: Optional[int]
-    ) -> float:
-        """Continuous smooth duration decay factor."""
-        if not dur1_ms or not dur2_ms:
-            return 0.0
+    ) -> Optional[float]:
+        """
+        Normalized duration similarity in range [0.0, 1.0].
+        Returns None if either duration is missing, non-positive, or invalid (<5s or >60m).
+        """
+        if not cls.is_valid_duration(dur1_ms) or not cls.is_valid_duration(dur2_ms):
+            return None
 
         diff_sec = abs(dur1_ms - dur2_ms) / 1000.0
         if diff_sec <= 3.0:
-            return 0.05
+            return 1.0
+        elif diff_sec <= 6.0:
+            return 0.90
         elif diff_sec <= 8.0:
-            return 0.02
-        elif diff_sec <= 15.0:
-            return 0.0
-        elif diff_sec <= 30.0:
-            return -0.08
-        elif diff_sec <= 60.0:
-            return -0.18
+            return 0.40
         else:
-            return -0.30
+            return 0.0
+
+    @classmethod
+    def calculate_duration_factor(
+        cls, dur1_ms: Optional[int], dur2_ms: Optional[int]
+    ) -> float:
+        """
+        Legacy duration factor interface returning normalized similarity in [0.0, 1.0].
+        """
+        sim = cls.calculate_duration_similarity(dur1_ms, dur2_ms)
+        return sim if sim is not None else 0.0
 
     @classmethod
     def calculate_version_consistency(
@@ -729,8 +743,18 @@ class TrackScorer:
         elif getattr(candidate, "discovery_path", None) in ("jp_equivalents", "apple_equivalent") or getattr(candidate, "is_equivalent_mapped", False):
             if title_score >= 0.80 and version_factor >= 0.0:
                 artist_score = max(artist_score, 0.90)
-        duration_factor = cls.calculate_duration_factor(source.duration_ms, candidate.duration_ms)
+        duration_sim = cls.calculate_duration_similarity(source.duration_ms, candidate.duration_ms)
+        has_duration = duration_sim is not None
         album_score = cls.calculate_album_similarity(source.album, candidate.album)
+
+        if has_duration:
+            diff_sec = abs(source.duration_ms - candidate.duration_ms) / 1000.0
+            max_sec = max(source.duration_ms, candidate.duration_ms) / 1000.0
+            rel_diff = diff_sec / max_sec if max_sec > 0 else 0.0
+            if (diff_sec >= 20.0 and rel_diff >= 0.08) or diff_sec > 45.0:
+                diff_s_int = int(round(diff_sec))
+                conflicts.append(f"duration_conflict: 时长差异较明显 (相差{diff_s_int}秒)")
+                reasons.append(f"时长相差较明显({diff_s_int}秒)，待人工核对")
 
         # Check primary artist mismatch (R2 / S04) and credit roles
         det_s = TextCleaner.parse_artist_details(source.artists, title_credits=td_s.title_credits)
@@ -875,6 +899,18 @@ class TrackScorer:
                     conflicts.append("isrc_version_conflict: ISRC相同但版本不一致")
                     reasons.append("ISRC相同但版本不一致")
 
+                # Duration conflict: recording duration discrepancy cannot be bypassed by ISRC
+                has_dur_conflict = any("duration_conflict" in c for c in conflicts)
+                if has_dur_conflict:
+                    isrc_conflict = True
+                    if not any("isrc_duration_conflict" in c for c in conflicts):
+                        conflicts.append("isrc_duration_conflict: ISRC相同但录音时长差异显著")
+                    reasons.append("ISRC相同但录音时长差异显著")
+
+                # Any existing conflict in conflicts also invalidates ISRC auto-accept
+                if conflicts:
+                    isrc_conflict = True
+
                 if not isrc_conflict:
                     reasons.append("ISRC精确匹配")
                     if title_score >= 0.80:
@@ -883,7 +919,7 @@ class TrackScorer:
                         matched_fields.append("artist")
                     if album_score >= 0.85:
                         matched_fields.append("album")
-                    if source.duration_ms and candidate.duration_ms and abs(source.duration_ms - candidate.duration_ms) <= 3000:
+                    if has_duration and abs(source.duration_ms - candidate.duration_ms) <= 3000:
                         matched_fields.append("duration")
                     if version_factor >= 0.0:
                         matched_fields.append("version")
@@ -907,7 +943,7 @@ class TrackScorer:
                         title_score=round(title_score, 3),
                         artist_score=round(artist_score, 3),
                         album_score=round(album_score, 3),
-                        duration_score=round(duration_factor, 3),
+                        duration_score=round(duration_sim if duration_sim is not None else 0.0, 3),
                         version_score=round(version_factor, 3),
                         confidence=ConfidenceLevel.EXACT,
                         decision=DecisionStatus.AUTO_ACCEPT.value,
@@ -919,8 +955,8 @@ class TrackScorer:
                     evidence = MatchEvidence(
                         evidence_type="isrc_conflict",
                         verification_level=VerificationLevel.CONFLICT.value,
-                        matched_fields=["isrc"],
-                        conflicts=conflicts,
+                        matched_fields=["isrc"] + (["title"] if title_score >= 0.80 else []) + (["artist"] if artist_score >= 0.70 else []),
+                        conflicts=list(conflicts),
                         provenance="isrc",
                         evidence_families=["isrc"],
                         rule_version=MATCH_RULE_VERSION,
@@ -929,17 +965,47 @@ class TrackScorer:
                         exception_registry_version=EXCEPTION_REGISTRY_VERSION,
                         alias_version=ALIAS_VERSION,
                     )
-                    cand_score = 0.65 if (title_score >= 0.50 or artist_score >= 0.50) else 0.40
+                    has_artist = bool(source.artists and candidate.artists)
+                    has_album = bool(source.album and candidate.album)
+                    if has_artist:
+                        w_title = 0.50
+                        w_artist = 0.35
+                        w_album = 0.10 if has_album else 0.0
+                        w_duration = 0.05 if has_duration else 0.0
+                        total_w = w_title + w_artist + w_album + w_duration
+                        calc_score = (
+                            (title_score * w_title)
+                            + (artist_score * w_artist)
+                            + (album_score * w_album)
+                            + ((duration_sim * w_duration) if has_duration else 0.0)
+                        ) / total_w
+                    else:
+                        calc_score = title_score * 0.70
+                    calc_score += version_factor
+
+                    has_critical = (
+                        title_score < 0.45
+                        or any("title_mismatch" in c for c in conflicts)
+                    )
+                    if has_critical:
+                        cand_score = min(0.40, round(calc_score, 3))
+                        cand_dec = DecisionStatus.NO_MATCH.value
+                        conf = ConfidenceLevel.LOW
+                    else:
+                        cand_score = max(0.65, min(0.95, round(calc_score, 3))) if (title_score >= 0.50 or artist_score >= 0.50) else 0.40
+                        cand_dec = DecisionStatus.REVIEW.value if cand_score >= 0.55 else DecisionStatus.NO_MATCH.value
+                        conf = ConfidenceLevel.MEDIUM if cand_score >= 0.55 else ConfidenceLevel.LOW
+
                     return MatchCandidate(
                         track=candidate,
                         score=cand_score,
                         title_score=round(title_score, 3),
                         artist_score=round(artist_score, 3),
                         album_score=round(album_score, 3),
-                        duration_score=round(duration_factor, 3),
+                        duration_score=round(duration_sim if duration_sim is not None else 0.0, 3),
                         version_score=round(version_factor, 3),
-                        confidence=ConfidenceLevel.MEDIUM if cand_score >= 0.55 else ConfidenceLevel.LOW,
-                        decision=DecisionStatus.REVIEW.value if cand_score >= 0.55 else DecisionStatus.NO_MATCH.value,
+                        confidence=conf,
+                        decision=cand_dec,
                         decision_reasons=reasons,
                         evidence=evidence,
                     )
@@ -947,7 +1013,6 @@ class TrackScorer:
         # 3. Dynamic Weighting & Metadata Adequacy
         has_artist = bool(source.artists and candidate.artists)
         has_album = bool(source.album and candidate.album)
-        has_duration = bool(source.duration_ms and candidate.duration_ms)
 
         if has_artist:
             w_title = 0.50
@@ -959,7 +1024,7 @@ class TrackScorer:
                 (title_score * w_title)
                 + (artist_score * w_artist)
                 + (album_score * w_album)
-                + (duration_factor if has_duration else 0.0)
+                + ((duration_sim * w_duration) if has_duration else 0.0)
             ) / total_w
         else:
             # Missing artist on one side: normalize to title only, no fake neutral boost
@@ -1224,7 +1289,7 @@ class TrackScorer:
             title_score=round(title_score, 3),
             artist_score=round(artist_score, 3),
             album_score=round(album_score, 3),
-            duration_score=round(duration_factor, 3),
+            duration_score=round(duration_sim if duration_sim is not None else 0.0, 3),
             version_score=round(version_factor, 3),
             confidence=confidence,
             decision=cand_decision,
@@ -1288,6 +1353,22 @@ class TrackScorer:
         is_same_song_variant = False
         if second and second.score >= 0.65:
             sec_title_sim = cls.calculate_title_similarity(best.track.title, second.track.title)
+            if sec_title_sim < 0.90:
+                if are_titles_equivalent(best.track.title, second.track.title):
+                    sec_title_sim = 1.0
+                elif getattr(source, "trans_title", None) and (
+                    (cls.calculate_title_similarity(best.track.title, source.title) >= 0.85 and cls.calculate_title_similarity(second.track.title, source.trans_title) >= 0.85)
+                    or (cls.calculate_title_similarity(best.track.title, source.trans_title) >= 0.85 and cls.calculate_title_similarity(second.track.title, source.title) >= 0.85)
+                ):
+                    sec_title_sim = 1.0
+                elif getattr(source, "aliases", None):
+                    for a in source.aliases:
+                        if (
+                            (cls.calculate_title_similarity(best.track.title, source.title) >= 0.85 and cls.calculate_title_similarity(second.track.title, a) >= 0.85)
+                            or (cls.calculate_title_similarity(best.track.title, a) >= 0.85 and cls.calculate_title_similarity(second.track.title, source.title) >= 0.85)
+                        ):
+                            sec_title_sim = 1.0
+                            break
             pri_b, _ = TextCleaner.parse_artists(best.track.artists)
             pri_sec, _ = TextCleaner.parse_artists(second.track.artists)
             norm_pri_b = TextCleaner.normalize(pri_b)

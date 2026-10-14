@@ -23,9 +23,9 @@ class TestWebApi(unittest.TestCase):
         self.auth_headers = {"X-App-Token": SESSION_API_TOKEN}
 
     def test_version_consistency(self):
-        """Ensure __version__ is 2.0.7 and FastAPI version matches."""
-        self.assertEqual(applemusic.__version__, "2.0.7")
-        self.assertEqual(app.version, "2.0.7")
+        """Ensure the release version and FastAPI version match."""
+        self.assertEqual(applemusic.__version__, "2.0.8")
+        self.assertEqual(app.version, "2.0.8")
         self.assertEqual(app.version, applemusic.__version__)
 
     def test_app_token_middleware_enforcement(self):

@@ -28,6 +28,7 @@ from applemusic.auto_token import BrowserTokenCapturer
 from applemusic.client import AppleMusicClient
 from applemusic.config import Config, get_config
 from applemusic.extractors import get_extractor_for
+from applemusic.matcher.cleaner import TextCleaner, VERSION_MAP, LANGUAGE_VERSION_MAP
 from applemusic.matcher.engine import MatchingEngine
 from applemusic.matcher.scorer import TrackScorer
 from applemusic.models import Playlist, SongMatchResult, Track
@@ -521,16 +522,49 @@ async def search_single_track(req: SearchTrackRequest):
     outcome = await asyncio.to_thread(client.search_catalog, query_to_use, sf, req.limit)
 
     # If 0 hits and original query contained brackets (e.g. English subtitle in brackets):
-    # Automatically try searching the bracketed content directly
+    # Automatically try searching the bracketed content with strict semantic filtering and budgeting
     if outcome.kind == "no_hits":
         bracket_matches = re.findall(r"[\(（【\[]([^()（）【\]]*)[\)）】\]]", raw_q)
+        seen_queries = {query_to_use.lower(), raw_q.lower()}
+        fallback_count = 0
         for b_text in bracket_matches:
             b_clean = re.sub(r"[()（）【】\[\]《》「」『』\"]", " ", b_text).strip()
-            if len(b_clean) >= 2:
-                b_outcome = await asyncio.to_thread(client.search_catalog, b_clean, sf, req.limit)
+            if len(b_clean) < 2:
+                continue
+
+            # Candidate query extraction: if bracket contains a dash (e.g. "The Show - Live at Wembley"),
+            # try the base song title first if not a version note
+            candidate_b_queries = [b_clean]
+            parts = TextCleaner.split_title_segments(b_clean)
+            if len(parts) > 1 and not TextCleaner.is_version_or_context_note(parts[0]):
+                candidate_b_queries.insert(0, parts[0].strip())
+
+            for cand_q in candidate_b_queries:
+                if len(cand_q) < 2:
+                    continue
+                # Skip if version info, venue/tour note, work source, or credit/cover annotation
+                if TextCleaner.is_version_or_context_note(cand_q):
+                    continue
+
+                b_lower = cand_q.lower()
+                if b_lower in seen_queries:
+                    continue
+
+                seen_queries.add(b_lower)
+
+                if fallback_count >= 1:
+                    break
+                fallback_count += 1
+
+                b_outcome = await asyncio.to_thread(client.search_catalog, cand_q, sf, req.limit)
+                if b_outcome.kind in ("rate_limited", "auth_failed", "upstream_error", "network_error", "timeout"):
+                    outcome = b_outcome
+                    break
                 if b_outcome.kind == "ok" and b_outcome.tracks:
                     outcome = b_outcome
                     break
+            if fallback_count >= 1:
+                break
 
     if outcome.kind in ("rate_limited", "auth_failed", "upstream_error", "network_error", "timeout"):
         return {
@@ -567,6 +601,7 @@ async def search_single_track(req: SearchTrackRequest):
                     "confidence": c.confidence,
                     "decision": c.decision,
                     "decision_reasons": c.decision_reasons,
+                    "evidence": c.evidence.model_dump() if c.evidence else None,
                 }
                 for c in scored_list
             ],

@@ -1683,10 +1683,10 @@
         <div class="space-y-3 max-h-96 overflow-y-auto text-xs">
           <!-- Metadata Table -->
           <div class="grid grid-cols-2 gap-2 bg-neutral-50 p-3 rounded-xl border border-neutral-200/60 font-mono text-[11px]">
-            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.7' }}</div>
+            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.8' }}</div>
             <div><span class="text-neutral-400">构建标识:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.build_id) || 'unknown' }}</div>
-            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.rule_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.09.v6.1' }}</div>
-            <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.alias_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.09.v6.1' }}</div>
+            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.rule_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.10.v7.3' }}</div>
+            <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.alias_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.10.v7.2' }}</div>
             <div><span class="text-neutral-400">目标区域:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.target_storefront) || 'cn' }}</div>
             <div><span class="text-neutral-400">最终决策:</span> <span class="font-bold">{{ diagnosticsModalItem.decision }}</span></div>
             <div><span class="text-neutral-400">证据级别:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.verification_level) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.verification_level) || 'unverified' }}</div>
@@ -2406,7 +2406,7 @@
         const modalCandidates = ref([]);
         const modalSearchQuery = ref('');
         const diagnosticsModalItem = ref(null);
-        const appVersion = computed(() => (config.value && config.value.version) || 'v2.0.7');
+        const appVersion = computed(() => (config.value && config.value.version) || 'v2.0.8');
 
         // Fetch user config on start
         const fetchConfig = async () => {
@@ -3078,16 +3078,18 @@
           const rawTitle = (item.source_track && item.source_track.title) || '';
           const rawArtist = (item.source_track && item.source_track.artists && item.source_track.artists[0]) || '';
           
-          // Check for bracketed English or foreign subtitle
-          const bracketMatch = rawTitle.match(/[\(（【\[]([^()（）【\]]*)[\)）】\]]/);
-          const coreTitle = rawTitle.replace(/[\(（【\[][^()（）【\]]*[\)）】\]]/g, '').trim();
+          // Use backend clean_title if available, otherwise compute core title by stripping brackets and book marks
+          let coreTitle = (item.source_track && item.source_track.clean_title) || '';
+          if (!coreTitle) {
+            coreTitle = rawTitle.replace(/[\(（【\[][^()（）【\]]*[\)）】\]]/g, '').trim();
+            coreTitle = coreTitle.replace(/[《》「」『』\"“”'‘’]/g, ' ').replace(/\s+/g, ' ').trim();
+          }
 
-          if (bracketMatch && bracketMatch[1] && /[a-zA-Z]{2,}/.test(bracketMatch[1])) {
-            modalSearchQuery.value = bracketMatch[1].trim();
-          } else if (coreTitle) {
-            modalSearchQuery.value = `${coreTitle} ${rawArtist}`.trim();
+          const targetTitle = coreTitle || rawTitle;
+          if (rawArtist) {
+            modalSearchQuery.value = `${targetTitle} ${rawArtist}`.trim();
           } else {
-            modalSearchQuery.value = `${rawTitle} ${rawArtist}`.trim();
+            modalSearchQuery.value = targetTitle.trim();
           }
 
           if (!modalCandidates.value.length) {

@@ -6,17 +6,18 @@ streaming platforms (NetEase, QQ Music, Spotify) and Apple Music regional catalo
 
 from typing import Dict, List, Optional, Set
 import re
+import unicodedata
 
 # Curated bidirectional alias groups:
 # All names in a group are treated as equivalent representations of the same artist.
 ARTIST_GROUPS: List[Set[str]] = [
     # Top Chinese Pop / Mandopop / Cantopop
-    {"周华健", "wakin chau", "emil wakin chau", "emil chau", "zhou huajian"},
-    {"陈奕迅", "eason chan", "chan eason", "chen yixun"},
-    {"周杰伦", "jay chou", "chou jay", "zhou jielun"},
-    {"张韶涵", "angela chang", "angela zhang", "zhang shaohan"},
+    {"周华健", "wakin chau", "emil wakin chau", "emil chau", "zhou huajian", "周華健"},
+    {"陈奕迅", "eason chan", "chan eason", "chen yixun", "陳奕迅"},
+    {"周杰伦", "jay chou", "chou jay", "zhou jielun", "周杰倫"},
+    {"张韶涵", "angela chang", "angela zhang", "zhang shaohan", "張韶涵"},
     {"许嵩", "vae xu", "vae", "xu song"},
-    {"林俊杰", "jj lin", "lin junjie"},
+    {"林俊杰", "jj lin", "lin junjie", "林俊傑"},
     {"汪苏泷", "silence wang", "wang sulong"},
     {"徐良", "xul", "xu liang"},
     {"周深", "charlie zhou", "zhou shen"},
@@ -24,14 +25,14 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"袁娅维", "tia ray", "yuan yawei"},
     {"单依纯", "shan yichun"},
     {"胡夏", "fox hu", "hu xia"},
-    {"邓紫棋", "g.e.m.", "gem", "tang tsz-kei", "g.e.m. 邓紫棋", "deng ziqi"},
-    {"王菲", "faye wong", "shirley wong", "wang fei"},
-    {"张学友", "jacky cheung", "cheung jacky", "zhang xueyou"},
-    {"刘德华", "andy lau", "lau andy", "liu dehua"},
+    {"邓紫棋", "g.e.m.", "gem", "tang tsz-kei", "g.e.m. 邓紫棋", "g.e.m.邓紫棋", "gem 邓紫棋", "gem邓紫棋", "g.e.m. 鄧紫棋", "g.e.m.鄧紫棋", "gem 鄧紫棋", "gem鄧紫棋", "鄧紫棋", "deng ziqi"},
+    {"王菲", "faye wong", "shirley wong", "wang fei", "王靖雯"},
+    {"张学友", "jacky cheung", "cheung jacky", "zhang xueyou", "張學友"},
+    {"刘德华", "andy lau", "lau andy", "liu dehua", "劉德華"},
     {"郭富城", "aaron kwok", "kwok aaron", "guo fucheng"},
     {"黎明", "leon lai", "lai leon", "li ming"},
     {"莫文蔚", "karen mok", "mok karen", "mo wenwei"},
-    {"孙燕姿", "stefanie sun", "sun yanzi"},
+    {"孙燕姿", "stefanie sun", "sun yanzi", "孫燕姿"},
     {"蔡依林", "jolin tsai", "tsai jolin", "cai yilin"},
     {"陶喆", "david tao", "tao david", "tao zhe"},
     {"王力宏", "leehom wang", "wang leehom", "wang lihong"},
@@ -41,7 +42,7 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"李荣浩", "ronghao li", "li ronghao"},
     {"毛不易", "buyi mao", "mao buyi"},
     {"华晨宇", "chenyu hua", "hua chenyu"},
-    {"张杰", "jason zhang", "zhang jie"},
+    {"张杰", "jason zhang", "zhang jie", "張杰"},
     {"汪峰", "wang feng"},
     {"朴树", "pu shu"},
     {"许巍", "xu wei"},
@@ -49,22 +50,22 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"田馥甄", "hebe tien", "hebe", "tian fuzhen"},
     {"s.h.e", "she", "s.h.e."},
     {"杨丞琳", "rainie yang", "yang chenglin"},
-    {"萧敬腾", "jam hsiao", "hsiao jam", "xiao jingteng"},
+    {"萧敬腾", "jam hsiao", "hsiao jam", "xiao jingteng", "蕭敬騰"},
     {"潘玮柏", "wilber pan", "pan will", "pan weibo"},
     {"罗志祥", "show lo", "luo zhixiang"},
     {"古巨基", "leo ku", "ku leo", "gu juji"},
-    {"容祖儿", "joey yung", "yung joey", "rong zuer"},
-    {"杨千嬅", "miriam yeung", "yeung miriam", "yang qianhua"},
+    {"容祖儿", "joey yung", "yung joey", "rong zuer", "容祖兒"},
+    {"杨千嬅", "miriam yeung", "yeung miriam", "yang qianhua", "楊千嬅"},
     {"谢霆锋", "nicholas tse", "tse nicholas", "xie tingfeng"},
     {"张国荣", "leslie cheung", "cheung leslie", "zhang guorong"},
     {"梅艳芳", "anita mui", "mui anita", "mei yanfang"},
     {"黄家驹", "koma wong", "wong ka kui", "huang jiaju"},
     {"beyond", "beyond乐队"},
-    {"张惠妹", "a-mei", "amei", "chang hui-mei", "zhang huimei"},
+    {"张惠妹", "a-mei", "amei", "chang hui-mei", "zhang huimei", "張惠妹"},
     {"陈绮贞", "cheer chen", "chen qizhen"},
     {"蔡健雅", "tanya chua", "chua tanya", "cai jianya"},
     {"李宗盛", "jonathan lee", "lee jonathan", "li zongsheng"},
-    {"罗大佑", "lo ta-you", "tayou lo", "luo dayou"},
+    {"罗大佑", "lo ta-you", "tayou lo", "luo dayou", "羅大佑"},
     {"信乐团", "shin"},
     {"告五人", "accusefive"},
     {"草东没有派对", "no party for cao dong"},
@@ -77,6 +78,7 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"海龟先生", "mr. turtle"},
     {"回春丹", "young drug"},
     {"旅行团乐队", "the lifejourney"},
+    {"双笙", "陈元汐", "双笙（陈元汐）", "shuang sheng"},
     {"重塑雕像的权利", "re-tros"},
     {"刺猬", "hedgehog"},
     {"达达乐队", "dada"},
@@ -87,7 +89,6 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"动力火车", "power station"},
     {"筷子兄弟", "chopstick brothers"},
     {"凤凰传奇", "phoenix legend"},
-    {"筷子兄弟", "chopstick brothers"},
     {"花儿乐队", "the flowers"},
     {"飞儿乐团", "f.i.r.", "fir"},
     {"牛奶咖啡", "milk coffee"},
@@ -193,7 +194,7 @@ ARTIST_GROUPS: List[Set[str]] = [
     # Virtual & Vocaloid
     {"洛天依", "luotianyi", "luo tianyi"},
     {"言和", "yanhe"},
-    {"乐正绫", "yezheng ling", "yuezhenling", "ling yuezheng"},
+    {"乐正绫", "yuezheng ling", "yezheng ling", "yuezhenling", "ling yuezheng"},
     {"乐正龙牙", "yuezheng longya"},
     {"徵羽摩柯", "zhiyu moke"},
     {"墨清弦", "mo qingxian"},
@@ -276,7 +277,7 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"具岛直子", "具島直子", "naoko gushima"},
     {"supercell", "supercell"},
     {"EGOIST", "egoist"},
-    {"Goose house", "goose house"},
+    {"Goose house", "goose house", "goosehouse", "グースハウス"},
     {"ClariS", "claris"},
     {"fripSide", "fripside"},
     {"GARNiDELiA", "garnidelia"},
@@ -347,7 +348,6 @@ ARTIST_GROUPS: List[Set[str]] = [
     {"倚水", "isui"},
     {"トゲナシトゲアリ", "togenashi togeari"},
     {"結束バンド", "kessoku band"},
-    {"Goose house", "goosehouse", "グースハウス"},
     {"MyGO!!!!!", "mygo", "mygo!!!!!"},
     {"Reol", "れをる"},
     # Toaka (十明) - Source: Universal Music Japan (https://www.universal-music.co.jp/toaka/)
@@ -367,8 +367,32 @@ def _strip_diacritics(text: str) -> str:
     return unicodedata.normalize("NFC", stripped)
 
 
-# Build lookup index from normalized alias -> group_id
+def canonicalize_artist_key(name: str) -> str:
+    """
+    Produce a canonical index key for artist identification:
+    NFKC normalization, diacritic stripping, Traditional to Simplified Chinese conversion,
+    lowercasing, and stripping of inner/outer whitespace and punctuation dots/hyphens.
+    """
+    if not name:
+        return ""
+    norm = unicodedata.normalize("NFKC", str(name))
+    norm = _strip_diacritics(norm)
+    try:
+        from applemusic.matcher.zh_table import to_simplified
+        norm = to_simplified(norm)
+    except Exception:
+        pass
+    norm = norm.lower().strip()
+    # Strip whitespace, dots, hyphens, and delimiters
+    clean = re.sub(r"[\s\.\-_'\"·•・,，/\\&+=]+", "", norm)
+    return clean
+
+
+# Build lookup index from normalized alias -> group_id and canonical key -> group_id
 _ALIAS_TO_GROUP: Dict[str, int] = {}
+_CANONICAL_TO_GROUP: Dict[str, int] = {}
+CANONICAL_COLLISIONS: List[str] = []
+
 for gid, group in enumerate(ARTIST_GROUPS):
     for name in group:
         norm = name.lower().strip()
@@ -385,10 +409,25 @@ for gid, group in enumerate(ARTIST_GROUPS):
             if d_clean and d_clean != d_norm:
                 _ALIAS_TO_GROUP[d_clean] = gid
 
+        # Canonical key registration with collision detection
+        c_key = canonicalize_artist_key(name)
+        if c_key:
+            existing_gid = _CANONICAL_TO_GROUP.get(c_key)
+            if existing_gid is not None and existing_gid != gid:
+                CANONICAL_COLLISIONS.append(
+                    f"Canonical collision on '{c_key}': group {existing_gid} vs group {gid}"
+                )
+            else:
+                _CANONICAL_TO_GROUP[c_key] = gid
+
+if CANONICAL_COLLISIONS:
+    raise AssertionError(f"Artist alias canonical collisions detected: {CANONICAL_COLLISIONS}")
+
 
 def _lookup_group(name: str) -> Optional[int]:
     """
     Look up group_id for an artist name with explicit None check to prevent group_id=0 falsy evaluation.
+    Checks exact normalized alias, diacritic-free alias, punctuation-free alias, and canonical key.
     """
     if not name:
         return None
@@ -411,12 +450,19 @@ def _lookup_group(name: str) -> Optional[int]:
             gid = _ALIAS_TO_GROUP.get(d_clean)
             if gid is not None:
                 return gid
+    # Canonical key lookup
+    c_key = canonicalize_artist_key(name)
+    if c_key:
+        gid = _CANONICAL_TO_GROUP.get(c_key)
+        if gid is not None:
+            return gid
     return None
 
 
 def are_artists_equivalent(a1: str, a2: str) -> bool:
     """
     Check if two artist names are identical or known cross-lingual/romanized aliases.
+    Strictly forbids arbitrary segment splitting or fake alias fabrication.
     """
     if not a1 or not a2:
         return False
@@ -442,7 +488,13 @@ def are_artists_equivalent(a1: str, a2: str) -> bool:
     if dp1 and dp1 == dp2:
         return True
 
-    # Lookup in alias groups with explicit None check (handles group 0 safely)
+    # Check canonical equality
+    c1 = canonicalize_artist_key(a1)
+    c2 = canonicalize_artist_key(a2)
+    if c1 and c1 == c2:
+        return True
+
+    # Lookup in verified alias groups with explicit None check (handles group 0 safely)
     g1 = _lookup_group(a1)
     g2 = _lookup_group(a2)
 
