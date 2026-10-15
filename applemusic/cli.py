@@ -380,6 +380,26 @@ def start_web(
         console.print(f"\n[bold green]启动本地 Web 界面：[/bold green] [cyan]{target_url}[/cyan]")
         console.print("正在为您打开界面，按 [bold]Ctrl + C[/bold] 退出。\n")
 
+        server = None
+        lifecycle = None
+        browser_timer = None
+        app_profile_dir = None
+        if app_mode and open_browser:
+            import os
+            from applemusic.desktop import DesktopLifecycle, close_idle_browser
+            server = uvicorn.Server(uvicorn.Config(
+                web_app, host=host, port=port, timeout_graceful_shutdown=5,
+            ))
+            def shutdown_desktop():
+                try:
+                    if app_profile_dir is not None:
+                        close_idle_browser(app_profile_dir)
+                finally:
+                    server.should_exit = True
+
+            lifecycle = DesktopLifecycle(shutdown_desktop, os._exit)
+            web_app.state.desktop_lifecycle = lifecycle
+
         if open_browser:
             if app_mode:
                 b_exe = find_browser_executable()
@@ -394,14 +414,29 @@ def start_web(
                         "--window-size=1280,860",
                         "--no-first-run",
                         "--no-default-browser-check",
+                        "--disable-background-mode",
+                        "--remote-debugging-port=0",
                     ]
-                    threading.Timer(1.0, lambda: subprocess.Popen(cmd)).start()
+                    browser_timer = threading.Timer(1.0, lambda: subprocess.Popen(cmd))
                 else:
-                    threading.Timer(1.0, lambda: webbrowser.open(target_url)).start()
+                    browser_timer = threading.Timer(1.0, lambda: webbrowser.open(target_url))
             else:
-                threading.Timer(1.0, lambda: webbrowser.open(target_url)).start()
+                browser_timer = threading.Timer(1.0, lambda: webbrowser.open(target_url))
+            browser_timer.daemon = True
+            browser_timer.start()
 
-        uvicorn.run(web_app, host=host, port=port)
+        try:
+            if lifecycle is not None:
+                lifecycle.start()
+                server.run()
+            else:
+                uvicorn.run(web_app, host=host, port=port)
+        finally:
+            if browser_timer is not None:
+                browser_timer.cancel()
+            if lifecycle is not None:
+                lifecycle.stop()
+                web_app.state.desktop_lifecycle = None
     except Exception as e:
         console.print(f"[bold red]启动 Web 服务失败：[/bold red] {e}")
 

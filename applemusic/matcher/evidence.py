@@ -105,7 +105,7 @@ class SingleTrackDiagnostics(BaseModel):
     Safe, sanitized diagnostic summary for a single track matching process.
     Guaranteed not to contain real tokens, cookies, auth headers, or absolute user paths.
     """
-    app_version: str = "2.0.8"
+    app_version: str = "2.0.9"
     build_id: str = "unknown"
     base_rule_version: str = "2026.09.v1"
     rule_version: str = MATCH_RULE_VERSION

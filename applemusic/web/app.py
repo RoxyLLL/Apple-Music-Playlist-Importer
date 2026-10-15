@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -137,6 +137,30 @@ SESSION_API_TOKEN = secrets.token_urlsafe(32)
 
 app = FastAPI(title="Apple Music Playlist Importer", version=__version__)
 
+
+@app.websocket("/api/desktop-session")
+async def desktop_window_session(websocket: WebSocket):
+    lifecycle = getattr(websocket.app.state, "desktop_lifecycle", None)
+    token = websocket.cookies.get("app_token", "")
+    scheme = "https" if websocket.url.scheme == "wss" else "http"
+    origin = f"{scheme}://{websocket.headers.get('host', '')}"
+    if (lifecycle is None or not hmac.compare_digest(token, SESSION_API_TOKEN)
+            or websocket.headers.get("origin") != origin):
+        await websocket.close(code=1008)
+        return
+    if not lifecycle.connected():
+        await websocket.close(code=1001)
+        return
+    try:
+        await websocket.accept()
+        await websocket.send_json({"desktop": True})
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        lifecycle.disconnected()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -213,6 +237,8 @@ async def serve_index():
         return HTMLResponse("<h1>Web UI static files not found</h1>", status_code=404)
     content = index_file.read_text(encoding="utf-8")
     token_tag = f'<script>window.__APP_TOKEN__ = "{SESSION_API_TOKEN}";</script>'
+    if getattr(app.state, "desktop_lifecycle", None) is not None:
+        token_tag += '<script src="/static/desktop-session.js"></script>'
     if "<head>" in content:
         content = content.replace("<head>", f"<head>\n  {token_tag}", 1)
     else:
