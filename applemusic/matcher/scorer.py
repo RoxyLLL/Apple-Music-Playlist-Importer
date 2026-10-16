@@ -762,6 +762,8 @@ class TrackScorer:
         has_primary_artist_mismatch = False
         project_credit_matched = False
         matched_credit_role = None
+        has_pri_match = False
+        artist_identity_romanized = False
 
         if det_s.primary and det_c.primary:
             # Check if primary performers match (via direct, alias, CV, or Apple artist ID)
@@ -779,6 +781,11 @@ class TrackScorer:
                     cw = nc.split()
                     if len(sw) == 2 and len(cw) == 2 and sw[0] == cw[1] and sw[1] == cw[0]:
                         has_pri_match = True
+                        break
+                    if re.search(r"[\u3040-\u30ff]", s_cand + c_cand) and cls.calculate_artist_similarity([s_cand], [c_cand]) == 1.0:
+                        # Reuse exact transliteration/CV identity handling, not a fuzzy threshold.
+                        has_pri_match = True
+                        artist_identity_romanized = True
                         break
                 if has_pri_match:
                     break
@@ -1099,7 +1106,7 @@ class TrackScorer:
         # Determine evidence families and verification level with de-correlation
         evidence_families: List[str] = []
         is_title_romanized = False
-        is_artist_romanized = False
+        is_artist_romanized = artist_identity_romanized
 
         norm_s_t = TextCleaner.normalize(TextCleaner.clean_title(source.title))
         norm_c_t = TextCleaner.normalize(TextCleaner.clean_title(candidate.title))
@@ -1195,6 +1202,13 @@ class TrackScorer:
         elif is_verified_equivalent:
             v_level = VerificationLevel.STRONG.value
             ev_type = "apple_equivalent"
+        elif not has_pri_match and not is_artist_romanized:
+            # Name edit similarity ranks candidates, but does not establish identity.
+            # Matching title/album/duration cannot turn John Williamson into John Williams.
+            v_level = VerificationLevel.MEDIUM.value
+            ev_type = "artist_identity_unverified"
+            composite = min(composite, 0.87)
+            reasons.append("艺人仅文字相似，身份未核验，需人工复核")
         elif not is_title_definite:
             # Hard identity protection: non-definite title methods (prefix containment, edit fuzzy,
             # long-vowel folding, multi-reading approximation, bilingual segments) cannot become STRONG via ordinary metadata (artist+duration/album).

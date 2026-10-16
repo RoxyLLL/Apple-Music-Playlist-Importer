@@ -152,7 +152,7 @@
             :class="config.is_authorized ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/70' : 'bg-applered text-white hover:bg-applepink shadow-sm shadow-applered/25'"
             class="w-full flex items-center justify-center space-x-2 px-3 py-2.5 rounded-xl text-xs font-semibold border transition cursor-pointer">
             <span class="w-2 h-2 rounded-full" :class="config.is_authorized ? 'bg-emerald-500' : 'bg-white animate-pulse'"></span>
-            <span class="truncate">{{ config.is_authorized ? 'Apple ID 已连接' : '连接 Apple ID' }}</span>
+            <span class="truncate">{{ authStatusText }}</span>
           </button>
         </div>
 
@@ -180,7 +180,7 @@
           <button @click="showAuthModal = true"
             :class="config.is_authorized ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-rose-50 text-applered border-rose-200 hover:bg-rose-100'"
             class="w-10 h-10 rounded-xl border flex items-center justify-center relative transition cursor-pointer"
-            :title="config.is_authorized ? 'Apple ID 已连接 (点击管理)' : '连接 Apple ID'">
+            :title="authStatusText + ' (点击管理)'">
             <i class="fa-brands fa-apple text-base"></i>
             <span class="w-2 h-2 rounded-full absolute top-1.5 right-1.5 border border-white" :class="config.is_authorized ? 'bg-emerald-500' : 'bg-applered animate-pulse'"></span>
           </button>
@@ -872,7 +872,7 @@
       <section v-if="currentAppTab === 'cloud'" class="space-y-6">
 
         <!-- Unauthorized Prompt Card -->
-        <div v-if="!config.is_authorized" class="bg-white rounded-2xl border border-appleborder p-12 shadow-[0_2px_12px_rgba(0,0,0,0.03)] text-center space-y-4">
+        <div v-if="!canAccessLibrary" class="bg-white rounded-2xl border border-appleborder p-12 shadow-[0_2px_12px_rgba(0,0,0,0.03)] text-center space-y-4">
           <div class="w-16 h-16 rounded-3xl bg-applered/10 text-applered flex items-center justify-center mx-auto text-2xl shadow-sm">
             <i class="fa-brands fa-apple"></i>
           </div>
@@ -890,6 +890,10 @@
 
         <!-- Authorized Cloud Management View -->
         <div v-else class="space-y-6">
+          <div v-if="authUnknown" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            Apple ID 暂时无法验证，可继续尝试访问资料库，无需因网络异常重新登录。
+            <button @click="fetchConfig" class="ml-2 underline cursor-pointer">重新验证</button>
+          </div>
 
           <!-- Cloud Sub-tabs: Playlists vs Songs -->
           <div class="bg-white rounded-2xl border border-appleborder p-6 shadow-[0_2px_12px_rgba(0,0,0,0.03)] space-y-5">
@@ -1366,7 +1370,7 @@
               <div class="min-w-0 flex-1">
                 <div class="font-bold text-neutral-900 truncate flex items-center flex-wrap gap-1.5">
                   <span class="truncate">{{ cand.track.title }}</span>
-                  <span v-if="cand.score >= 0.85" class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0">推荐匹配 ({{ Math.round(cand.score * 100) }}%)</span>
+                  <span v-if="cand.score >= 0.88 && cand.evidence && cand.evidence.verification_level === 'strong' && !(cand.evidence.conflicts || []).length" class="px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0">推荐匹配 ({{ Math.round(cand.score * 100) }}%)</span>
                   <span v-else-if="cand.score >= 0.50" class="px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-50 text-amber-600 border border-amber-200 shrink-0">相似 ({{ Math.round(cand.score * 100) }}%)</span>
                 </div>
                 <div class="text-xs text-neutral-500 truncate mt-0.5">
@@ -1683,9 +1687,9 @@
         <div class="space-y-3 max-h-96 overflow-y-auto text-xs">
           <!-- Metadata Table -->
           <div class="grid grid-cols-2 gap-2 bg-neutral-50 p-3 rounded-xl border border-neutral-200/60 font-mono text-[11px]">
-            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.9' }}</div>
+            <div><span class="text-neutral-400">应用版本:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.app_version) || '2.0.10' }}</div>
             <div><span class="text-neutral-400">构建标识:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.build_id) || 'unknown' }}</div>
-            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.rule_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.10.v7.3' }}</div>
+            <div><span class="text-neutral-400">匹配规则版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.rule_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.rule_version) || '2026.10.v7.4' }}</div>
             <div><span class="text-neutral-400">别名库版本:</span> {{ (diagnosticsModalItem.evidence && diagnosticsModalItem.evidence.alias_version) || (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.alias_version) || '2026.10.v7.2' }}</div>
             <div><span class="text-neutral-400">目标区域:</span> {{ (diagnosticsModalItem.diagnostics && diagnosticsModalItem.diagnostics.target_storefront) || 'cn' }}</div>
             <div><span class="text-neutral-400">最终决策:</span> <span class="font-bold">{{ diagnosticsModalItem.decision }}</span></div>
@@ -2389,6 +2393,9 @@
           developer_token: '',
           media_user_token: ''
         });
+        const authUnknown = computed(() => config.value.auth_state === 'unknown' && Boolean(config.value.has_token));
+        const canAccessLibrary = computed(() => Boolean(config.value.is_authorized || authUnknown.value));
+        const authStatusText = computed(() => authUnknown.value ? 'Apple ID 暂时无法验证' : (config.value.is_authorized ? 'Apple ID 已连接' : '连接 Apple ID'));
         const showAuthModal = ref(false);
         const tokenInput = ref('');
         const testingToken = ref(false);
@@ -2406,7 +2413,7 @@
         const modalCandidates = ref([]);
         const modalSearchQuery = ref('');
         const diagnosticsModalItem = ref(null);
-        const appVersion = computed(() => (config.value && config.value.version) || 'v2.0.9');
+        const appVersion = computed(() => (config.value && config.value.version) || 'v2.0.10');
 
         // Fetch user config on start
         const fetchConfig = async () => {
@@ -3071,7 +3078,9 @@
         const onTimeUpdate = () => {};
 
         // Candidate swapper modal
+        let modalSearchRequestId = 0;
         const openCandidateModal = (item) => {
+          modalSearchRequestId++;
           candidateModalItem.value = item;
           modalCandidates.value = item.candidates || [];
           
@@ -3099,8 +3108,10 @@
 
         const searchAlternative = async () => {
           if (!modalSearchQuery.value.trim() || !candidateModalItem.value) return;
+          const item = candidateModalItem.value;
+          const requestId = ++modalSearchRequestId;
           try {
-            const src = candidateModalItem.value.source_track;
+            const src = item.source_track;
             const res = await fetch('/api/search-track', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -3115,8 +3126,10 @@
               })
             });
             const data = await res.json();
+            if (requestId !== modalSearchRequestId || candidateModalItem.value !== item) return;
             modalCandidates.value = data.results || [];
           } catch (e) {
+            if (requestId !== modalSearchRequestId || candidateModalItem.value !== item) return;
             alert('搜索异常: ' + e.message);
           }
         };
@@ -3351,7 +3364,7 @@
 
         // Execute Sync
         const executeSync = async () => {
-          if (!config.value.is_authorized) {
+          if (!canAccessLibrary.value) {
             showAuthModal.value = true;
             return;
           }
@@ -4019,7 +4032,7 @@
         const switchAppTab = (tab) => {
           currentAppTab.value = tab;
           if (tab === 'cloud') {
-            if (config.value.is_authorized) {
+            if (canAccessLibrary.value) {
               if (cloudSubTab.value === 'playlists' && userPlaylists.value.length === 0) {
                 fetchUserPlaylists();
               } else if (cloudSubTab.value === 'songs' && userLibrarySongs.value.length === 0) {
@@ -5032,6 +5045,9 @@
           syncing,
           filter,
           config,
+          authUnknown,
+          canAccessLibrary,
+          authStatusText,
           audioPlayer,
           isPlaying,
           playingTrackId,

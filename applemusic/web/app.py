@@ -54,6 +54,17 @@ def _get_token_hash(token: Optional[str]) -> str:
     return hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
 
 
+def _is_auth_rejection(message: str) -> bool:
+    """Only explicit credential rejection proves a configured user token invalid."""
+    return bool(re.search(r"HTTP\s+(?:401|403)\b", message))
+
+
+def _cache_auth_validation(cache_key: str, valid: bool, info: str) -> None:
+    # Network, developer-token, rate-limit and server failures do not revoke a login.
+    if valid or _is_auth_rejection(info):
+        _auth_validation_cache[cache_key] = (time.time(), valid, info)
+
+
 def invalidate_shared_engine() -> None:
     """Invalidate shared client and matching engine to force reconstruction on next access."""
     global _shared_client, _shared_engine, _shared_config_fingerprint
@@ -107,7 +118,7 @@ def _require_authorized_client() -> AppleMusicClient:
     cached = _auth_validation_cache.get(thash)
     if cached and (time.time() - cached[0] < 30.0):
         is_valid, msg = cached[1], cached[2]
-        if not is_valid:
+        if not is_valid and _is_auth_rejection(msg):
             logger.info("Local auth pre-check: cached token validation failed")
             raise HTTPException(
                 status_code=401,
@@ -259,17 +270,26 @@ async def get_config_status():
     config = get_config()
     auth = AppleMusicAuth(config)
     is_valid, sf_info = False, "未配置"
+    auth_state = "invalid"
+    auth_message = None
     if config.media_user_token:
         cache_key = _get_token_hash(config.media_user_token)
         now = time.time()
         cached = _auth_validation_cache.get(cache_key)
-        if cached and (now - cached[0] < 30.0):
+        if cached and (now - cached[0] < 30.0) and (cached[1] or _is_auth_rejection(cached[2])):
             is_valid, sf_info = cached[1], cached[2]
         else:
             is_valid, sf_info = await asyncio.to_thread(auth.validate_user_token)
-            # If network error or transient failure, allow prompt retry with short cache TTL
-            cache_ttl = 5.0 if (not is_valid and ("网络异常" in sf_info or "开发者 Token" in sf_info)) else 30.0
-            _auth_validation_cache[cache_key] = (now - (30.0 - cache_ttl), is_valid, sf_info)
+            _cache_auth_validation(cache_key, is_valid, sf_info)
+            if not is_valid and not _is_auth_rejection(sf_info):
+                auth_state = "unknown"
+                auth_message = sf_info
+                # Keep an already verified login during an upstream outage, without
+                # extending its cache TTL or mistaking the outage for new validation.
+                if cached and cached[1]:
+                    is_valid, sf_info = True, cached[2]
+        if auth_state != "unknown":
+            auth_state = "valid" if is_valid else "invalid"
 
     masked_token = (
         config.media_user_token[:10] + "..." + config.media_user_token[-8:]
@@ -282,8 +302,9 @@ async def get_config_status():
         "has_token": bool(config.media_user_token),
         "token_preview": masked_token,
         "is_authorized": is_valid,
+        "auth_state": auth_state,
         "detected_storefront": sf_info if is_valid else None,
-        "auth_message": sf_info if not is_valid else "连接正常",
+        "auth_message": auth_message or (sf_info if not is_valid else "连接正常"),
         "version": f"v{__version__}",
     }
 
@@ -303,10 +324,11 @@ async def update_config(req: ConfigUpdateRequest):
     is_valid, info = await asyncio.to_thread(auth.validate_user_token)
     if config.media_user_token:
         cache_key = _get_token_hash(config.media_user_token)
-        _auth_validation_cache[cache_key] = (time.time(), is_valid, info)
+        _cache_auth_validation(cache_key, is_valid, info)
     return {
         "success": True,
         "is_authorized": is_valid,
+        "auth_state": "valid" if is_valid else ("invalid" if not config.media_user_token or _is_auth_rejection(info) else "unknown"),
         "message": info,
     }
 

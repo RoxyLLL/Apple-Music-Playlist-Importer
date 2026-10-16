@@ -37,7 +37,7 @@ class LocalFileExtractor(BaseExtractor):
 
     def _parse_csv(self, file_path: Path) -> List[Track]:
         tracks: List[Track] = []
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(file_path, "r", encoding="utf-8-sig", errors="replace") as f:
             reader = csv.reader(f)
             headers = None
             for row in reader:

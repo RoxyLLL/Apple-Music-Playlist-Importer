@@ -8,13 +8,16 @@ import ctypes
 import os
 import sys
 import hashlib
+import tempfile
+import threading
 from pathlib import Path
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 DEFAULT_CONFIG_DIR = Path.home() / ".applemusic_sync"
 CONFIG_FILE = DEFAULT_CONFIG_DIR / "config.json"
 DPAPI_PREFIX = "dpapi:"
+_CONFIG_LOCK = threading.RLock()
 
 
 def _encrypt_token(token: Optional[str]) -> Optional[str]:
@@ -95,31 +98,58 @@ class Config(BaseModel):
     min_review_score: float = 0.55
     min_score_gap: float = 0.08
     search_limit: int = 10
+    _saved_values: Optional[dict] = PrivateAttr(default=None)
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "Config":
         """Load configuration from disk, creating default if not exists."""
         target_file = config_path or CONFIG_FILE
-        if target_file.exists():
-            try:
-                with open(target_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if "media_user_token" in data and data["media_user_token"]:
-                        data["media_user_token"] = _decrypt_token(data["media_user_token"])
-                    return cls(**data)
-            except Exception as e:
-                print(f"[Warning] Failed to load config from {target_file}: {e}")
-        return cls()
+        with _CONFIG_LOCK:
+            config = cls()
+            if target_file.exists():
+                try:
+                    with open(target_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if data.get("media_user_token"):
+                            data["media_user_token"] = _decrypt_token(data["media_user_token"])
+                        config = cls(**data)
+                except Exception as e:
+                    print(f"[Warning] Failed to load config from {target_file}: {e}")
+            config._saved_values = config.model_dump()
+            return config
 
-    def save(self, config_path: Optional[Path] = None) -> None:
-        """Save configuration to disk with encrypted sensitive tokens."""
+    def save(self, config_path: Optional[Path] = None, *, fields: Optional[List[str]] = None) -> None:
+        """Atomically save encrypted config, merging only changed (or selected) fields.
+
+        Loaded instances retain a snapshot so stale clients cannot overwrite unrelated
+        settings saved by another thread. Newly constructed instances replace all fields.
+        """
         target_file = config_path or CONFIG_FILE
-        target_file.parent.mkdir(parents=True, exist_ok=True)
-        data = self.model_dump()
-        if data.get("media_user_token"):
-            data["media_user_token"] = _encrypt_token(data["media_user_token"])
-        with open(target_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        with _CONFIG_LOCK:
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            current = self.model_dump()
+            data = current.copy()
+            if fields is not None or self._saved_values is not None:
+                data = self.load(target_file).model_dump()
+                data.update({key: value for key, value in current.items()
+                             if (key in fields if fields is not None
+                                 else value != self._saved_values.get(key))})
+            if data.get("media_user_token"):
+                data["media_user_token"] = _encrypt_token(data["media_user_token"])
+            temp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target_file.parent,
+                                                 delete=False, suffix=".tmp") as f:
+                    temp_path = f.name
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                os.replace(temp_path, target_file)
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            if fields is None:
+                self._saved_values = current
+            elif self._saved_values is not None:
+                self._saved_values.update({key: current[key] for key in fields})
 
     def is_authorized(self) -> bool:
         """Check if both developer token and media user token are configured."""

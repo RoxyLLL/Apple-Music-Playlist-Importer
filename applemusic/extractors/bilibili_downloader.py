@@ -7,6 +7,7 @@ import hashlib
 import logging
 import math
 import urllib.parse
+import tempfile
 from typing import List, Dict, Optional, Tuple
 import requests
 
@@ -124,6 +125,19 @@ def sanitize_filename(name: str) -> str:
     return cleaned.strip()[:80]
 
 
+def _is_readable_audio(path: str) -> bool:
+    """Reject partial/corrupt cache entries, not just empty files."""
+    try:
+        import av
+        with av.open(path) as container:
+            stream = next((s for s in container.streams if s.type == "audio"), None)
+            if stream is None:
+                return False
+            return next(container.decode(stream), None) is not None
+    except Exception:
+        return False
+
+
 def find_existing_bilibili_audio(title: str, artist: str = "") -> Optional[str]:
     """
     Search local directories (Apple Music official media library, backup download folder, Apple Music auto-add folder)
@@ -156,7 +170,7 @@ def find_existing_bilibili_audio(title: str, artist: str = "") -> Optional[str]:
                                 if clean_a not in rel_path and clean_a not in fname_norm:
                                     continue
                             file_path = os.path.join(root, fname)
-                            if os.path.getsize(file_path) > 102400:
+                            if _is_readable_audio(file_path):
                                 return file_path
     except Exception as e:
         logger.warning("扫描 Apple Music 媒体库异常: %s", e)
@@ -180,7 +194,7 @@ def find_existing_bilibili_audio(title: str, artist: str = "") -> Optional[str]:
                             stem_lower = os.path.splitext(fname)[0].lower()
                             if clean_t and clean_t not in stem_lower:
                                 continue
-                        if entry.stat().st_size > 102400:
+                        if _is_readable_audio(entry.path):
                             return entry.path
         except Exception as e:
             logger.warning("扫描本地音源目录异常 (%s): %s", d, e)
@@ -190,6 +204,8 @@ def find_existing_bilibili_audio(title: str, artist: str = "") -> Optional[str]:
 
 def ensure_auto_imported(file_path: str, target_title: str, target_artist: str) -> bool:
     """Ensure a local audio file is copied to Apple Music auto-add folder."""
+    if not _is_readable_audio(file_path):
+        return False
     auto_dir = get_apple_music_auto_add_dir()
     if not auto_dir or not os.path.isdir(auto_dir):
         return False
@@ -237,35 +253,27 @@ def extract_audio_from_video(video_path: str, output_audio_path: str):
     Extract or transcode audio track from any video file (MP4, FLV, MKV) to high-quality M4A using PyAV.
     """
     import av
-    input_container = av.open(video_path)
-    audio_stream = next((s for s in input_container.streams if s.type == "audio"), None)
-    if not audio_stream:
-        input_container.close()
-        raise RuntimeError("下载的视频中未检测到可用音频轨")
-
-    output_container = av.open(output_audio_path, mode="w", format="mp4")
-    
-    # If audio is already AAC, remux directly without re-encoding (instant and lossless)
-    if audio_stream.codec_context.name == "aac":
-        out_stream = output_container.add_stream_from_template(audio_stream)
-        for packet in input_container.demux(audio_stream):
-            if packet.dts is None:
-                continue
-            packet.stream = out_stream
-            output_container.mux(packet)
-    else:
-        # Transcode other codecs (mp3, vorbis, opus, etc.) to 192k AAC
-        sample_rate = audio_stream.rate or 44100
-        out_stream = output_container.add_stream("aac", rate=sample_rate)
-        out_stream.bit_rate = 192000
-        for frame in input_container.decode(audio_stream):
-            for packet in out_stream.encode(frame):
-                output_container.mux(packet)
-        for packet in out_stream.encode():
-            output_container.mux(packet)
-
-    output_container.close()
-    input_container.close()
+    with av.open(video_path) as input_container:
+        audio_stream = next((s for s in input_container.streams if s.type == "audio"), None)
+        if not audio_stream:
+            raise RuntimeError("下载的视频中未检测到可用音频轨")
+        with av.open(output_audio_path, mode="w", format="mp4") as output_container:
+            # Remux AAC losslessly; transcode other codecs to AAC.
+            if audio_stream.codec_context.name == "aac":
+                out_stream = output_container.add_stream_from_template(audio_stream)
+                for packet in input_container.demux(audio_stream):
+                    if packet.dts is None:
+                        continue
+                    packet.stream = out_stream
+                    output_container.mux(packet)
+            else:
+                out_stream = output_container.add_stream("aac", rate=audio_stream.rate or 44100)
+                out_stream.bit_rate = 192000
+                for frame in input_container.decode(audio_stream):
+                    for packet in out_stream.encode(frame):
+                        output_container.mux(packet)
+                for packet in out_stream.encode():
+                    output_container.mux(packet)
 
 
 def parse_play_count(val) -> int:
@@ -538,6 +546,7 @@ def download_bilibili_audio(
     Download video or audio from Bilibili, transcode/remux to M4A, tag with Mutagen,
     and automatically copy to Apple Music's auto-add folder.
     """
+    staging = None
     try:
         backup_dir = get_backup_download_dir()
         safe_title = sanitize_filename(target_title or "未知曲目")
@@ -547,7 +556,7 @@ def download_bilibili_audio(
         local_path = os.path.join(backup_dir, filename)
 
         # 0. Local cache fast reuse: If valid M4A for this specific bvid already exists, reuse it immediately (0.01s)
-        if os.path.exists(local_path) and os.path.getsize(local_path) > 102400:
+        if _is_readable_audio(local_path):
             logger.info("本地已存在该 B 站视频音频 (%s)，直接秒级复用: %s", bvid, local_path)
             auto_imported = False
             auto_dest_path = None
@@ -573,6 +582,9 @@ def download_bilibili_audio(
                 "artist": target_artist,
                 "reused": True,
             }
+
+        staging = tempfile.TemporaryDirectory(prefix=".bilibili-", dir=backup_dir)
+        staged_path = os.path.join(staging.name, "audio.m4a")
 
         # 1. Fetch video cid
         view_url = "https://api.bilibili.com/x/web-interface/view"
@@ -622,7 +634,7 @@ def download_bilibili_audio(
                 )
                 if audio_url:
                     logger.info("🚀 极速下载 B 站 DASH 高品质纯音频轨 (约2~4MB): %s", bvid)
-                    temp_raw_audio = local_path + ".temp_raw.m4a"
+                    temp_raw_audio = os.path.join(staging.name, "raw.m4a")
                     try:
                         stream_resp = _client.session.get(audio_url, stream=True, timeout=20)
                         stream_resp.raise_for_status()
@@ -632,8 +644,8 @@ def download_bilibili_audio(
                                     f.write(chunk)
 
                         # Remux pure audio into standards-compliant Apple M4A container (0.02s)
-                        extract_audio_from_video(temp_raw_audio, local_path)
-                        downloaded_audio = True
+                        extract_audio_from_video(temp_raw_audio, staged_path)
+                        downloaded_audio = _is_readable_audio(staged_path)
                     except Exception as dash_dl_err:
                         logger.warning("DASH 音频下载或封装异常，将尝试备用流: %s", dash_dl_err)
                     finally:
@@ -654,7 +666,7 @@ def download_bilibili_audio(
             durl = play_data.get("data", {}).get("durl") or []
             if durl and len(durl) > 0 and durl[0].get("url"):
                 video_url = durl[0]["url"]
-                temp_video_path = local_path + ".temp_cache.mp4"
+                temp_video_path = os.path.join(staging.name, "video.mp4")
                 try:
                     v_resp = _client.session.get(video_url, stream=True, timeout=60)
                     v_resp.raise_for_status()
@@ -662,8 +674,8 @@ def download_bilibili_audio(
                         for chunk in v_resp.iter_content(chunk_size=262144):
                             if chunk:
                                 f.write(chunk)
-                    extract_audio_from_video(temp_video_path, local_path)
-                    downloaded_audio = True
+                    extract_audio_from_video(temp_video_path, staged_path)
+                    downloaded_audio = _is_readable_audio(staged_path)
                 except Exception as v_err:
                     logger.warning("下载或提取视频音轨失败: %s", v_err)
                 finally:
@@ -673,7 +685,7 @@ def download_bilibili_audio(
                         except Exception:
                             pass
 
-        if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+        if not downloaded_audio or not _is_readable_audio(staged_path):
             raise RuntimeError("未在 B 站视频中成功提取到可用音频内容")
 
         # 4. Fetch cover image
@@ -690,7 +702,7 @@ def download_bilibili_audio(
         # 5. Inject ID3 / MP4 metadata
         if MP4 is not None:
             try:
-                tags = MP4(local_path)
+                tags = MP4(staged_path)
                 tags["\xa9nam"] = target_title
                 tags["\xa9ART"] = target_artist
                 tags["\xa9alb"] = target_album or "Bilibili 音源补全"
@@ -703,6 +715,10 @@ def download_bilibili_audio(
                 tags.save()
             except Exception as tag_err:
                 logger.warning("注入 MP4 元数据异常: %s", tag_err)
+
+        if not _is_readable_audio(staged_path):
+            raise RuntimeError("封装后的音频无法读取")
+        os.replace(staged_path, local_path)
 
         # 6. Auto-import to Apple Music
         auto_imported = False
@@ -738,3 +754,6 @@ def download_bilibili_audio(
             "title": target_title,
             "artist": target_artist,
         }
+    finally:
+        if staging is not None:
+            staging.cleanup()

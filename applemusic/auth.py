@@ -59,7 +59,7 @@ class AppleMusicAuth:
         if token:
             self.config.developer_token = token
             self.config.developer_token_exp = exp
-            self.config.save()
+            self.config.save(fields=["developer_token", "developer_token_exp"])
             return token
 
         # 4. Fallback to cached token if still valid

@@ -46,7 +46,7 @@ class MatchingEngine:
     def get_stable_track_key(track: Track) -> Tuple:
         """
         Generate a unique stable signature for a track to prevent duplicate network searches.
-        Prefers ISRC if present; then platform + original_id; falls back to normalized core title, primary artist, and duration bucket.
+        Prefers ISRC if present; then platform + original_id; falls back to recording metadata.
         """
         isrc = (track.isrc or "").strip().upper()
         if isrc and len(isrc) >= 8:
@@ -56,12 +56,14 @@ class MatchingEngine:
         if orig_id and orig_id.lower() not in ("none", "null", "unknown", "undefined") and track.source != "unknown":
             return (track.source, orig_id)
 
-        core_t = TextCleaner.clean_title(track.title).lower()
-        pri_a, _ = TextCleaner.parse_artists(track.artists)
-        norm_a = TextCleaner.normalize(pri_a)
+        # Cleaning the core title removes Live/Remix/language and vocal credits.
+        # Keep the original identity too: deduplication broadcasts decisions without rescoring.
+        details = TextCleaner.parse_title_details(track.title)
+        core_t = TextCleaner.normalize(track.title)
+        norm_a = tuple(TextCleaner.normalize(a) for a in track.artists)
         norm_alb = TextCleaner.normalize(track.album or "")
-        dur_bucket = round(track.duration_ms / 5000) if track.duration_ms else 0
-        return (core_t, norm_a, norm_alb, dur_bucket)
+        versions = tuple(sorted(set(track.version_tags + details.version_tags)))
+        return ("recording_v2", core_t, norm_a, norm_alb, track.duration_ms or 0, versions, details.language_version)
 
     def _evaluate_and_aggregate(
         self,
@@ -353,7 +355,7 @@ class MatchingEngine:
         core_title, version_tags = TextCleaner.parse_title(source.title)
         primary_artist, featured_artists = TextCleaner.parse_artists(source.artists)
         source.clean_title = core_title
-        source.version_tags = version_tags
+        source.version_tags = list(dict.fromkeys(source.version_tags + version_tags))
         source.primary_artist = primary_artist
         source.featured_artists = featured_artists
 
@@ -888,6 +890,10 @@ class MatchingEngine:
             track = unique_tracks[key]
             key_str = ":".join(str(x) for x in key)
             cached_match = self.persistent_cache.get_match(sf, key_str) or self.persistent_cache.find_match(sf, track)
+            if cached_match and self.get_stable_track_key(cached_match.source_track) != key:
+                # Legacy coarse keys and secondary indexes must not transfer even a
+                # manually confirmed choice to a different recording/credit identity.
+                cached_match = None
             if cached_match and cached_match.decision in (DecisionStatus.AUTO_ACCEPT.value, DecisionStatus.USER_CONFIRMED.value):
                 indices = key_to_indices[key]
                 for idx in indices:
@@ -1032,7 +1038,7 @@ class MatchingEngine:
         core_title, version_tags = TextCleaner.parse_title(source.title)
         primary_artist, featured_artists = TextCleaner.parse_artists(source.artists)
         source.clean_title = core_title
-        source.version_tags = version_tags
+        source.version_tags = list(dict.fromkeys(source.version_tags + version_tags))
         source.primary_artist = primary_artist
         source.featured_artists = featured_artists
 

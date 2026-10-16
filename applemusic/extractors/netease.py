@@ -63,7 +63,12 @@ class NetEaseExtractor(BaseExtractor):
             track_ids = [str(x["id"]) for x in direct_tracks]
 
         # 2. Batch fetch full song details (up to 1000 songs)
-        tracks = self._fetch_songs_batch(track_ids)
+        warnings = []
+        tracks = self._fetch_songs_batch(track_ids, warnings=warnings)
+        if track_ids and not tracks:
+            raise ValueError("网易云曲目详情全部获取失败，请稍后重试：" + "; ".join(warnings))
+        if len(tracks) < len(track_ids):
+            warnings.append(f"网易云歌单预期 {len(track_ids)} 首，仅获取 {len(tracks)} 首；请稍后重试以补全缺失曲目。")
 
         return Playlist(
             name=pl_name,
@@ -71,6 +76,8 @@ class NetEaseExtractor(BaseExtractor):
             cover_url=pl_cover,
             source=self.source_name,
             tracks=tracks,
+            total_expected=len(track_ids),
+            warnings=warnings,
         )
 
     def _resolve_playlist_id(self, source_input: str) -> Optional[str]:
@@ -100,7 +107,8 @@ class NetEaseExtractor(BaseExtractor):
 
         return None
 
-    def _fetch_songs_batch(self, track_ids: List[str], batch_size: int = 100) -> List[Track]:
+    def _fetch_songs_batch(self, track_ids: List[str], batch_size: int = 100,
+                           warnings: Optional[List[str]] = None) -> List[Track]:
         """Fetch song details in chunks from NetEase song/detail endpoint."""
         url = "https://music.163.com/api/v3/song/detail"
         tracks: List[Track] = []
@@ -110,8 +118,14 @@ class NetEaseExtractor(BaseExtractor):
             payload = {"c": json.dumps([{"id": int(tid)} for tid in batch])}
             try:
                 r = requests.post(url, headers=self.HEADERS, data=payload, timeout=15)
+                r.raise_for_status()
+                if r.status_code != 200:
+                    raise ValueError(f"HTTP {r.status_code}")
                 if r.status_code == 200:
-                    songs = r.json().get("songs", [])
+                    data = r.json()
+                    if data.get("code", 200) != 200:
+                        raise ValueError(f"业务错误 code={data.get('code')}")
+                    songs = data.get("songs", [])
                     for s in songs:
                         artists = [a["name"].strip() for a in s.get("ar", []) if a.get("name")]
                         album_name = s.get("al", {}).get("name")
@@ -130,6 +144,10 @@ class NetEaseExtractor(BaseExtractor):
                         )
                         tracks.append(track)
             except Exception as e:
-                print(f"[Warning] 获取网易云曲目详情批次失败: {e}")
+                message = f"网易云曲目详情第 {i // batch_size + 1} 批获取失败，请稍后重试: {e}"
+                if warnings is not None:
+                    warnings.append(message)
+                else:
+                    print(f"[Warning] {message}")
 
         return tracks
