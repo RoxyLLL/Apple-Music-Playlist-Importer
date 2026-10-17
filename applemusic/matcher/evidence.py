@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, root_validator
 
-MATCH_RULE_VERSION = "2026.10.v7.4"
+MATCH_RULE_VERSION = "2026.10.v7.5"
 ALIAS_VERSION = "2026.10.v7.2"
 QUERY_POLICY_VERSION = "2026.10.v7.3"
 ROMANIZER_VERSION = "2026.09.v5"
@@ -105,7 +105,7 @@ class SingleTrackDiagnostics(BaseModel):
     Safe, sanitized diagnostic summary for a single track matching process.
     Guaranteed not to contain real tokens, cookies, auth headers, or absolute user paths.
     """
-    app_version: str = "2.0.10"
+    app_version: str = "2.0.11"
     build_id: str = "unknown"
     base_rule_version: str = "2026.09.v1"
     rule_version: str = MATCH_RULE_VERSION

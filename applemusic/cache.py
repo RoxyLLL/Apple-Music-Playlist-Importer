@@ -27,6 +27,21 @@ TTL_MATCH_AUTO_ACCEPT = 30 * 86400 # 30 days for confident matches
 TTL_MATCH_NO_MATCH = 3 * 86400     # 3 days for verified no-match
 
 
+def _restore_artist_entities(track: AppleMusicTrack) -> AppleMusicTrack:
+    """Repair legacy mixed-separator parsing only when relationship counts agree.
+
+    Cached structured names remain authoritative when complete. IDs supply a
+    count, never a guessed positional mapping to the display string.
+    """
+    if track.raw_artist_name and len(track.artist_ids) > len(track.artists):
+        from applemusic.client import AppleMusicClient
+        relationships = [{"id": artist_id} for artist_id in track.artist_ids]
+        names = AppleMusicClient._parse_artists_from_apple(track.raw_artist_name, relationships)
+        if len(names) == len(track.artist_ids):
+            track.artists = names
+    return track
+
+
 class PersistentCache:
     """
     Thread-safe SQLite persistent cache manager for Apple Music queries.
@@ -285,6 +300,7 @@ class PersistentCache:
             else:
                 tracks = []
                 safe_message = None
+            tracks = [_restore_artist_entities(track) for track in tracks]
             return CatalogSearchOutcome(
                 kind=kind,
                 tracks=tracks,
@@ -404,6 +420,16 @@ class PersistentCache:
                 return (None, None)
 
             ret_id = target_song_id if target_song_id is not None else ""
+            if payload_json:
+                try:
+                    track = AppleMusicTrack(**json.loads(payload_json))
+                    previous_names = list(track.artists)
+                    _restore_artist_entities(track)
+                    if track.artists != previous_names:
+                        payload_json = track.model_dump_json()
+                except (TypeError, ValueError):
+                    # Let the existing caller handle malformed/legacy payloads.
+                    pass
             return (ret_id, payload_json)
         except Exception as e:
             logger.debug("Failed to read from equivalence cache: %s", e)
@@ -482,6 +508,10 @@ class PersistentCache:
 
             data = json.loads(result_json)
             result = SongMatchResult(**data)
+            for candidate in result.candidates:
+                _restore_artist_entities(candidate.track)
+            if result.selected_candidate:
+                _restore_artist_entities(result.selected_candidate.track)
 
             # Check rule version / policy version / romanizer version / exception registry version / alias version
             from applemusic.matcher.evidence import (

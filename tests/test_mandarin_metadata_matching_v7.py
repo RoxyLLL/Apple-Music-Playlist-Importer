@@ -1245,7 +1245,7 @@ class TestMandarinMetadataMatchingV7(unittest.TestCase):
         """
         U02: Validate current rule/query versions and unchanged alias version.
         """
-        self.assertEqual(MATCH_RULE_VERSION, "2026.10.v7.4")
+        self.assertEqual(MATCH_RULE_VERSION, "2026.10.v7.5")
         self.assertEqual(ALIAS_VERSION, "2026.10.v7.2")
         self.assertEqual(QUERY_POLICY_VERSION, "2026.10.v7.3")
         self.assertEqual(ROMANIZER_VERSION, "2026.09.v5")
@@ -1255,7 +1255,7 @@ class TestMandarinMetadataMatchingV7(unittest.TestCase):
             html = f.read()
 
         self.assertIn("2026.10.v7.2", html)
-        self.assertIn("2026.10.v7.4", html)
+        self.assertIn("2026.10.v7.5", html)
         self.assertNotIn("'2026.10.v7.0'", html)
 
 

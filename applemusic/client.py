@@ -628,38 +628,56 @@ class AppleMusicClient:
     def _parse_artists_from_apple(
         cls, artist_name: str, artists_rel: List[Dict[str, Any]]
     ) -> List[str]:
-        if not artist_name:
-            return []
-        artist_name = artist_name.strip()
-        if not artist_name:
-            return []
-
-        # 1. Check if structured relationship objects contain artist names
+        artist_name = (artist_name or "").strip()
+        # A relationship's name is an entity, even when it contains punctuation.
         rel_names = [
             a.get("attributes", {}).get("name", "").strip()
             for a in artists_rel
             if isinstance(a, dict) and a.get("attributes", {}).get("name")
         ]
-        if rel_names:
+        if rel_names and len(rel_names) == len(artists_rel):
+            return rel_names
+        if not artist_name:
             return rel_names
 
-        # 2. If exactly one artist relationship exists, artistName is a single artist (e.g. "Tyler, The Creator")
+        # One relationship means one entity, not "Tyler" and "The Creator".
         if len(artists_rel) == 1:
             return [artist_name]
 
-        # 3. If multiple artist relationships exist (len > 1):
-        if len(artists_rel) > 1:
-            # Check if comma-split matches the exact relationship count
-            comma_parts = [p.strip() for p in artist_name.split(",") if p.strip()]
-            if len(comma_parts) == len(artists_rel):
-                return comma_parts
+        # Protect any known entities before splitting a partially named response.
+        # IDs deliberately remain separate: display order does not establish ID order.
+        protected = artist_name
+        placeholders = {}
+        for index, name in enumerate(sorted(set(rel_names), key=len, reverse=True)):
+            marker = f"\x00{index}\x00"
+            placeholders[marker] = name
+            protected = re.sub(
+                r"(?<!\w)" + re.escape(name) + r"(?!\w)",
+                lambda _: marker,
+                protected,
+                flags=re.IGNORECASE,
+            )
 
-        # 4. For no relationship or general multi-artist strings:
-        # DO NOT split on ASCII comma alone (preserves names like "Tyler, The Creator")
-        # Split on explicit collaboration delimiters: feat, ft, featuring, with, &, +, ×, 、, /, ／
         split_pattern = r"\s+(?:feat\.?|ft\.?|featuring|with)\s+|\s*[/\\&、／+×]\s*"
-        parts = [p.strip() for p in re.split(split_pattern, artist_name, flags=re.IGNORECASE) if p.strip()]
-        return parts if parts else [artist_name]
+        if len(artists_rel) > 1:
+            split_pattern += r"|\s+and\s+|\s+[和与與及]\s+"
+        parts = [p.strip() for p in re.split(split_pattern, protected, flags=re.IGNORECASE) if p.strip()]
+        if len(artists_rel) > 1 and len(parts) != len(artists_rel):
+            # Apple commonly renders three artists as "A, B & C". Split all
+            # delimiter types together, but only when the entity count agrees.
+            mixed = [p.strip() for p in re.split(split_pattern + r"|\s*[,，]\s*", protected, flags=re.IGNORECASE) if p.strip()]
+            parts = mixed if len(mixed) == len(artists_rel) else [protected]
+
+        for marker, name in placeholders.items():
+            parts = [part.replace(marker, name) for part in parts]
+        # Partial relationship attributes must not drop the unnamed artists.
+        for name in rel_names:
+            if not any(
+                re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", part, re.IGNORECASE)
+                for part in parts
+            ):
+                parts.append(name)
+        return parts or [artist_name]
 
     @classmethod
     def _parse_song_item(

@@ -10,7 +10,7 @@ from functools import lru_cache
 from typing import List, Optional, Tuple
 from applemusic.matcher.artist_aliases import are_artists_equivalent
 from applemusic.matcher.title_aliases import are_titles_equivalent
-from applemusic.matcher.cleaner import TextCleaner, NOISE_ARTISTS, VERSION_MAP
+from applemusic.matcher.cleaner import TextCleaner, NOISE_ARTISTS, VERSION_MAP, PROJECT_OR_PUBLISHER_ENTITIES
 from applemusic.matcher.evidence import (
     MatchEvidence,
     VerificationLevel,
@@ -420,7 +420,7 @@ class TrackScorer:
 
         raw_names_s = [n for n in det_s.all_names if n and n.lower() not in NOISE_ARTISTS]
         raw_names_c = [n for n in det_c.all_names if n and n.lower() not in NOISE_ARTISTS]
-        if raw_names_s and raw_names_c and len(raw_names_s) == len(raw_names_c):
+        if not det_s.featured and not det_c.featured and raw_names_s and raw_names_c and len(raw_names_s) == len(raw_names_c):
             matched_indices = set()
             for s_name in raw_names_s:
                 for idx, c_name in enumerate(raw_names_c):
@@ -506,7 +506,7 @@ class TrackScorer:
         all_s = [TextCleaner.normalize(n) for n in det_s.all_names if n]
         all_c = [TextCleaner.normalize(n) for n in det_c.all_names if n]
 
-        if set(all_s) == set(all_c) and all_s:
+        if not det_s.featured and not det_c.featured and set(all_s) == set(all_c) and all_s:
             return 1.0
 
         # If source matches candidate's collaborator (or vice versa) and it's NOT an explicit guest
@@ -761,6 +761,8 @@ class TrackScorer:
         det_c = TextCleaner.parse_artist_details(candidate.artists, title_credits=td_c.title_credits)
         has_primary_artist_mismatch = False
         project_credit_matched = False
+        project_credit_incomplete = False
+        project_credit_role_unverified = False
         matched_credit_role = None
         has_pri_match = False
         artist_identity_romanized = False
@@ -798,7 +800,7 @@ class TrackScorer:
             if not has_pri_match:
                 raw_names_s = [n for n in det_s.all_names if n and n.lower() not in NOISE_ARTISTS]
                 raw_names_c = [n for n in det_c.all_names if n and n.lower() not in NOISE_ARTISTS]
-                if raw_names_s and raw_names_c and len(raw_names_s) == len(raw_names_c):
+                if not det_s.featured and not det_c.featured and raw_names_s and raw_names_c and len(raw_names_s) == len(raw_names_c):
                     matched_indices = set()
                     for s_name in raw_names_s:
                         for idx, c_name in enumerate(raw_names_c):
@@ -818,6 +820,15 @@ class TrackScorer:
                     n_collab = TextCleaner.normalize(sc)
                     for s_cand in pri_cands_s:
                         if TextCleaner.normalize(s_cand) == n_collab or are_artists_equivalent(TextCleaner.normalize(s_cand), n_collab):
+                            has_pri_match = True
+                            break
+                    if has_pri_match:
+                        break
+
+            if not has_pri_match:
+                for sc in det_s.collaborators:
+                    for c_cand in pri_cands_c:
+                        if TextCleaner.normalize(sc) == TextCleaner.normalize(c_cand) or are_artists_equivalent(sc, c_cand):
                             has_pri_match = True
                             break
                     if has_pri_match:
@@ -848,7 +859,50 @@ class TrackScorer:
                     if project_credit_matched:
                         break
 
-            if not has_pri_match:
+            # A project may be listed first, last, or instead of its performers.
+            # Shared project identity is not evidence that two named singers agree.
+            def is_project(name):
+                return any(are_artists_equivalent(name, entity) for entity in PROJECT_OR_PUBLISHER_ENTITIES)
+
+            credited_s = [n for n in [det_s.primary] + det_s.collaborators if n]
+            credited_c = [n for n in [det_c.primary] + det_c.collaborators if n]
+            projects_s = [n for n in credited_s if is_project(n)]
+            projects_c = [n for n in credited_c if is_project(n)]
+            performers_s = [n for n in credited_s if not is_project(n)]
+            performers_c = [n for n in credited_c if not is_project(n)]
+            named_performers_s = performers_s + [
+                n for n in det_s.featured + det_s.character_voices + det_s.title_credits if not is_project(n)
+            ]
+            named_performers_c = performers_c + [
+                n for n in det_c.featured + det_c.character_voices + det_c.title_credits if not is_project(n)
+            ]
+            shared_project = any(are_artists_equivalent(s, c) for s in projects_s for c in projects_c)
+            if shared_project and not project_credit_matched:
+                named_performer_match = any(
+                    TextCleaner.normalize(s) == TextCleaner.normalize(c) or are_artists_equivalent(s, c)
+                    for s in named_performers_s for c in named_performers_c
+                )
+                performer_match = any(
+                    TextCleaner.normalize(s) == TextCleaner.normalize(c) or are_artists_equivalent(s, c)
+                    for s in performers_s for c in performers_c
+                )
+                if ((named_performers_s and named_performers_c and not named_performer_match)
+                        or (performers_s and performers_c and not performer_match)):
+                    has_pri_match = False
+                    artist_score = min(artist_score, 0.50)
+                elif bool(named_performers_s) != bool(named_performers_c) or bool(performers_s) != bool(performers_c):
+                    has_pri_match = False
+                    # Preserve project similarity for ranking, not artist identity.
+                    artist_score = min(artist_score, 0.92)
+                    matched_credit_role = "project"
+                    if named_performers_s and named_performers_c:
+                        project_credit_role_unverified = True
+                        reasons.append("项目及演唱者署名匹配，但主唱/客串角色待核验")
+                    else:
+                        project_credit_incomplete = True
+                        reasons.append("项目署名匹配，演唱者未列明/待核验")
+
+            if not has_pri_match and not project_credit_incomplete and not project_credit_role_unverified:
                 norm_pri_c = TextCleaner.normalize(det_c.primary)
                 norm_pri_s = TextCleaner.normalize(det_s.primary)
                 norm_feat_s = [TextCleaner.normalize(f) for f in det_s.featured if f]
@@ -1202,6 +1256,12 @@ class TrackScorer:
         elif is_verified_equivalent:
             v_level = VerificationLevel.STRONG.value
             ev_type = "apple_equivalent"
+        elif project_credit_role_unverified:
+            v_level = VerificationLevel.MEDIUM.value
+            ev_type = "project_credit_role_unverified"
+        elif project_credit_incomplete:
+            v_level = VerificationLevel.MEDIUM.value
+            ev_type = "project_credit_incomplete"
         elif not has_pri_match and not is_artist_romanized:
             # Name edit similarity ranks candidates, but does not establish identity.
             # Matching title/album/duration cannot turn John Williamson into John Williams.

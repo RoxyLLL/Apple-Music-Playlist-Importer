@@ -24,8 +24,8 @@ class TestWebApi(unittest.TestCase):
 
     def test_version_consistency(self):
         """Ensure the release version and FastAPI version match."""
-        self.assertEqual(applemusic.__version__, "2.0.10")
-        self.assertEqual(app.version, "2.0.10")
+        self.assertEqual(applemusic.__version__, "2.0.11")
+        self.assertEqual(app.version, "2.0.11")
         self.assertEqual(app.version, applemusic.__version__)
 
     def test_app_token_middleware_enforcement(self):
